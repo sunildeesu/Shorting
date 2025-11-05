@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Job Label -->
+    <key>Label</key>
+    <string>com.nse.stockmonitor</string>
+
+    <!-- Program to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunildeesu/myProjects/ShortIndicator/main.py</string>
+    </array>
+
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+
+    <!-- Run every 5 minutes (300 seconds) -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- Standard Output/Error Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/launchd-stderr.log</string>
+
+    <!-- Run on load (when launchd starts) -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep the job running (restart if it exits) -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment Variables (if .env is not working) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process Type -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Throttle interval (minimum time between restarts in seconds) -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

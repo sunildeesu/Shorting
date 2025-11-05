@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""
+Analyze 3-Year Backtest Results and Generate Recommendations
+"""
+
+import openpyxl
+from typing import Dict, List, Tuple
+import json
+
+def to_float(value) -> float:
+    """Convert Excel cell value to float, handling percentages"""
+    if value is None or value == '-' or value == '':
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    # Handle percentage strings like "66.3%"
+    if isinstance(value, str):
+        value = value.strip().rstrip('%')
+        try:
+            return float(value)
+        except:
+            return 0.0
+    return 0.0
+
+def analyze_backtest_excel(file_path: str) -> Dict:
+    """Analyze the backtest Excel file and extract key metrics"""
+
+    wb = openpyxl.load_workbook(file_path)
+    results = {}
+
+    # Sheet 1: All Trades
+    ws_trades = wb['All Trades']
+    trades = []
+    for row in ws_trades.iter_rows(min_row=2, values_only=True):
+        if row[0]:  # If trade_id exists
+            trades.append({
+                'trade_id': row[0],
+                'symbol': row[1],
+                'test_date': row[2],
+                'pattern': row[3],
+                'confidence': row[4],
+                'buy_price': row[5],
+                'target_price': row[6],
+                'outcome': row[7],
+                'final_pnl_pct': row[8],
+                'max_gain_pct': row[9],
+                'max_loss_pct': row[10],
+                'days_to_target': row[11],
+                'market_regime': row[12]
+            })
+    results['total_trades'] = len(trades)
+    results['trades'] = trades
+
+    # Sheet 2: Summary Statistics
+    ws_summary = wb['Summary Statistics']
+    summary = {}
+    for row in ws_summary.iter_rows(min_row=2, max_row=20, values_only=True):
+        if row[0] and row[1] is not None:
+            summary[row[0]] = row[1]
+    results['summary'] = summary
+
+    # Sheet 3: Pattern Analysis
+    ws_patterns = wb['Pattern Analysis']
+    patterns = []
+    for row in ws_patterns.iter_rows(min_row=2, values_only=True):
+        if row and row[0]:
+            patterns.append({
+                'pattern': row[0],
+                'total_trades': row[1] if len(row) > 1 else 0,
+                'wins': row[2] if len(row) > 2 else 0,
+                'losses': row[3] if len(row) > 3 else 0,
+                'win_rate': row[4] if len(row) > 4 else 0,
+                'avg_pnl': row[5] if len(row) > 5 else 0,
+                'avg_gain': row[6] if len(row) > 6 else 0,
+                'avg_loss': row[7] if len(row) > 7 else 0,
+                'avg_days_to_target': row[8] if len(row) > 8 else 0
+            })
+    results['patterns'] = patterns
+
+    # Sheet 4: Market Regime Analysis
+    ws_regime = wb['Market Regime Analysis']
+    regimes = []
+    for row in ws_regime.iter_rows(min_row=2, values_only=True):
+        if row and row[0]:
+            regimes.append({
+                'regime': row[0],
+                'total_trades': row[1] if len(row) > 1 else 0,
+                'wins': row[2] if len(row) > 2 else 0,
+                'losses': row[3] if len(row) > 3 else 0,
+                'win_rate': row[4] if len(row) > 4 else 0,
+                'avg_pnl': row[5] if len(row) > 5 else 0
+            })
+    results['regimes'] = regimes
+
+    # Sheet 5: Confidence Analysis
+    ws_confidence = wb['Confidence Analysis']
+    confidence_bins = []
+    for row in ws_confidence.iter_rows(min_row=2, values_only=True):
+        if row and row[0]:
+            confidence_bins.append({
+                'range': row[0],
+                'total_trades': row[1] if len(row) > 1 else 0,
+                'wins': row[2] if len(row) > 2 else 0,
+                'losses': row[3] if len(row) > 3 else 0,
+                'win_rate': row[4] if len(row) > 4 else 0,
+                'avg_pnl': row[5] if len(row) > 5 else 0
+            })
+    results['confidence'] = confidence_bins
+
+    # Sheet 6: Yearly Performance
+    ws_yearly = wb['Yearly Performance']
+    yearly = []
+    for row in ws_yearly.iter_rows(min_row=2, values_only=True):
+        if row and row[0]:
+            yearly.append({
+                'year': row[0],
+                'total_trades': row[1] if len(row) > 1 else 0,
+                'wins': row[2] if len(row) > 2 else 0,
+                'losses': row[3] if len(row) > 3 else 0,
+                'win_rate': row[4] if len(row) > 4 else 0,
+                'avg_pnl': row[5] if len(row) > 5 else 0
+            })
+    results['yearly'] = yearly
+
+    # Sheet 7: Monthly Performance
+    ws_monthly = wb['Monthly Performance']
+    monthly = []
+    for row in ws_monthly.iter_rows(min_row=2, values_only=True):
+        if row and row[0]:
+            monthly.append({
+                'month': row[0],
+                'total_trades': row[1] if len(row) > 1 else 0,
+                'wins': row[2] if len(row) > 2 else 0,
+                'losses': row[3] if len(row) > 3 else 0,
+                'win_rate': row[4] if len(row) > 4 else 0,
+                'avg_pnl': row[5] if len(row) > 5 else 0
+            })
+    results['monthly'] = monthly
+
+    wb.close()
+    return results
+
+
+def generate_recommendations(results: Dict) -> str:
+    """Generate comprehensive recommendations based on backtest results"""
+
+    summary = results['summary']
+    patterns = results['patterns']
+    regimes = results['regimes']
+    confidence = results['confidence']
+    yearly = results['yearly']
+
+    # Build recommendations document
+    doc = []
+
+    doc.append("# 3-Year Backtest Analysis & Recommendations")
+    doc.append("")
+    doc.append(f"**Test Period:** November 4, 2022 - November 4, 2025 (3 years)")
+    doc.append(f"**Total Trades Analyzed:** {results['total_trades']}")
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Overall Performance Summary
+    doc.append("## 1. Overall Performance Summary")
+    doc.append("")
+    doc.append(f"- **Win Rate:** {summary.get('Win Rate (%)', 0):.1f}%")
+    doc.append(f"- **Total Wins:** {summary.get('Total Wins', 0)}")
+    doc.append(f"- **Total Losses:** {summary.get('Total Losses', 0)}")
+    doc.append(f"- **Average P&L per Trade:** {summary.get('Avg P&L per Trade (%)', 0):.2f}%")
+    doc.append(f"- **Average Winning Trade:** {summary.get('Avg Winning Trade (%)', 0):.2f}%")
+    doc.append(f"- **Average Losing Trade:** {summary.get('Avg Losing Trade (%)', 0):.2f}%")
+    doc.append(f"- **Best Trade:** {summary.get('Best Trade (%)', 0):.2f}%")
+    doc.append(f"- **Worst Trade:** {summary.get('Worst Trade (%)', 0):.2f}%")
+    doc.append(f"- **Average Days to Target:** {summary.get('Avg Days to Target (Wins)', 0):.1f} days")
+    doc.append("")
+
+    win_rate = summary.get('Win Rate (%)', 0)
+    if win_rate >= 60:
+        doc.append("✅ **Status:** Excellent performance - System is highly profitable")
+    elif win_rate >= 50:
+        doc.append("✅ **Status:** Good performance - System is profitable")
+    elif win_rate >= 40:
+        doc.append("⚠️ **Status:** Marginal performance - Needs optimization")
+    else:
+        doc.append("❌ **Status:** Poor performance - Major improvements required")
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Pattern-Specific Analysis
+    doc.append("## 2. Pattern-Specific Performance")
+    doc.append("")
+    doc.append("| Pattern | Trades | Win Rate | Avg P&L | Avg Days | Recommendation |")
+    doc.append("|---------|--------|----------|---------|----------|----------------|")
+
+    # Sort patterns by win rate (convert to float for sorting)
+    sorted_patterns = sorted(patterns, key=lambda x: float(x['win_rate']) if x['win_rate'] else 0, reverse=True)
+
+    for p in sorted_patterns:
+        pattern_name = p['pattern']
+        trades = int(p['total_trades']) if p['total_trades'] else 0
+        win_rate = float(p['win_rate']) if p['win_rate'] else 0
+        avg_pnl = float(p['avg_pnl']) if p['avg_pnl'] else 0
+        avg_days = float(p['avg_days_to_target']) if p['avg_days_to_target'] else 0
+
+        # Determine recommendation
+        if win_rate >= 65:
+            rec = "✅ TRADE (High confidence)"
+        elif win_rate >= 55:
+            rec = "✅ TRADE (Medium confidence)"
+        elif win_rate >= 45:
+            rec = "⚠️ TRADE WITH CAUTION"
+        else:
+            rec = "❌ AVOID or REDUCE SIZE"
+
+        doc.append(f"| {pattern_name} | {trades} | {win_rate:.1f}% | {avg_pnl:+.2f}% | {avg_days:.0f} | {rec} |")
+
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Market Regime Analysis
+    doc.append("## 3. Market Regime Performance")
+    doc.append("")
+    doc.append("| Regime | Trades | Win Rate | Avg P&L | Performance |")
+    doc.append("|--------|--------|----------|---------|-------------|")
+
+    for r in regimes:
+        regime = r['regime']
+        trades = int(r['total_trades']) if r['total_trades'] else 0
+        win_rate = float(r['win_rate']) if r['win_rate'] else 0
+        avg_pnl = float(r['avg_pnl']) if r['avg_pnl'] else 0
+
+        if win_rate >= 55:
+            perf = "✅ Strong"
+        elif win_rate >= 45:
+            perf = "⚠️ Moderate"
+        else:
+            perf = "❌ Weak"
+
+        doc.append(f"| {regime} | {trades} | {win_rate:.1f}% | {avg_pnl:+.2f}% | {perf} |")
+
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Confidence Score Analysis
+    doc.append("## 4. Confidence Score Analysis")
+    doc.append("")
+    doc.append("| Confidence Range | Trades | Win Rate | Avg P&L | Quality |")
+    doc.append("|-----------------|--------|----------|---------|---------|")
+
+    for c in confidence:
+        conf_range = c['range']
+        trades = int(c['total_trades']) if c['total_trades'] else 0
+        win_rate = float(c['win_rate']) if c['win_rate'] else 0
+        avg_pnl = float(c['avg_pnl']) if c['avg_pnl'] else 0
+
+        if win_rate >= 60:
+            quality = "✅ Excellent"
+        elif win_rate >= 50:
+            quality = "✅ Good"
+        elif win_rate >= 40:
+            quality = "⚠️ Fair"
+        else:
+            quality = "❌ Poor"
+
+        doc.append(f"| {conf_range} | {trades} | {win_rate:.1f}% | {avg_pnl:+.2f}% | {quality} |")
+
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Yearly Trends
+    doc.append("## 5. Year-Over-Year Performance")
+    doc.append("")
+    doc.append("| Year | Trades | Win Rate | Avg P&L | Trend |")
+    doc.append("|------|--------|----------|---------|-------|")
+
+    for y in yearly:
+        year = y['year']
+        trades = int(y['total_trades']) if y['total_trades'] else 0
+        win_rate = float(y['win_rate']) if y['win_rate'] else 0
+        avg_pnl = float(y['avg_pnl']) if y['avg_pnl'] else 0
+
+        if win_rate >= 55:
+            trend = "📈 Strong Year"
+        elif win_rate >= 45:
+            trend = "➡️ Average Year"
+        else:
+            trend = "📉 Weak Year"
+
+        doc.append(f"| {year} | {trades} | {win_rate:.1f}% | {avg_pnl:+.2f}% | {trend} |")
+
+    doc.append("")
+    doc.append("---")
+    doc.append("")
+
+    # Key Recommendations
+    doc.append("## 6. Key Recommendations for System Improvement")
+    doc.append("")
+
+    # Analyze and provide specific recommendations
+    recommendations = []
+
+    # 1. Pattern filtering
+    poor_patterns = [p for p in patterns if float(p['win_rate']) < 45]
+    if poor_patterns:
+        doc.append("### 🔴 Critical: Filter Out Poor-Performing Patterns")
+        doc.append("")
+        for p in poor_patterns:
+            doc.append(f"- **{p['pattern']}**: {float(p['win_rate']):.1f}% win rate - Consider DISABLING or requiring higher confidence (≥8.5)")
+        doc.append("")
+        recommendations.append("DISABLE_POOR_PATTERNS")
+
+    # 2. Confidence threshold optimization
+    high_conf = next((c for c in confidence if '8.0-9.0' in c['range'] or '9.0+' in c['range']), None)
+    low_conf = next((c for c in confidence if '7.0-7.5' in c['range']), None)
+
+    if high_conf and low_conf:
+        diff = float(high_conf['win_rate']) - float(low_conf['win_rate'])
+        if diff > 10:
+            doc.append("### ⚠️ Important: Raise Minimum Confidence Threshold")
+            doc.append("")
+            doc.append(f"- **High confidence (8.0+):** {float(high_conf['win_rate']):.1f}% win rate")
+            doc.append(f"- **Low confidence (7.0-7.5):** {float(low_conf['win_rate']):.1f}% win rate")
+            doc.append(f"- **Difference:** {diff:.1f}% (significant!)")
+            doc.append("")
+            doc.append("**Recommendation:** Increase `min_confidence` from 7.0 to **8.0** in `eod_analyzer.py`")
+            doc.append("")
+            recommendations.append("RAISE_CONFIDENCE_TO_8")
+
+    # 3. Market regime optimization
+    best_regime = max(regimes, key=lambda x: float(x['win_rate']) if x['win_rate'] else 0)
+    worst_regime = min(regimes, key=lambda x: float(x['win_rate']) if x['win_rate'] else 0)
+
+    if float(best_regime['win_rate']) - float(worst_regime['win_rate']) > 15:
+        doc.append("### ⚠️ Important: Optimize Market Regime Filtering")
+        doc.append("")
+        doc.append(f"- **Best regime ({best_regime['regime']}):** {float(best_regime['win_rate']):.1f}% win rate")
+        doc.append(f"- **Worst regime ({worst_regime['regime']}):** {float(worst_regime['win_rate']):.1f}% win rate")
+        doc.append("")
+        doc.append("**Recommendation:**")
+        doc.append(f"- ONLY trade {best_regime['regime']} patterns OR significantly increase confidence requirement for {worst_regime['regime']}")
+        doc.append("")
+        recommendations.append("OPTIMIZE_REGIME")
+
+    # 4. Volume confirmation
+    avg_win = summary.get('Avg Winning Trade (%)', 0)
+    avg_loss = abs(summary.get('Avg Losing Trade (%)', 0))
+    risk_reward = avg_win / avg_loss if avg_loss > 0 else 0
+
+    if risk_reward < 1.5:
+        doc.append("### ⚠️ Improve Risk-Reward Ratio")
+        doc.append("")
+        doc.append(f"- **Current Risk-Reward:** 1:{risk_reward:.2f}")
+        doc.append(f"- **Target:** 1:2.0 or better")
+        doc.append("")
+        doc.append("**Recommendations:**")
+        doc.append("- Increase volume confirmation threshold from 1.5× to **2.0×**")
+        doc.append("- Tighten stop losses (use 2% instead of pattern-based)")
+        doc.append("- Only trade patterns with >5% target potential")
+        doc.append("")
+        recommendations.append("IMPROVE_RISK_REWARD")
+
+    # 5. Best practices summary
+    doc.append("### ✅ Best Practices Based on Results")
+    doc.append("")
+
+    best_patterns = [p for p in patterns if float(p['win_rate']) >= 65]
+    if best_patterns:
+        doc.append("**Patterns to FOCUS on (65%+ win rate):**")
+        for p in best_patterns:
+            doc.append(f"- {p['pattern']} ({float(p['win_rate']):.1f}% win rate)")
+        doc.append("")
+
+    good_patterns = [p for p in patterns if 55 <= float(p['win_rate']) < 65]
+    if good_patterns:
+        doc.append("**Patterns to TRADE with caution (55-65% win rate):**")
+        for p in good_patterns:
+            doc.append(f"- {p['pattern']} ({float(p['win_rate']):.1f}% win rate)")
+        doc.append("")
+
+    doc.append("**Position Sizing Strategy:**")
+    doc.append("- High confidence (≥8.5/10): 100% position size")
+    doc.append("- Medium confidence (8.0-8.4/10): 75% position size")
+    doc.append("- Low confidence (7.0-7.9/10): 50% position size OR skip")
+    doc.append("")
+
+    doc.append("---")
+    doc.append("")
+
+    # Implementation Changes
+    doc.append("## 7. Recommended Code Changes")
+    doc.append("")
+
+    doc.append("### File: `eod_analyzer.py`")
+    doc.append("")
+    doc.append("```python")
+    doc.append("# BEFORE:")
+    doc.append("self.pattern_detector = EODPatternDetector(")
+    doc.append("    pattern_tolerance=2.0,")
+    doc.append("    volume_confirmation=True,")
+    doc.append("    min_confidence=7.0  # OLD")
+    doc.append(")")
+    doc.append("")
+    doc.append("# AFTER:")
+    doc.append("self.pattern_detector = EODPatternDetector(")
+    doc.append("    pattern_tolerance=2.0,")
+    doc.append("    volume_confirmation=True,")
+    doc.append("    min_confidence=8.0  # RAISED from 7.0")
+    doc.append(")")
+    doc.append("```")
+    doc.append("")
+
+    if "DISABLE_POOR_PATTERNS" in recommendations:
+        doc.append("### File: `eod_pattern_detector.py`")
+        doc.append("")
+        doc.append("Add pattern filtering logic:")
+        doc.append("")
+        doc.append("```python")
+        doc.append("# After pattern detection, filter poor performers")
+        doc.append("def _should_trade_pattern(self, pattern_type: str, confidence: float) -> bool:")
+        doc.append("    \"\"\"Filter patterns based on backtest results\"\"\"")
+        for p in poor_patterns:
+            pattern_win_rate = float(p['win_rate'])
+            doc.append(f"    # {p['pattern']}: {pattern_win_rate:.1f}% win rate - require high confidence")
+            if pattern_win_rate < 40:
+                doc.append(f"    if pattern_type == '{p['pattern']}':")
+                doc.append(f"        return confidence >= 8.5  # Very high bar")
+        doc.append("    return True")
+        doc.append("```")
+        doc.append("")
+
+    doc.append("---")
+    doc.append("")
+
+    # Trading Rules
+    doc.append("## 8. Updated Trading Rules (Based on 3-Year Data)")
+    doc.append("")
+
+    doc.append("### Entry Rules")
+    doc.append("1. **Minimum confidence:** 8.0/10 (raised from 7.0)")
+    doc.append("2. **Volume confirmation:** Must have 1.5× average volume")
+    doc.append("3. **Market regime alignment:** Best results in aligned regimes")
+    doc.append("4. **Pattern type:** Focus on high win-rate patterns only")
+    doc.append("")
+
+    doc.append("### Position Sizing")
+    doc.append("- **Confidence 9.0-10.0:** 100% of normal position size")
+    doc.append("- **Confidence 8.5-8.9:** 75% position size")
+    doc.append("- **Confidence 8.0-8.4:** 50% position size")
+    doc.append("- **Confidence <8.0:** Skip the trade")
+    doc.append("")
+
+    doc.append("### Exit Rules")
+    avg_days = summary.get('Avg Days to Target (Wins)', 0)
+    doc.append(f"- **Target:** Pattern-projected target price")
+    doc.append(f"- **Time stop:** Exit after {int(avg_days * 1.5)} days if no movement (1.5× avg winning trade duration)")
+    doc.append(f"- **Stop loss:** 2% or support/resistance level (whichever is closer)")
+    doc.append("")
+
+    doc.append("### Pattern-Specific Rules")
+    for p in sorted_patterns[:3]:  # Top 3 patterns
+        doc.append(f"- **{p['pattern']}:** {float(p['win_rate']):.1f}% win rate, avg {float(p['avg_days_to_target']) if p['avg_days_to_target'] else 0:.0f} days → Trade with confidence")
+    doc.append("")
+
+    for p in sorted_patterns[-2:]:  # Bottom 2 patterns
+        doc.append(f"- **{p['pattern']}:** {float(p['win_rate']):.1f}% win rate → Avoid or require ≥8.5 confidence")
+    doc.append("")
+
+    doc.append("---")
+    doc.append("")
+
+    # Expected Performance After Changes
+    doc.append("## 9. Expected Performance After Improvements")
+    doc.append("")
+
+    high_conf_trades = sum(int(c['total_trades']) if c['total_trades'] else 0 for c in confidence if '8.0' in c['range'] or '9.0' in c['range'])
+    high_conf_wins = sum(int(c['wins']) if c['wins'] else 0 for c in confidence if '8.0' in c['range'] or '9.0' in c['range'])
+    high_conf_win_rate = high_conf_wins / high_conf_trades * 100 if high_conf_trades > 0 else 0
+
+    doc.append(f"### If We Only Traded Confidence ≥8.0:")
+    doc.append(f"- **Trades per year:** ~{high_conf_trades // 3} trades (reduced from {results['total_trades'] // 3})")
+    doc.append(f"- **Expected win rate:** {high_conf_win_rate:.1f}% (vs {win_rate:.1f}% overall)")
+    doc.append(f"- **Trade quality:** Much higher (fewer false signals)")
+    doc.append("")
+
+    doc.append("**Trade-off:**")
+    doc.append("- ✅ Higher win rate and confidence")
+    doc.append("- ⚠️ Fewer trading opportunities (more selective)")
+    doc.append("")
+
+    doc.append("---")
+    doc.append("")
+
+    # Final Summary
+    doc.append("## 10. Summary & Next Steps")
+    doc.append("")
+
+    doc.append("### Current System Status")
+    if win_rate >= 55:
+        doc.append(f"✅ System is **profitable** with {win_rate:.1f}% win rate")
+        doc.append("- Ready for paper trading with recommended improvements")
+    elif win_rate >= 45:
+        doc.append(f"⚠️ System is **marginally profitable** with {win_rate:.1f}% win rate")
+        doc.append("- Requires improvements before live trading")
+    else:
+        doc.append(f"❌ System needs **significant improvement** (current: {win_rate:.1f}% win rate)")
+        doc.append("- Do NOT trade live until win rate >50%")
+    doc.append("")
+
+    doc.append("### Priority Actions")
+    doc.append("")
+    doc.append("**High Priority (Do Immediately):**")
+    doc.append("1. ✅ Raise minimum confidence from 7.0 to 8.0")
+    if poor_patterns:
+        doc.append("2. ✅ Disable or restrict poor-performing patterns")
+    doc.append(f"3. ✅ Focus trades on {best_regime['regime']} market regime")
+    doc.append("")
+
+    doc.append("**Medium Priority (Next Week):**")
+    doc.append("1. Implement confidence-based position sizing")
+    doc.append("2. Add time-based stops (exit after 15-20 days)")
+    doc.append("3. Backtest with new parameters to validate improvements")
+    doc.append("")
+
+    doc.append("**Low Priority (Future Enhancements):**")
+    doc.append("1. Add machine learning for pattern classification")
+    doc.append("2. Implement multi-timeframe confirmation")
+    doc.append("3. Add sector rotation analysis")
+    doc.append("")
+
+    doc.append("---")
+    doc.append("")
+    doc.append(f"**Report Generated:** November 4, 2025")
+    doc.append(f"**Data Source:** `backtest_3year_comprehensive.xlsx`")
+    doc.append(f"**Analysis Method:** {results['total_trades']} trades across 3 years (2022-2025)")
+    doc.append("")
+
+    return "\n".join(doc)
+
+
+def main():
+    print("Analyzing 3-year backtest results...")
+
+    file_path = "data/eod_reports/backtest_3year_comprehensive.xlsx"
+
+    # Analyze Excel file
+    results = analyze_backtest_excel(file_path)
+
+    # Generate recommendations
+    recommendations = generate_recommendations(results)
+
+    # Save to file
+    output_file = "BACKTEST_3YEAR_RECOMMENDATIONS.md"
+    with open(output_file, 'w') as f:
+        f.write(recommendations)
+
+    print(f"\n✅ Analysis complete!")
+    print(f"📄 Recommendations saved to: {output_file}")
+    print(f"\n📊 Key Metrics:")
+    print(f"   - Total Trades: {results['total_trades']}")
+    print(f"   - Win Rate: {results['summary'].get('Win Rate (%)', 0):.1f}%")
+    print(f"   - Avg P&L: {results['summary'].get('Avg P&L per Trade (%)', 0):.2f}%")
+    best_pattern = max(results['patterns'], key=lambda x: float(x['win_rate']) if x['win_rate'] else 0)
+    print(f"   - Best Pattern: {best_pattern['pattern']}")
+    print(f"   - Pattern Win Rate: {float(best_pattern['win_rate']):.1f}%")
+
+
+if __name__ == "__main__":
+    main()
