@@ -6,6 +6,7 @@ import time
 import random
 from price_cache import PriceCache
 from telegram_notifier import TelegramNotifier
+from alert_history_manager import AlertHistoryManager
 import config
 
 # Import data source libraries based on configuration
@@ -27,9 +28,8 @@ class StockMonitor:
         self.telegram = TelegramNotifier()
         self.stocks = self._load_stock_list()
 
-        # Alert tracking for deduplication
-        # Format: {(symbol, alert_type): timestamp}
-        self.alert_history = {}
+        # Alert tracking for deduplication (PERSISTENT - survives script restarts)
+        self.alert_history_manager = AlertHistoryManager()
 
         # Initialize Kite Connect if using kite data source
         if not config.DEMO_MODE and config.DATA_SOURCE == 'kite':
@@ -473,6 +473,7 @@ class StockMonitor:
         """
         Check if an alert should be sent based on deduplication rules
         Prevents sending duplicate alerts for the same stock and alert type within cooldown period
+        Uses persistent storage to survive script restarts
 
         Args:
             symbol: Stock symbol
@@ -482,25 +483,8 @@ class StockMonitor:
         Returns:
             True if alert should be sent, False if it's a duplicate
         """
-        from datetime import timedelta
-
-        alert_key = (symbol, alert_type)
-        current_time = datetime.now()
-
-        # Check if this alert was sent recently
-        if alert_key in self.alert_history:
-            last_sent_time = self.alert_history[alert_key]
-            time_since_last_alert = current_time - last_sent_time
-
-            if time_since_last_alert < timedelta(minutes=cooldown_minutes):
-                # Duplicate alert - skip
-                logger.debug(f"{symbol}: Skipping duplicate {alert_type} alert "
-                           f"(sent {time_since_last_alert.total_seconds()/60:.1f}min ago)")
-                return False
-
-        # Not a duplicate - record and allow
-        self.alert_history[alert_key] = current_time
-        return True
+        # Delegate to persistent alert history manager
+        return self.alert_history_manager.should_send_alert(symbol, alert_type, cooldown_minutes)
 
     def check_stock_for_drop(self, symbol: str, current_price: float, current_volume: int = 0) -> bool:
         """
