@@ -306,6 +306,7 @@ class EODAnalyzer:
             volume_results,
             pattern_results,
             quote_data,
+            historical_data_map,
             datetime.now()
         )
 

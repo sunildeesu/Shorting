@@ -296,6 +296,7 @@ class EODAnalyzerForDate:
             volume_results,
             pattern_results,
             quote_data,
+            historical_data_map,
             target_date
         )
 

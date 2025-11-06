@@ -55,6 +55,7 @@ class EODReportGenerator:
         volume_results: List[Dict],
         pattern_results: List[Dict],
         quote_data: Dict[str, Dict],
+        historical_data_map: Dict[str, List[Dict]],
         analysis_date: datetime = None
     ) -> str:
         """
@@ -64,6 +65,7 @@ class EODReportGenerator:
             volume_results: List of volume analysis results
             pattern_results: List of pattern detection results
             quote_data: Quote data for price information
+            historical_data_map: Historical data for EOD closing prices
             analysis_date: Date of analysis (default: today)
 
         Returns:
@@ -78,7 +80,7 @@ class EODReportGenerator:
         ws.title = "EOD Analysis"
 
         # Merge results (volume + patterns)
-        merged_data = self._merge_results(volume_results, pattern_results, quote_data)
+        merged_data = self._merge_results(volume_results, pattern_results, quote_data, historical_data_map)
 
         # Filter to only include stocks with findings
         findings = [
@@ -107,7 +109,8 @@ class EODReportGenerator:
         self,
         volume_results: List[Dict],
         pattern_results: List[Dict],
-        quote_data: Dict[str, Dict]
+        quote_data: Dict[str, Dict],
+        historical_data_map: Dict[str, List[Dict]]
     ) -> List[Dict]:
         """Merge volume and pattern results into single dataset"""
         # Create lookup dictionaries
@@ -122,14 +125,17 @@ class EODReportGenerator:
             volume_data = volume_map.get(symbol, {})
             pattern_data = pattern_map.get(symbol, {})
 
-            # Quote data uses NSE:SYMBOL format, need to add prefix
-            quote_key = f"NSE:{symbol}"
-            quote = quote_data.get(quote_key, {})
+            # Get EOD closing price from historical data (last day's close)
+            historical_data = historical_data_map.get(symbol, [])
+            current_price = 0
+            open_price = 0
 
-            # Get price information
-            ohlc = quote.get('ohlc', {})
-            current_price = ohlc.get('close', 0)
-            open_price = ohlc.get('open', 0)
+            if historical_data and len(historical_data) > 0:
+                # Use the last day's closing price for EOD report
+                current_price = historical_data[-1].get('close', 0)
+                open_price = historical_data[-1].get('open', 0)
+
+            # Calculate price change percentage
             price_change_pct = 0
             if open_price > 0:
                 price_change_pct = ((current_price - open_price) / open_price) * 100
