@@ -125,7 +125,15 @@ class TelegramNotifier:
                 f"📊 Change: -₹{(previous_price - current_price):.2f}\n"
             )
 
-        # Add volume spike details if applicable
+        # Add volume information for ALL alerts
+        if volume_data:
+            current_vol = volume_data.get("current_volume", 0)
+
+            # Show basic volume for all alerts
+            if current_vol > 0:
+                message += f"📊 Volume: {current_vol:,} shares\n"
+
+        # Add detailed volume spike analysis if applicable
         if alert_type in ["volume_spike", "volume_spike_rise"] and volume_data:
             current_vol = volume_data.get("current_volume", 0)
             avg_vol = volume_data.get("avg_volume", 0)

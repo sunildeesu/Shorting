@@ -551,7 +551,8 @@ class StockMonitor:
 
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
-                        alert_type="5min"
+                        alert_type="5min",
+                        volume_data=volume_data
                     )
                     alert_sent = alert_sent or success
 
@@ -565,7 +566,8 @@ class StockMonitor:
 
                 success = self.telegram.send_alert(
                     symbol, drop_10min, current_price, price_10min_ago,
-                    alert_type="10min"
+                    alert_type="10min",
+                    volume_data=volume_data
                 )
                 alert_sent = alert_sent or success
 
@@ -581,7 +583,8 @@ class StockMonitor:
 
                     success = self.telegram.send_alert(
                         symbol, drop_30min, current_price, price_30min_ago,
-                        alert_type="30min"
+                        alert_type="30min",
+                        volume_data=volume_data
                     )
                     alert_sent = alert_sent or success
 
@@ -654,7 +657,8 @@ class StockMonitor:
 
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
-                        alert_type="5min_rise"
+                        alert_type="5min_rise",
+                        volume_data=volume_data
                     )
                     alert_sent = alert_sent or success
 
@@ -668,7 +672,8 @@ class StockMonitor:
 
                 success = self.telegram.send_alert(
                     symbol, rise_10min, current_price, price_10min_ago,
-                    alert_type="10min_rise"
+                    alert_type="10min_rise",
+                    volume_data=volume_data
                 )
                 alert_sent = alert_sent or success
 
@@ -684,7 +689,8 @@ class StockMonitor:
 
                     success = self.telegram.send_alert(
                         symbol, rise_30min, current_price, price_30min_ago,
-                        alert_type="30min_rise"
+                        alert_type="30min_rise",
+                        volume_data=volume_data
                     )
                     alert_sent = alert_sent or success
 
