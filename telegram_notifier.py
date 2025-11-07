@@ -18,7 +18,7 @@ class TelegramNotifier:
 
     def send_alert(self, symbol: str, drop_percent: float, current_price: float,
                    previous_price: float, alert_type: str = "10min",
-                   volume_data: dict = None) -> bool:
+                   volume_data: dict = None, market_cap_cr: float = None) -> bool:
         """
         Send a stock drop alert to Telegram channel
 
@@ -29,18 +29,20 @@ class TelegramNotifier:
             previous_price: Previous stock price
             alert_type: Type of alert ("10min", "30min", "volume_spike")
             volume_data: Optional volume data dict with current_volume, avg_volume
+            market_cap_cr: Optional market cap in crores
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_alert_message(
-            symbol, drop_percent, current_price, previous_price, alert_type, volume_data
+            symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr
         )
         return self._send_message(message)
 
     def _format_alert_message(self, symbol: str, drop_percent: float,
                               current_price: float, previous_price: float,
-                              alert_type: str = "10min", volume_data: dict = None) -> str:
+                              alert_type: str = "10min", volume_data: dict = None,
+                              market_cap_cr: float = None) -> str:
         """
         Format alert message with stock details for both drops and rises
 
@@ -101,6 +103,13 @@ class TelegramNotifier:
             message = f"{header}\n\n📊 <b>Stock: {display_symbol}</b>\n"
         else:
             message = f"{header}\n\n📊 Stock: {display_symbol}\n"
+
+        # Add market cap if available
+        if market_cap_cr:
+            # Format market cap in crores with commas
+            market_cap_formatted = f"{market_cap_cr:,.0f}"
+            # Market cap % change = price % change
+            message += f"💰 Market Cap: ₹{market_cap_formatted} Cr ({drop_percent:+.2f}%)\n"
 
         # Add pharma indicator (only for drops)
         if is_pharma and not is_rise:

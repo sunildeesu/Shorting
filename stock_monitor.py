@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime, date
 from typing import List, Dict, Tuple
 import time
@@ -31,6 +32,9 @@ class StockMonitor:
         # Alert tracking for deduplication (PERSISTENT - survives script restarts)
         self.alert_history_manager = AlertHistoryManager()
 
+        # Load shares outstanding for market cap calculation
+        self.shares_outstanding = self._load_shares_outstanding()
+
         # Initialize Kite Connect if using kite data source
         if not config.DEMO_MODE and config.DATA_SOURCE == 'kite':
             if not config.KITE_API_KEY or not config.KITE_ACCESS_TOKEN:
@@ -55,6 +59,47 @@ class StockMonitor:
         except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
             logger.error(f"Failed to load stock list: {e}")
             return []
+
+    def _load_shares_outstanding(self) -> Dict[str, int]:
+        """Load shares outstanding data from JSON file for market cap calculation"""
+        shares_file = "data/shares_outstanding.json"
+        try:
+            if os.path.exists(shares_file):
+                with open(shares_file, 'r') as f:
+                    shares_data = json.load(f)
+                    logger.info(f"Loaded shares outstanding for {len(shares_data)} stocks")
+                    return shares_data
+            else:
+                logger.warning(f"Shares outstanding file not found: {shares_file}")
+                logger.warning("Market cap will not be calculated in alerts")
+                return {}
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load shares outstanding: {e}")
+            return {}
+
+    def calculate_market_cap(self, symbol: str, current_price: float) -> Tuple[float, float]:
+        """
+        Calculate market cap and its change
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+            current_price: Current price
+
+        Returns:
+            Tuple of (market_cap_crores, market_cap_change_percent)
+            Returns (None, None) if shares data not available
+        """
+        # Remove .NS suffix if present
+        clean_symbol = symbol.replace('.NS', '')
+
+        if clean_symbol not in self.shares_outstanding:
+            return None, None
+
+        shares = self.shares_outstanding[clean_symbol]
+        # Market Cap (Crores) = Price × Shares / 10000000 (1 crore)
+        market_cap_cr = (current_price * shares) / 10000000
+
+        return market_cap_cr, None  # percent change will be calculated from price change
 
     def generate_mock_prices(self) -> Dict[str, float]:
         """
@@ -515,6 +560,9 @@ class StockMonitor:
         timestamp = datetime.now().isoformat()
         self.price_cache.update_price(symbol, current_price, current_volume, timestamp)
 
+        # Calculate market cap if shares data available
+        market_cap_cr, _ = self.calculate_market_cap(symbol, current_price)
+
         alert_sent = False
 
         # === CHECK 1: Volume Spike with Drop (PRIORITY ALERT - checked first, 5-min comparison) ===
@@ -535,7 +583,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="volume_spike",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
@@ -552,7 +601,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="5min",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
@@ -567,7 +617,8 @@ class StockMonitor:
                 success = self.telegram.send_alert(
                     symbol, drop_10min, current_price, price_10min_ago,
                     alert_type="10min",
-                    volume_data=volume_data
+                    volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                 )
                 alert_sent = alert_sent or success
 
@@ -584,7 +635,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, drop_30min, current_price, price_30min_ago,
                         alert_type="30min",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
@@ -621,6 +673,9 @@ class StockMonitor:
         _, price_10min_ago = self.price_cache.get_prices(symbol)
         _, price_30min_ago = self.price_cache.get_price_30min(symbol)
 
+        # Calculate market cap if shares data available (same as in check_stock_for_drop)
+        market_cap_cr, _ = self.calculate_market_cap(symbol, current_price)
+
         alert_sent = False
 
         # === CHECK 1: Volume Spike with Rise (PRIORITY ALERT - checked first, 5-min comparison) ===
@@ -641,7 +696,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="volume_spike_rise",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
@@ -658,7 +714,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="5min_rise",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
@@ -673,7 +730,8 @@ class StockMonitor:
                 success = self.telegram.send_alert(
                     symbol, rise_10min, current_price, price_10min_ago,
                     alert_type="10min_rise",
-                    volume_data=volume_data
+                    volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                 )
                 alert_sent = alert_sent or success
 
@@ -690,7 +748,8 @@ class StockMonitor:
                     success = self.telegram.send_alert(
                         symbol, rise_30min, current_price, price_30min_ago,
                         alert_type="30min_rise",
-                        volume_data=volume_data
+                        volume_data=volume_data,
+                        market_cap_cr=market_cap_cr
                     )
                     alert_sent = alert_sent or success
 
