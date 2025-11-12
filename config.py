@@ -64,5 +64,9 @@ STOCK_LIST_FILE = 'fo_stocks.json'
 PRICE_CACHE_FILE = 'data/price_cache.json'
 LOG_FILE = 'logs/stock_monitor.log'
 
+# Alert Excel Logging Configuration
+ALERT_EXCEL_PATH = 'data/alerts/alert_tracking.xlsx'
+ENABLE_EXCEL_LOGGING = os.getenv('ENABLE_EXCEL_LOGGING', 'true').lower() == 'true'
+
 # Yahoo Finance Configuration
 YAHOO_FINANCE_SUFFIX = '.NS'  # NSE stocks suffix for Yahoo Finance

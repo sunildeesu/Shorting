@@ -30,3 +30,9 @@ logs/*.log
 # OS
 .DS_Store
 Thumbs.db
+
+# LaunchDaemon and automation configs (contain local paths)
+*.plist
+
+# Shell scripts that may contain sensitive commands
+refresh_token_quick.sh

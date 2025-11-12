@@ -2,6 +2,7 @@ import requests
 from typing import Optional
 import config
 import logging
+from alert_excel_logger import AlertExcelLogger
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,16 @@ class TelegramNotifier:
 
         if not self.bot_token or not self.channel_id:
             raise ValueError("Telegram bot token and channel ID must be set in .env file")
+
+        # Initialize Excel logger if enabled
+        self.excel_logger = None
+        if config.ENABLE_EXCEL_LOGGING:
+            try:
+                self.excel_logger = AlertExcelLogger(config.ALERT_EXCEL_PATH)
+                logger.info("Alert Excel logging enabled")
+            except Exception as e:
+                logger.error(f"Failed to initialize Excel logger: {e}")
+                self.excel_logger = None
 
     def send_alert(self, symbol: str, drop_percent: float, current_price: float,
                    previous_price: float, alert_type: str = "10min",
@@ -37,7 +48,25 @@ class TelegramNotifier:
         message = self._format_alert_message(
             symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr
         )
-        return self._send_message(message)
+        telegram_success = self._send_message(message)
+
+        # Log to Excel if enabled
+        if self.excel_logger:
+            try:
+                self.excel_logger.log_alert(
+                    symbol=symbol,
+                    alert_type=alert_type,
+                    drop_percent=drop_percent,
+                    current_price=current_price,
+                    previous_price=previous_price,
+                    volume_data=volume_data,
+                    market_cap_cr=market_cap_cr,
+                    telegram_sent=telegram_success
+                )
+            except Exception as e:
+                logger.error(f"Failed to log alert to Excel: {e}")
+
+        return telegram_success
 
     def _format_alert_message(self, symbol: str, drop_percent: float,
                               current_price: float, previous_price: float,

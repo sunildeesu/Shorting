@@ -30,7 +30,32 @@ print("After logging in, you will be redirected to a URL like:")
 print("  http://127.0.0.1:5000/?request_token=XXXXX&action=login&status=success")
 print("\n" + "=" * 70)
 
-request_token = input("\nEnter the 'request_token' from the redirected URL: ").strip()
+redirect_input = input("\nPaste the FULL redirect URL (or just the request_token): ").strip()
+
+if not redirect_input:
+    print("\n❌ ERROR: Input is required!")
+    sys.exit(1)
+
+# Parse request_token from URL if full URL provided
+request_token = redirect_input
+if "request_token=" in redirect_input:
+    # Extract request_token from URL
+    import urllib.parse
+    if "?" in redirect_input:
+        query_string = redirect_input.split("?")[1]
+        params = urllib.parse.parse_qs(query_string)
+        if "request_token" in params:
+            request_token = params["request_token"][0]
+            print(f"✓ Extracted request_token: {request_token[:10]}...")
+        else:
+            print("\n❌ ERROR: Could not find request_token in URL!")
+            sys.exit(1)
+    else:
+        # Try to extract from simple format
+        parts = redirect_input.split("request_token=")
+        if len(parts) > 1:
+            request_token = parts[1].split("&")[0]
+            print(f"✓ Extracted request_token: {request_token[:10]}...")
 
 if not request_token:
     print("\n❌ ERROR: Request token is required!")

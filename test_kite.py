@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
 """Test Kite Connect integration with 5 stocks"""
 
 import sys
