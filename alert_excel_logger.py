@@ -37,10 +37,11 @@ class AlertExcelLogger:
         "30min": "30min_alerts",
         "30min_rise": "30min_alerts",
         "volume_spike": "Volume_Spike_alerts",
-        "volume_spike_rise": "Volume_Spike_alerts"
+        "volume_spike_rise": "Volume_Spike_alerts",
+        "atr_breakout": "ATR_Breakout_alerts"
     }
 
-    # Column headers for all sheets
+    # Column headers for standard drop/rise alerts
     HEADERS = [
         "Date", "Time", "Symbol", "Direction",
         "Alert Price", "Previous Price", "Change %", "Change (Rs)",
@@ -48,6 +49,17 @@ class AlertExcelLogger:
         "Market Cap (Cr)", "Telegram Sent",
         "Price 2min", "Price 10min", "Price EOD",
         "Status", "Row ID"
+    ]
+
+    # Column headers for ATR breakout alerts
+    ATR_HEADERS = [
+        "Date", "Time", "Symbol",
+        "Open", "Entry Level", "Current Price", "Breakout Distance",
+        "ATR(20)", "ATR(30)", "Volatility Filter",
+        "Stop Loss", "Risk Amount", "Risk %",
+        "Volume", "Market Cap (Cr)", "Telegram Sent",
+        "Price 2min", "Price 10min", "Price EOD",
+        "Status", "Row ID", "Day of Week"
     ]
 
     def __init__(self, excel_path: str):
@@ -108,8 +120,58 @@ class AlertExcelLogger:
         """
         ws = self.workbook.create_sheet(sheet_name)
 
+        # Determine which headers to use based on sheet type
+        if sheet_name == "ATR_Breakout_alerts":
+            headers = self.ATR_HEADERS
+            column_widths = {
+                'A': 12,  # Date
+                'B': 10,  # Time
+                'C': 12,  # Symbol
+                'D': 12,  # Open
+                'E': 12,  # Entry Level
+                'F': 12,  # Current Price
+                'G': 14,  # Breakout Distance
+                'H': 10,  # ATR(20)
+                'I': 10,  # ATR(30)
+                'J': 12,  # Volatility Filter
+                'K': 12,  # Stop Loss
+                'L': 12,  # Risk Amount
+                'M': 10,  # Risk %
+                'N': 13,  # Volume
+                'O': 13,  # Market Cap
+                'P': 12,  # Telegram
+                'Q': 12,  # Price 2min
+                'R': 12,  # Price 10min
+                'S': 12,  # Price EOD
+                'T': 10,  # Status
+                'U': 25,  # Row ID
+                'V': 12   # Day of Week
+            }
+        else:
+            headers = self.HEADERS
+            column_widths = {
+                'A': 12,  # Date
+                'B': 10,  # Time
+                'C': 12,  # Symbol
+                'D': 10,  # Direction
+                'E': 12,  # Alert Price
+                'F': 12,  # Previous Price
+                'G': 10,  # Change %
+                'H': 11,  # Change Rs
+                'I': 13,  # Volume
+                'J': 13,  # Avg Volume
+                'K': 12,  # Volume Mult
+                'L': 13,  # Market Cap
+                'M': 12,  # Telegram
+                'N': 12,  # Price 2min
+                'O': 12,  # Price 10min
+                'P': 12,  # Price EOD
+                'Q': 10,  # Status
+                'R': 25   # Row ID
+            }
+
         # Write headers
-        for col_num, header in enumerate(self.HEADERS, start=1):
+        for col_num, header in enumerate(headers, start=1):
             cell = ws.cell(row=1, column=col_num, value=header)
 
             # Header formatting
@@ -124,27 +186,6 @@ class AlertExcelLogger:
             )
 
         # Set column widths
-        column_widths = {
-            'A': 12,  # Date
-            'B': 10,  # Time
-            'C': 12,  # Symbol
-            'D': 10,  # Direction
-            'E': 12,  # Alert Price
-            'F': 12,  # Previous Price
-            'G': 10,  # Change %
-            'H': 11,  # Change Rs
-            'I': 13,  # Volume
-            'J': 13,  # Avg Volume
-            'K': 12,  # Volume Mult
-            'L': 13,  # Market Cap
-            'M': 12,  # Telegram
-            'N': 12,  # Price 2min
-            'O': 12,  # Price 10min
-            'P': 12,  # Price EOD
-            'Q': 10,  # Status
-            'R': 25   # Row ID
-        }
-
         for col_letter, width in column_widths.items():
             ws.column_dimensions[col_letter].width = width
 
@@ -653,6 +694,121 @@ class AlertExcelLogger:
         except Exception as e:
             logger.error(f"Error applying color formatting: {e}", exc_info=True)
             return colored_count
+
+    def log_atr_breakout(
+        self,
+        symbol: str,
+        today_open: float,
+        entry_level: float,
+        current_price: float,
+        breakout_distance: float,
+        atr_20: float,
+        atr_30: float,
+        volatility_filter_passed: bool,
+        stop_loss: float,
+        risk_amount: float,
+        risk_percent: float,
+        volume: int,
+        market_cap_cr: Optional[float] = None,
+        telegram_sent: bool = False,
+        timestamp: Optional[datetime] = None
+    ) -> bool:
+        """
+        Log an ATR breakout alert to the ATR_Breakout_alerts sheet.
+
+        Args:
+            symbol: Stock symbol (e.g., "RELIANCE")
+            today_open: Today's opening price
+            entry_level: Breakout entry level (Open + 2.5×ATR)
+            current_price: Current stock price
+            breakout_distance: Distance above entry level
+            atr_20: ATR(20) value
+            atr_30: ATR(30) value
+            volatility_filter_passed: Whether ATR(20) < ATR(30)
+            stop_loss: Stop loss level
+            risk_amount: Risk in rupees
+            risk_percent: Risk as percentage
+            volume: Current volume
+            market_cap_cr: Market cap in crores
+            telegram_sent: Whether Telegram alert was sent
+            timestamp: Alert timestamp (defaults to now)
+
+        Returns:
+            True if logged successfully, False otherwise
+        """
+        try:
+            sheet_name = "ATR_Breakout_alerts"
+            ws = self.workbook[sheet_name]
+
+            # Prepare timestamp
+            if timestamp is None:
+                timestamp = datetime.now()
+
+            date_str = timestamp.strftime("%Y-%m-%d")
+            time_str = timestamp.strftime("%H:%M:%S")
+            day_of_week = timestamp.strftime("%A")
+
+            # Generate unique row ID
+            row_id = f"{symbol}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+
+            # Find next empty row
+            next_row = ws.max_row + 1
+
+            # Prepare row data (matching ATR_HEADERS order)
+            row_data = [
+                date_str,  # A: Date
+                time_str,  # B: Time
+                symbol,  # C: Symbol
+                today_open,  # D: Open
+                entry_level,  # E: Entry Level
+                current_price,  # F: Current Price
+                breakout_distance,  # G: Breakout Distance
+                atr_20,  # H: ATR(20)
+                atr_30,  # I: ATR(30)
+                "PASSED" if volatility_filter_passed else "FAILED",  # J: Volatility Filter
+                stop_loss,  # K: Stop Loss
+                risk_amount,  # L: Risk Amount
+                risk_percent,  # M: Risk %
+                volume,  # N: Volume
+                market_cap_cr if market_cap_cr else "N/A",  # O: Market Cap
+                "Yes" if telegram_sent else "No",  # P: Telegram Sent
+                "",  # Q: Price 2min (to be filled later)
+                "",  # R: Price 10min (to be filled later)
+                "",  # S: Price EOD (to be filled later)
+                "Pending",  # T: Status
+                row_id,  # U: Row ID
+                day_of_week  # V: Day of Week
+            ]
+
+            # Write row data
+            for col_num, value in enumerate(row_data, start=1):
+                cell = ws.cell(row=next_row, column=col_num, value=value)
+
+                # Apply number formatting
+                if col_num in [4, 5, 6, 7, 8, 9, 11, 12, 17, 18, 19]:  # Price/ATR columns
+                    cell.number_format = '0.00'
+                elif col_num == 13:  # Risk %
+                    cell.number_format = '0.00%'
+                elif col_num in [14]:  # Volume
+                    cell.number_format = '#,##0'
+                elif col_num == 15:  # Market Cap
+                    if market_cap_cr:
+                        cell.number_format = '#,##0'
+
+                # Center alignment for most columns
+                if col_num not in [21]:  # Except Row ID
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            # Save workbook
+            self._save_workbook()
+
+            logger.info(f"ATR breakout logged for {symbol} at ₹{current_price:.2f} "
+                       f"(Entry: ₹{entry_level:.2f}, SL: ₹{stop_loss:.2f})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to log ATR breakout for {symbol}: {e}", exc_info=True)
+            return False
 
     def close(self):
         """Close workbook and release resources."""

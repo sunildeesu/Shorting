@@ -34,6 +34,38 @@ CHECK_INTERVAL_MINUTES = 5
 VOLUME_SPIKE_MULTIPLIER = float(os.getenv('VOLUME_SPIKE_MULTIPLIER', '2.5'))  # 2.5x average = spike (priority alert)
 VOLUME_MIN_HISTORY = int(os.getenv('VOLUME_MIN_HISTORY', '3'))  # Min snapshots needed for avg
 
+# ATR Breakout Configuration
+# Strategy: Entry on breakout when volatility is contracting (ATR(20) < ATR(30))
+ATR_PERIOD_SHORT = int(os.getenv('ATR_PERIOD_SHORT', '20'))  # Short-term ATR period
+ATR_PERIOD_LONG = int(os.getenv('ATR_PERIOD_LONG', '30'))  # Long-term ATR period
+ATR_ENTRY_MULTIPLIER = float(os.getenv('ATR_ENTRY_MULTIPLIER', '2.5'))  # Entry: Open + (2.5 × ATR) - ORIGINAL (proven profitable)
+ATR_STOP_MULTIPLIER = float(os.getenv('ATR_STOP_MULTIPLIER', '0.5'))  # Stop: Entry - (0.5 × ATR)
+ATR_FILTER_CONTRACTION = os.getenv('ATR_FILTER_CONTRACTION', 'true').lower() == 'true'  # Require ATR(20) < ATR(30)
+ATR_FRIDAY_EXIT = os.getenv('ATR_FRIDAY_EXIT', 'true').lower() == 'true'  # Close positions on Friday
+ATR_MIN_VOLUME = int(os.getenv('ATR_MIN_VOLUME', '50'))  # Minimum daily volume in lakhs
+
+# ATR Volume Filter (DISABLED - backtest showed filters reduce performance)
+ATR_VOLUME_FILTER = os.getenv('ATR_VOLUME_FILTER', 'false').lower() == 'true'  # DISABLED: volume confirmation hurt performance
+ATR_VOLUME_MULTIPLIER = float(os.getenv('ATR_VOLUME_MULTIPLIER', '1.5'))  # Volume must be 1.5× average (not used when disabled)
+
+# ATR Price Trend Filter (DISABLED - backtest showed filters reduce performance)
+ATR_PRICE_FILTER = os.getenv('ATR_PRICE_FILTER', 'false').lower() == 'true'  # DISABLED: price filter hurt performance
+ATR_PRICE_MA_PERIOD = int(os.getenv('ATR_PRICE_MA_PERIOD', '20'))  # Price must be above 20-day MA (not used when disabled)
+
+ENABLE_ATR_ALERTS = os.getenv('ENABLE_ATR_ALERTS', 'true').lower() == 'true'  # Toggle ATR monitoring
+
+# Unified Cache Configuration
+# Shared caching across stock_monitor, atr_breakout_monitor, and eod_analyzer
+ENABLE_UNIFIED_CACHE = os.getenv('ENABLE_UNIFIED_CACHE', 'true').lower() == 'true'  # Enable unified caching
+QUOTE_CACHE_TTL_SECONDS = int(os.getenv('QUOTE_CACHE_TTL_SECONDS', '60'))  # Quote cache TTL (60 seconds)
+HISTORICAL_CACHE_TTL_HOURS = int(os.getenv('HISTORICAL_CACHE_TTL_HOURS', '24'))  # Historical data cache TTL (24 hours)
+INTRADAY_CACHE_TTL_HOURS = int(os.getenv('INTRADAY_CACHE_TTL_HOURS', '1'))  # Intraday data cache TTL (1 hour)
+
+# Cache File Paths
+UNIFIED_CACHE_DIR = 'data/unified_cache'
+QUOTE_CACHE_FILE = f'{UNIFIED_CACHE_DIR}/quote_cache.json'
+HISTORICAL_CACHE_DIR = UNIFIED_CACHE_DIR
+
 # Pharma stocks - good indicator for shorting opportunities (driven by negative news)
 # Updated 2025-11-03: Removed stocks delisted from F&O (LALPATHLAB, METROPOLIS, ABBOTINDIA, SANOFI, GLAXO)
 PHARMA_STOCKS = {

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from kiteconnect import KiteConnect
 import config
-from eod_cache_manager import EODCacheManager
+from unified_data_cache import UnifiedDataCache
 from eod_stock_filter import EODStockFilter
 from eod_volume_analyzer import EODVolumeAnalyzer
 from eod_pattern_detector import EODPatternDetector
@@ -39,8 +39,8 @@ class EODAnalyzer:
         self.kite = KiteConnect(api_key=config.KITE_API_KEY)
         self.kite.set_access_token(config.KITE_ACCESS_TOKEN)
 
-        # Initialize components
-        self.cache_manager = EODCacheManager()
+        # Initialize components (using unified cache for cross-monitor sharing)
+        self.cache_manager = UnifiedDataCache(cache_dir=config.HISTORICAL_CACHE_DIR)
         self.stock_filter = EODStockFilter(volume_threshold_lakhs=50.0, price_change_threshold=1.5)
         self.volume_analyzer = EODVolumeAnalyzer(spike_threshold=1.5)
         self.pattern_detector = EODPatternDetector(

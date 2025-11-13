@@ -8,6 +8,7 @@ import random
 from price_cache import PriceCache
 from telegram_notifier import TelegramNotifier
 from alert_history_manager import AlertHistoryManager
+from unified_quote_cache import UnifiedQuoteCache
 import config
 
 # Import data source libraries based on configuration
@@ -34,6 +35,19 @@ class StockMonitor:
 
         # Load shares outstanding for market cap calculation
         self.shares_outstanding = self._load_shares_outstanding()
+
+        # Initialize unified quote cache (if enabled)
+        self.quote_cache = None
+        if config.ENABLE_UNIFIED_CACHE:
+            try:
+                self.quote_cache = UnifiedQuoteCache(
+                    cache_file=config.QUOTE_CACHE_FILE,
+                    ttl_seconds=config.QUOTE_CACHE_TTL_SECONDS
+                )
+                logger.info(f"Unified quote cache enabled (TTL: {config.QUOTE_CACHE_TTL_SECONDS}s)")
+            except Exception as e:
+                logger.error(f"Failed to initialize quote cache: {e}")
+                self.quote_cache = None
 
         # Initialize Kite Connect if using kite data source
         if not config.DEMO_MODE and config.DATA_SOURCE == 'kite':
@@ -339,16 +353,45 @@ class StockMonitor:
 
     def fetch_all_prices_batch_kite_optimized(self) -> Dict[str, Tuple[float, int]]:
         """
-        Fetch prices using Kite's batch quote API (OPTIMIZED)
+        Fetch prices using Kite's batch quote API with unified cache (OPTIMIZED)
         Supports up to 500 instruments per call, using batches of 50 for safety
 
+        Uses UnifiedQuoteCache to prevent duplicate API calls within TTL window.
         This reduces API calls from 191 to ~4 per run (98% reduction!)
 
         Returns:
             Dictionary mapping symbol to (price, volume) tuple
         """
-        BATCH_SIZE = 50  # Conservative batch size (Kite supports up to 500)
         price_data = {}
+
+        # Try to use unified quote cache if enabled
+        if self.quote_cache and config.ENABLE_UNIFIED_CACHE:
+            try:
+                # Get quotes from cache or fetch fresh
+                quotes_dict = self.quote_cache.get_or_fetch_quotes(
+                    self.stocks,
+                    self.kite,
+                    batch_size=50
+                )
+
+                # Convert to price_data format: {symbol: (price, volume)}
+                for instrument, quote_data in quotes_dict.items():
+                    symbol = instrument.replace("NSE:", "").replace(".NS", "")
+                    ltp = quote_data.get('last_price')
+                    volume = quote_data.get('volume', 0)
+
+                    if ltp and ltp > 0:
+                        price_data[symbol] = (float(ltp), int(volume))
+
+                logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks")
+                return price_data
+
+            except Exception as e:
+                logger.error(f"Unified cache error, falling back to direct fetch: {e}")
+                # Fall through to original implementation
+
+        # FALLBACK: Original implementation (if cache disabled or failed)
+        BATCH_SIZE = 50  # Conservative batch size (Kite supports up to 500)
         failed_batches = []
         start_time = time.time()
 
