@@ -103,13 +103,19 @@ class EODPriceUpdaterV2:
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
 
+            # Determine column number based on sheet type (RSI columns added)
+            if sheet_name == "ATR_Breakout_alerts":
+                price_eod_col = 27  # Column AA (ATR sheet with RSI)
+            else:
+                price_eod_col = 24  # Column X (Standard sheets with RSI)
+
             for alert in alerts:
                 # Check if alert is from target date
                 if alert['date'] != target_date:
                     continue
 
                 row_num = alert['row_num']
-                price_eod = ws.cell(row=row_num, column=16).value  # Column P
+                price_eod = ws.cell(row=row_num, column=price_eod_col).value
 
                 # Only update if Price_EOD is empty
                 if not price_eod:

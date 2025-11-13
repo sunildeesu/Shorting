@@ -37,6 +37,7 @@ Thumbs.db
 # Shell scripts that may contain sensitive commands
 refresh_token_quick.sh
 data/alerts/*.xlsx
+data/alerts/*backup*.xlsx
 data/backtest_results/
 data/test_cache/
 data/unified_cache/

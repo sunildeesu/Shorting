@@ -96,9 +96,15 @@ class AlertPriceUpdaterV2:
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
 
+            # Determine column number based on sheet type (RSI columns added)
+            if sheet_name == "ATR_Breakout_alerts":
+                price_2min_col = 25  # Column Y (ATR sheet with RSI)
+            else:
+                price_2min_col = 22  # Column V (Standard sheets with RSI)
+
             for alert in alerts:
                 row_num = alert['row_num']
-                price_2min = ws.cell(row=row_num, column=14).value  # Column N
+                price_2min = ws.cell(row=row_num, column=price_2min_col).value
 
                 # Only update if Price_2min is empty
                 if not price_2min:
@@ -173,9 +179,15 @@ class AlertPriceUpdaterV2:
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
 
+            # Determine column number based on sheet type (RSI columns added)
+            if sheet_name == "ATR_Breakout_alerts":
+                price_10min_col = 26  # Column Z (ATR sheet with RSI)
+            else:
+                price_10min_col = 23  # Column W (Standard sheets with RSI)
+
             for alert in alerts:
                 row_num = alert['row_num']
-                price_10min = ws.cell(row=row_num, column=15).value  # Column O
+                price_10min = ws.cell(row=row_num, column=price_10min_col).value
 
                 # Only update if Price_10min is empty
                 if not price_10min:
