@@ -29,7 +29,8 @@ class TelegramNotifier:
 
     def send_alert(self, symbol: str, drop_percent: float, current_price: float,
                    previous_price: float, alert_type: str = "10min",
-                   volume_data: dict = None, market_cap_cr: float = None) -> bool:
+                   volume_data: dict = None, market_cap_cr: float = None,
+                   rsi_analysis: dict = None) -> bool:
         """
         Send a stock drop alert to Telegram channel
 
@@ -41,12 +42,13 @@ class TelegramNotifier:
             alert_type: Type of alert ("10min", "30min", "volume_spike")
             volume_data: Optional volume data dict with current_volume, avg_volume
             market_cap_cr: Optional market cap in crores
+            rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_alert_message(
-            symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr
+            symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr, rsi_analysis
         )
         telegram_success = self._send_message(message)
 
@@ -61,7 +63,8 @@ class TelegramNotifier:
                     previous_price=previous_price,
                     volume_data=volume_data,
                     market_cap_cr=market_cap_cr,
-                    telegram_sent=telegram_success
+                    telegram_sent=telegram_success,
+                    rsi_analysis=rsi_analysis
                 )
             except Exception as e:
                 logger.error(f"Failed to log alert to Excel: {e}")
@@ -71,7 +74,7 @@ class TelegramNotifier:
     def _format_alert_message(self, symbol: str, drop_percent: float,
                               current_price: float, previous_price: float,
                               alert_type: str = "10min", volume_data: dict = None,
-                              market_cap_cr: float = None) -> str:
+                              market_cap_cr: float = None, rsi_analysis: dict = None) -> str:
         """
         Format alert message with stock details for both drops and rises
 
@@ -83,6 +86,8 @@ class TelegramNotifier:
             alert_type: Type of alert ("10min", "30min", "volume_spike",
                                       "10min_rise", "30min_rise", "volume_spike_rise")
             volume_data: Volume data if applicable
+            market_cap_cr: Market cap in crores
+            rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
 
         Returns:
             Formatted message string
@@ -223,7 +228,114 @@ class TelegramNotifier:
                     f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 )
 
+        # Add RSI Momentum Analysis
+        if rsi_analysis:
+            message += self._format_rsi_section(rsi_analysis, is_priority)
+
         return message
+
+    def _format_rsi_section(self, rsi_analysis: dict, is_priority: bool = False) -> str:
+        """
+        Format RSI momentum analysis section for Telegram alert.
+
+        Args:
+            rsi_analysis: RSI analysis dict with RSI values and crossovers
+            is_priority: Whether this is a priority alert (for bold formatting)
+
+        Returns:
+            Formatted RSI section string
+        """
+        rsi_section = "\n\n"
+
+        # Use bold header for priority alerts
+        if is_priority:
+            rsi_section += "<b>📊 RSI MOMENTUM ANALYSIS:</b>\n"
+        else:
+            rsi_section += "📊 <b>RSI Momentum Analysis:</b>\n"
+
+        # RSI Values
+        rsi_9 = rsi_analysis.get('rsi_9')
+        rsi_14 = rsi_analysis.get('rsi_14')
+        rsi_21 = rsi_analysis.get('rsi_21')
+
+        if rsi_9 is not None or rsi_14 is not None or rsi_21 is not None:
+            rsi_section += "   <b>RSI Values:</b>\n"
+
+            if rsi_9 is not None:
+                # Add emoji indicators for overbought/oversold
+                if rsi_9 > 70:
+                    emoji = "🔥"  # Overbought
+                elif rsi_9 < 30:
+                    emoji = "❄️"  # Oversold
+                else:
+                    emoji = "📊"
+                rsi_section += f"      {emoji} RSI(9): {rsi_9:.2f}\n"
+
+            if rsi_14 is not None:
+                if rsi_14 > 70:
+                    emoji = "🔥"
+                elif rsi_14 < 30:
+                    emoji = "❄️"
+                else:
+                    emoji = "📊"
+                rsi_section += f"      {emoji} RSI(14): {rsi_14:.2f}\n"
+
+            if rsi_21 is not None:
+                if rsi_21 > 70:
+                    emoji = "🔥"
+                elif rsi_21 < 30:
+                    emoji = "❄️"
+                else:
+                    emoji = "📊"
+                rsi_section += f"      {emoji} RSI(21): {rsi_21:.2f}\n"
+
+        # RSI Crossovers
+        crossovers = rsi_analysis.get('crossovers', {})
+        if crossovers:
+            rsi_section += "   <b>Crossovers:</b>\n"
+
+            for pair, crossover_data in crossovers.items():
+                if crossover_data.get('status') and crossover_data.get('strength') is not None:
+                    fast, slow = pair.split('_')
+                    status = crossover_data['status']
+                    strength = crossover_data['strength']
+
+                    # Arrow indicator
+                    arrow = "↑" if status == 'above' else "↓"
+                    sign = "+" if strength >= 0 else ""
+
+                    rsi_section += f"      • RSI({fast}){arrow}RSI({slow}): {sign}{strength:.2f}\n"
+
+        # Recent Crossovers
+        recent_crosses = []
+        for pair, crossover_data in crossovers.items():
+            recent = crossover_data.get('recent_cross', {})
+            if recent.get('occurred'):
+                bars_ago = recent.get('bars_ago', 0)
+                direction = recent.get('direction', '').capitalize()
+                emoji = "🟢" if direction == 'Bullish' else "🔴"
+                fast, slow = pair.split('_')
+                recent_crosses.append(f"{emoji} RSI({fast})×RSI({slow}) {direction} {bars_ago}d ago")
+
+        if recent_crosses:
+            rsi_section += "   <b>Recent Crosses:</b>\n"
+            for cross in recent_crosses:
+                rsi_section += f"      • {cross}\n"
+
+        # Overall Summary
+        summary = rsi_analysis.get('summary', '')
+        if summary:
+            # Add emoji based on summary
+            if 'Bullish' in summary:
+                emoji = "🟢"
+            elif 'Bearish' in summary:
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
+
+            rsi_section += f"   <b>Summary:</b> {emoji} {summary}\n"
+
+        return rsi_section
 
     def _send_message(self, message: str) -> bool:
         """

@@ -28,6 +28,7 @@ from alert_history_manager import AlertHistoryManager
 from alert_excel_logger import AlertExcelLogger
 from unified_quote_cache import UnifiedQuoteCache
 from unified_data_cache import UnifiedDataCache
+from rsi_analyzer import calculate_rsi_with_crossovers
 import requests
 
 # Configure logging
@@ -405,6 +406,20 @@ class ATRBreakoutMonitor:
                 logger.debug(f"{symbol}: ATR calculation failed")
                 return None
 
+            # Calculate RSI with crossover analysis (if enabled)
+            rsi_analysis = None
+            if config.ENABLE_RSI:
+                try:
+                    rsi_analysis = calculate_rsi_with_crossovers(
+                        df,
+                        periods=config.RSI_PERIODS,
+                        crossover_lookback=config.RSI_CROSSOVER_LOOKBACK
+                    )
+                    logger.debug(f"{symbol}: RSI(14)={rsi_analysis.get('rsi_14')}, Summary={rsi_analysis.get('summary')}")
+                except Exception as e:
+                    logger.warning(f"{symbol}: RSI calculation failed: {e}")
+                    rsi_analysis = None
+
             # Get today's open and current price from quote data (NO EXTRA API CALL!)
             ohlc = quote.get('ohlc', {})
             today_open = ohlc.get('open', df['open'].iloc[-1])  # Fallback to historical if needed
@@ -483,7 +498,8 @@ class ATRBreakoutMonitor:
                 'volume': volume,
                 'market_cap_cr': market_cap_cr,
                 'day_of_week': day_of_week,
-                'is_friday': is_friday
+                'is_friday': is_friday,
+                'rsi_analysis': rsi_analysis  # RSI with crossover analysis
             }
 
         except Exception as e:
@@ -537,7 +553,8 @@ class ATRBreakoutMonitor:
                         risk_percent=analysis['risk_percent'] / 100,  # Convert to decimal for percentage format
                         volume=int(analysis['volume']),
                         market_cap_cr=analysis['market_cap_cr'],
-                        telegram_sent=telegram_success
+                        telegram_sent=telegram_success,
+                        rsi_analysis=analysis.get('rsi_analysis')
                     )
                 except Exception as e:
                     logger.error(f"Failed to log ATR breakout to Excel: {e}")
@@ -618,6 +635,67 @@ class ATRBreakoutMonitor:
         message += "📊 <b>Volume:</b>\n"
         message += f"   Today: {volume_lakhs:.2f}L shares\n"
         message += "\n"
+
+        # RSI Momentum Analysis
+        rsi_analysis = analysis.get('rsi_analysis')
+        if rsi_analysis:
+            message += "📊 <b>RSI Momentum Analysis:</b>\n"
+
+            # RSI Values
+            rsi_9 = rsi_analysis.get('rsi_9')
+            rsi_14 = rsi_analysis.get('rsi_14')
+            rsi_21 = rsi_analysis.get('rsi_21')
+
+            if rsi_9 is not None or rsi_14 is not None or rsi_21 is not None:
+                message += "   <b>RSI Values:</b>\n"
+
+                if rsi_9 is not None:
+                    emoji = "🔥" if rsi_9 > 70 else "❄️" if rsi_9 < 30 else "📊"
+                    message += f"      {emoji} RSI(9): {rsi_9:.2f}\n"
+
+                if rsi_14 is not None:
+                    emoji = "🔥" if rsi_14 > 70 else "❄️" if rsi_14 < 30 else "📊"
+                    message += f"      {emoji} RSI(14): {rsi_14:.2f}\n"
+
+                if rsi_21 is not None:
+                    emoji = "🔥" if rsi_21 > 70 else "❄️" if rsi_21 < 30 else "📊"
+                    message += f"      {emoji} RSI(21): {rsi_21:.2f}\n"
+
+            # RSI Crossovers
+            crossovers = rsi_analysis.get('crossovers', {})
+            if crossovers:
+                message += "   <b>Crossovers:</b>\n"
+                for pair, crossover_data in crossovers.items():
+                    if crossover_data.get('status') and crossover_data.get('strength') is not None:
+                        fast, slow = pair.split('_')
+                        arrow = "↑" if crossover_data['status'] == 'above' else "↓"
+                        strength = crossover_data['strength']
+                        sign = "+" if strength >= 0 else ""
+                        message += f"      • RSI({fast}){arrow}RSI({slow}): {sign}{strength:.2f}\n"
+
+            # Recent Crossovers
+            recent_crosses = []
+            for pair, crossover_data in crossovers.items():
+                recent = crossover_data.get('recent_cross', {})
+                if recent.get('occurred'):
+                    bars_ago = recent.get('bars_ago', 0)
+                    direction = recent.get('direction', '').capitalize()
+                    emoji = "🟢" if direction == 'Bullish' else "🔴"
+                    fast, slow = pair.split('_')
+                    recent_crosses.append(f"{emoji} RSI({fast})×RSI({slow}) {direction} {bars_ago}d ago")
+
+            if recent_crosses:
+                message += "   <b>Recent Crosses:</b>\n"
+                for cross in recent_crosses:
+                    message += f"      • {cross}\n"
+
+            # Overall Summary
+            summary = rsi_analysis.get('summary', '')
+            if summary:
+                emoji = "🟢" if 'Bullish' in summary else "🔴" if 'Bearish' in summary else "⚪"
+                message += f"   <b>Summary:</b> {emoji} {summary}\n"
+
+            message += "\n"
 
         # Friday exit warning
         if is_friday and config.ATR_FRIDAY_EXIT:

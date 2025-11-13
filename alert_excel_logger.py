@@ -47,6 +47,9 @@ class AlertExcelLogger:
         "Alert Price", "Previous Price", "Change %", "Change (Rs)",
         "Volume", "Avg Volume", "Volume Multiplier",
         "Market Cap (Cr)", "Telegram Sent",
+        "RSI(9)", "RSI(14)", "RSI(21)",
+        "RSI 9vs14", "RSI 9vs21", "RSI 14vs21",
+        "RSI Recent Cross", "RSI Summary",
         "Price 2min", "Price 10min", "Price EOD",
         "Status", "Row ID"
     ]
@@ -58,6 +61,9 @@ class AlertExcelLogger:
         "ATR(20)", "ATR(30)", "Volatility Filter",
         "Stop Loss", "Risk Amount", "Risk %",
         "Volume", "Market Cap (Cr)", "Telegram Sent",
+        "RSI(9)", "RSI(14)", "RSI(21)",
+        "RSI 9vs14", "RSI 9vs21", "RSI 14vs21",
+        "RSI Recent Cross", "RSI Summary",
         "Price 2min", "Price 10min", "Price EOD",
         "Status", "Row ID", "Day of Week"
     ]
@@ -140,12 +146,20 @@ class AlertExcelLogger:
                 'N': 13,  # Volume
                 'O': 13,  # Market Cap
                 'P': 12,  # Telegram
-                'Q': 12,  # Price 2min
-                'R': 12,  # Price 10min
-                'S': 12,  # Price EOD
-                'T': 10,  # Status
-                'U': 25,  # Row ID
-                'V': 12   # Day of Week
+                'Q': 10,  # RSI(9)
+                'R': 10,  # RSI(14)
+                'S': 10,  # RSI(21)
+                'T': 13,  # RSI 9vs14
+                'U': 13,  # RSI 9vs21
+                'V': 13,  # RSI 14vs21
+                'W': 18,  # RSI Recent Cross
+                'X': 15,  # RSI Summary
+                'Y': 12,  # Price 2min
+                'Z': 12,  # Price 10min
+                'AA': 12,  # Price EOD
+                'AB': 10,  # Status
+                'AC': 25,  # Row ID
+                'AD': 12   # Day of Week
             }
         else:
             headers = self.HEADERS
@@ -163,11 +177,19 @@ class AlertExcelLogger:
                 'K': 12,  # Volume Mult
                 'L': 13,  # Market Cap
                 'M': 12,  # Telegram
-                'N': 12,  # Price 2min
-                'O': 12,  # Price 10min
-                'P': 12,  # Price EOD
-                'Q': 10,  # Status
-                'R': 25   # Row ID
+                'N': 10,  # RSI(9)
+                'O': 10,  # RSI(14)
+                'P': 10,  # RSI(21)
+                'Q': 13,  # RSI 9vs14
+                'R': 13,  # RSI 9vs21
+                'S': 13,  # RSI 14vs21
+                'T': 18,  # RSI Recent Cross
+                'U': 15,  # RSI Summary
+                'V': 12,  # Price 2min
+                'W': 12,  # Price 10min
+                'X': 12,  # Price EOD
+                'Y': 10,  # Status
+                'Z': 25   # Row ID
             }
 
         # Write headers
@@ -202,7 +224,8 @@ class AlertExcelLogger:
         volume_data: Optional[Dict] = None,
         market_cap_cr: Optional[float] = None,
         telegram_sent: bool = False,
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        rsi_analysis: Optional[Dict] = None
     ) -> bool:
         """
         Log an alert to the appropriate sheet.
@@ -217,6 +240,7 @@ class AlertExcelLogger:
             market_cap_cr: Optional market cap in crores
             telegram_sent: Whether Telegram alert was sent
             timestamp: Optional timestamp (defaults to now)
+            rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
 
         Returns:
             True if logged successfully, False otherwise
@@ -261,6 +285,52 @@ class AlertExcelLogger:
             # Find next empty row
             next_row = ws.max_row + 1
 
+            # Extract RSI data
+            rsi_9 = rsi_14 = rsi_21 = ""
+            rsi_9vs14 = rsi_9vs21 = rsi_14vs21 = ""
+            rsi_recent_cross = rsi_summary = ""
+
+            if rsi_analysis:
+                rsi_9 = round(rsi_analysis.get('rsi_9'), 2) if rsi_analysis.get('rsi_9') else ""
+                rsi_14 = round(rsi_analysis.get('rsi_14'), 2) if rsi_analysis.get('rsi_14') else ""
+                rsi_21 = round(rsi_analysis.get('rsi_21'), 2) if rsi_analysis.get('rsi_21') else ""
+
+                # Format crossover status
+                crossovers = rsi_analysis.get('crossovers', {})
+                if '9_14' in crossovers:
+                    c = crossovers['9_14']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_9vs14 = f"9{arrow}14 ({sign}{c['strength']})"
+
+                if '9_21' in crossovers:
+                    c = crossovers['9_21']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_9vs21 = f"9{arrow}21 ({sign}{c['strength']})"
+
+                if '14_21' in crossovers:
+                    c = crossovers['14_21']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_14vs21 = f"14{arrow}21 ({sign}{c['strength']})"
+
+                # Find most recent crossover across all pairs
+                recent_crosses = []
+                for pair, c in crossovers.items():
+                    recent = c.get('recent_cross', {})
+                    if recent.get('occurred'):
+                        bars_ago = recent.get('bars_ago', 0)
+                        direction_text = recent.get('direction', '').capitalize()
+                        emoji = "🟢" if direction_text == 'Bullish' else "🔴"
+                        recent_crosses.append(f"{emoji} {direction_text} {bars_ago}b ago")
+
+                rsi_recent_cross = "; ".join(recent_crosses) if recent_crosses else "None"
+                rsi_summary = rsi_analysis.get('summary', "")
+
             # Write data
             row_data = [
                 date_str,                           # Date
@@ -276,6 +346,14 @@ class AlertExcelLogger:
                 volume_multiplier,                  # Volume Multiplier
                 round(market_cap_cr, 2) if market_cap_cr else "",  # Market Cap
                 "Yes" if telegram_sent else "No",   # Telegram Sent
+                rsi_9,                              # RSI(9)
+                rsi_14,                             # RSI(14)
+                rsi_21,                             # RSI(21)
+                rsi_9vs14,                          # RSI 9vs14
+                rsi_9vs21,                          # RSI 9vs21
+                rsi_14vs21,                         # RSI 14vs21
+                rsi_recent_cross,                   # RSI Recent Cross
+                rsi_summary,                        # RSI Summary
                 "",                                 # Price 2min (to be filled)
                 "",                                 # Price 10min (to be filled)
                 "",                                 # Price EOD (to be filled)
@@ -324,14 +402,22 @@ class AlertExcelLogger:
 
                 # Iterate through rows (skip header)
                 for row_num in range(2, ws.max_row + 1):
-                    status = ws.cell(row=row_num, column=17).value  # Status column (Q)
+                    # Determine column numbers based on sheet type
+                    if sheet_name == "ATR_Breakout_alerts":
+                        status_col = 28  # AB
+                        row_id_col = 29  # AC
+                    else:
+                        status_col = 25  # Y
+                        row_id_col = 26  # Z
+
+                    status = ws.cell(row=row_num, column=status_col).value
 
                     if status != "Complete":
                         # Extract alert data
                         date_str = ws.cell(row=row_num, column=1).value
                         time_str = ws.cell(row=row_num, column=2).value
                         symbol = ws.cell(row=row_num, column=3).value
-                        row_id = ws.cell(row=row_num, column=18).value
+                        row_id = ws.cell(row=row_num, column=row_id_col).value
 
                         # Check age if required
                         if min_age_minutes > 0:
@@ -435,17 +521,24 @@ class AlertExcelLogger:
         Returns:
             Number of rows updated
         """
-        column_map = {
-            "2min": 14,   # Column N
-            "10min": 15,  # Column O
-            "EOD": 16     # Column P
+        # Column mappings for standard alerts (with RSI columns)
+        standard_column_map = {
+            "2min": 22,   # Column V
+            "10min": 23,  # Column W
+            "EOD": 24     # Column X
         }
 
-        if price_column not in column_map:
+        # Column mappings for ATR alerts (with RSI columns)
+        atr_column_map = {
+            "2min": 25,   # Column Y
+            "10min": 26,  # Column Z
+            "EOD": 27     # Column AA
+        }
+
+        if price_column not in standard_column_map:
             logger.error(f"Invalid price column: {price_column}")
             return 0
 
-        col_num = column_map[price_column]
         updated_count = 0
 
         try:
@@ -457,10 +550,27 @@ class AlertExcelLogger:
                 if not all([sheet_name, row_id, price is not None]):
                     continue
 
+                # Determine column numbers based on sheet type
+                is_atr_sheet = (sheet_name == "ATR_Breakout_alerts")
+                if is_atr_sheet:
+                    col_num = atr_column_map[price_column]
+                    price_2min_col = 25  # Y
+                    price_10min_col = 26  # Z
+                    price_eod_col = 27  # AA
+                    status_col = 28  # AB
+                    row_id_col = 29  # AC
+                else:
+                    col_num = standard_column_map[price_column]
+                    price_2min_col = 22  # V
+                    price_10min_col = 23  # W
+                    price_eod_col = 24  # X
+                    status_col = 25  # Y
+                    row_id_col = 26  # Z
+
                 # Find the row with matching row_id
                 ws = self.workbook[sheet_name]
                 for row_num in range(2, ws.max_row + 1):
-                    cell_row_id = ws.cell(row=row_num, column=18).value
+                    cell_row_id = ws.cell(row=row_num, column=row_id_col).value
 
                     if cell_row_id == row_id:
                         # Update price
@@ -468,7 +578,7 @@ class AlertExcelLogger:
 
                         # Apply color coding for 10min and EOD prices (not 2min as it's the reference)
                         if price_column in ["10min", "EOD"]:
-                            price_2min = ws.cell(row=row_num, column=14).value
+                            price_2min = ws.cell(row=row_num, column=price_2min_col).value
                             direction = ws.cell(row=row_num, column=4).value  # Column D
 
                             if price_2min and price_2min > 0 and direction:
@@ -481,9 +591,9 @@ class AlertExcelLogger:
                                     price_cell.fill = color_fill
 
                         # Update status
-                        price_2min = ws.cell(row=row_num, column=14).value
-                        price_10min = ws.cell(row=row_num, column=15).value
-                        price_eod = ws.cell(row=row_num, column=16).value
+                        price_2min = ws.cell(row=row_num, column=price_2min_col).value
+                        price_10min = ws.cell(row=row_num, column=price_10min_col).value
+                        price_eod = ws.cell(row=row_num, column=price_eod_col).value
 
                         if price_eod:
                             new_status = "Complete"
@@ -498,7 +608,7 @@ class AlertExcelLogger:
                         if auto_complete_eod and price_column == "EOD":
                             new_status = "Complete"
 
-                        ws.cell(row=row_num, column=17, value=new_status)
+                        ws.cell(row=row_num, column=status_col, value=new_status)
 
                         updated_count += 1
                         break
@@ -603,9 +713,15 @@ class AlertExcelLogger:
             for sheet_name in set(self.SHEET_NAMES.values()):
                 ws = self.workbook[sheet_name]
 
+                # Determine column numbers based on sheet type
+                if sheet_name == "ATR_Breakout_alerts":
+                    row_id_col = 29  # AC
+                else:
+                    row_id_col = 26  # Z
+
                 # Iterate through rows (skip header)
                 for row_num in range(2, ws.max_row + 1):
-                    row_id = ws.cell(row=row_num, column=18).value  # Column R (Row ID)
+                    row_id = ws.cell(row=row_num, column=row_id_col).value
                     change_percent = ws.cell(row=row_num, column=7).value  # Column G (Change %)
 
                     if not row_id or change_percent is None:
@@ -658,12 +774,22 @@ class AlertExcelLogger:
             for sheet_name in set(self.SHEET_NAMES.values()):
                 ws = self.workbook[sheet_name]
 
+                # Determine column numbers based on sheet type
+                if sheet_name == "ATR_Breakout_alerts":
+                    price_2min_col = 25  # Y
+                    price_10min_col = 26  # Z
+                    price_eod_col = 27  # AA
+                else:
+                    price_2min_col = 22  # V
+                    price_10min_col = 23  # W
+                    price_eod_col = 24  # X
+
                 # Iterate through rows (skip header)
                 for row_num in range(2, ws.max_row + 1):
                     direction = ws.cell(row=row_num, column=4).value  # Column D
-                    price_2min = ws.cell(row=row_num, column=14).value  # Column N
-                    price_10min = ws.cell(row=row_num, column=15).value  # Column O
-                    price_eod = ws.cell(row=row_num, column=16).value  # Column P
+                    price_2min = ws.cell(row=row_num, column=price_2min_col).value
+                    price_10min = ws.cell(row=row_num, column=price_10min_col).value
+                    price_eod = ws.cell(row=row_num, column=price_eod_col).value
 
                     # Skip if no reference price
                     if not price_2min or price_2min <= 0 or not direction:
@@ -674,7 +800,7 @@ class AlertExcelLogger:
                         percent_change = ((price_10min - price_2min) / price_2min) * 100
                         color_fill = self._get_color_for_price_change(direction, percent_change)
                         if color_fill:
-                            ws.cell(row=row_num, column=15).fill = color_fill
+                            ws.cell(row=row_num, column=price_10min_col).fill = color_fill
                             colored_count += 1
 
                     # Color EOD price
@@ -682,7 +808,7 @@ class AlertExcelLogger:
                         percent_change = ((price_eod - price_2min) / price_2min) * 100
                         color_fill = self._get_color_for_price_change(direction, percent_change)
                         if color_fill:
-                            ws.cell(row=row_num, column=16).fill = color_fill
+                            ws.cell(row=row_num, column=price_eod_col).fill = color_fill
                             colored_count += 1
 
             if colored_count > 0:
@@ -711,7 +837,8 @@ class AlertExcelLogger:
         volume: int,
         market_cap_cr: Optional[float] = None,
         telegram_sent: bool = False,
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        rsi_analysis: Optional[Dict] = None
     ) -> bool:
         """
         Log an ATR breakout alert to the ATR_Breakout_alerts sheet.
@@ -732,6 +859,7 @@ class AlertExcelLogger:
             market_cap_cr: Market cap in crores
             telegram_sent: Whether Telegram alert was sent
             timestamp: Alert timestamp (defaults to now)
+            rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
 
         Returns:
             True if logged successfully, False otherwise
@@ -754,6 +882,52 @@ class AlertExcelLogger:
             # Find next empty row
             next_row = ws.max_row + 1
 
+            # Extract RSI data (same logic as log_alert)
+            rsi_9 = rsi_14 = rsi_21 = ""
+            rsi_9vs14 = rsi_9vs21 = rsi_14vs21 = ""
+            rsi_recent_cross = rsi_summary = ""
+
+            if rsi_analysis:
+                rsi_9 = round(rsi_analysis.get('rsi_9'), 2) if rsi_analysis.get('rsi_9') else ""
+                rsi_14 = round(rsi_analysis.get('rsi_14'), 2) if rsi_analysis.get('rsi_14') else ""
+                rsi_21 = round(rsi_analysis.get('rsi_21'), 2) if rsi_analysis.get('rsi_21') else ""
+
+                # Format crossover status
+                crossovers = rsi_analysis.get('crossovers', {})
+                if '9_14' in crossovers:
+                    c = crossovers['9_14']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_9vs14 = f"9{arrow}14 ({sign}{c['strength']})"
+
+                if '9_21' in crossovers:
+                    c = crossovers['9_21']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_9vs21 = f"9{arrow}21 ({sign}{c['strength']})"
+
+                if '14_21' in crossovers:
+                    c = crossovers['14_21']
+                    if c.get('status') and c.get('strength') is not None:
+                        arrow = "↑" if c['status'] == 'above' else "↓"
+                        sign = "+" if c['strength'] >= 0 else ""
+                        rsi_14vs21 = f"14{arrow}21 ({sign}{c['strength']})"
+
+                # Find most recent crossover across all pairs
+                recent_crosses = []
+                for pair, c in crossovers.items():
+                    recent = c.get('recent_cross', {})
+                    if recent.get('occurred'):
+                        bars_ago = recent.get('bars_ago', 0)
+                        direction_text = recent.get('direction', '').capitalize()
+                        emoji = "🟢" if direction_text == 'Bullish' else "🔴"
+                        recent_crosses.append(f"{emoji} {direction_text} {bars_ago}b ago")
+
+                rsi_recent_cross = "; ".join(recent_crosses) if recent_crosses else "None"
+                rsi_summary = rsi_analysis.get('summary', "")
+
             # Prepare row data (matching ATR_HEADERS order)
             row_data = [
                 date_str,  # A: Date
@@ -772,12 +946,20 @@ class AlertExcelLogger:
                 volume,  # N: Volume
                 market_cap_cr if market_cap_cr else "N/A",  # O: Market Cap
                 "Yes" if telegram_sent else "No",  # P: Telegram Sent
-                "",  # Q: Price 2min (to be filled later)
-                "",  # R: Price 10min (to be filled later)
-                "",  # S: Price EOD (to be filled later)
-                "Pending",  # T: Status
-                row_id,  # U: Row ID
-                day_of_week  # V: Day of Week
+                rsi_9,  # Q: RSI(9)
+                rsi_14,  # R: RSI(14)
+                rsi_21,  # S: RSI(21)
+                rsi_9vs14,  # T: RSI 9vs14
+                rsi_9vs21,  # U: RSI 9vs21
+                rsi_14vs21,  # V: RSI 14vs21
+                rsi_recent_cross,  # W: RSI Recent Cross
+                rsi_summary,  # X: RSI Summary
+                "",  # Y: Price 2min (to be filled later)
+                "",  # Z: Price 10min (to be filled later)
+                "",  # AA: Price EOD (to be filled later)
+                "Pending",  # AB: Status
+                row_id,  # AC: Row ID
+                day_of_week  # AD: Day of Week
             ]
 
             # Write row data
@@ -785,18 +967,21 @@ class AlertExcelLogger:
                 cell = ws.cell(row=next_row, column=col_num, value=value)
 
                 # Apply number formatting
-                if col_num in [4, 5, 6, 7, 8, 9, 11, 12, 17, 18, 19]:  # Price/ATR columns
+                if col_num in [4, 5, 6, 7, 8, 9, 11, 12, 25, 26, 27]:  # Price/ATR columns (Y, Z, AA)
                     cell.number_format = '0.00'
-                elif col_num == 13:  # Risk %
+                elif col_num == 13:  # Risk % (M)
                     cell.number_format = '0.00%'
-                elif col_num in [14]:  # Volume
+                elif col_num in [14]:  # Volume (N)
                     cell.number_format = '#,##0'
-                elif col_num == 15:  # Market Cap
+                elif col_num == 15:  # Market Cap (O)
                     if market_cap_cr:
                         cell.number_format = '#,##0'
+                elif col_num in [17, 18, 19]:  # RSI values (Q, R, S)
+                    if value != "":
+                        cell.number_format = '0.00'
 
                 # Center alignment for most columns
-                if col_num not in [21]:  # Except Row ID
+                if col_num not in [29]:  # Except Row ID (AC)
                     cell.alignment = Alignment(horizontal="center", vertical="center")
 
             # Save workbook

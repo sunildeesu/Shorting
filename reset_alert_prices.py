@@ -65,25 +65,37 @@ class AlertPriceResetter:
 
                 sheet_reset_count = 0
 
+                # Determine column numbers based on sheet type (RSI columns added)
+                if sheet_name == "ATR_Breakout_alerts":
+                    price_2min_col = 25  # Column Y (ATR sheet with RSI)
+                    price_10min_col = 26  # Column Z
+                    price_eod_col = 27   # Column AA
+                    status_col = 28      # Column AB
+                else:
+                    price_2min_col = 22  # Column V (Standard sheets with RSI)
+                    price_10min_col = 23  # Column W
+                    price_eod_col = 24   # Column X
+                    status_col = 25      # Column Y
+
                 # Iterate through all data rows (skip header)
                 for row_num in range(2, ws.max_row + 1):
                     symbol = ws.cell(row=row_num, column=3).value  # Column C
                     date = ws.cell(row=row_num, column=1).value    # Column A
 
                     # Clear price columns
-                    ws.cell(row=row_num, column=14, value="")  # Price 2min (Column N)
-                    ws.cell(row=row_num, column=15, value="")  # Price 10min (Column O)
-                    ws.cell(row=row_num, column=16, value="")  # Price EOD (Column P)
+                    ws.cell(row=row_num, column=price_2min_col, value="")  # Price 2min
+                    ws.cell(row=row_num, column=price_10min_col, value="")  # Price 10min
+                    ws.cell(row=row_num, column=price_eod_col, value="")   # Price EOD
 
                     # Clear any cell fill colors for these columns
                     from openpyxl.styles import PatternFill
                     no_fill = PatternFill(fill_type=None)
-                    ws.cell(row=row_num, column=14).fill = no_fill
-                    ws.cell(row=row_num, column=15).fill = no_fill
-                    ws.cell(row=row_num, column=16).fill = no_fill
+                    ws.cell(row=row_num, column=price_2min_col).fill = no_fill
+                    ws.cell(row=row_num, column=price_10min_col).fill = no_fill
+                    ws.cell(row=row_num, column=price_eod_col).fill = no_fill
 
                     # Reset status to "Pending"
-                    ws.cell(row=row_num, column=17, value="Pending")  # Status (Column Q)
+                    ws.cell(row=row_num, column=status_col, value="Pending")  # Status
 
                     sheet_reset_count += 1
 
@@ -128,6 +140,18 @@ class AlertPriceResetter:
 
                 sheet_reset_count = 0
 
+                # Determine column numbers based on sheet type (RSI columns added)
+                if sheet_name == "ATR_Breakout_alerts":
+                    price_2min_col = 25  # Column Y (ATR sheet with RSI)
+                    price_10min_col = 26  # Column Z
+                    price_eod_col = 27   # Column AA
+                    status_col = 28      # Column AB
+                else:
+                    price_2min_col = 22  # Column V (Standard sheets with RSI)
+                    price_10min_col = 23  # Column W
+                    price_eod_col = 24   # Column X
+                    status_col = 25      # Column Y
+
                 # Iterate through all data rows (skip header)
                 for row_num in range(2, ws.max_row + 1):
                     date = ws.cell(row=row_num, column=1).value  # Column A
@@ -136,19 +160,19 @@ class AlertPriceResetter:
                     # Check if this row's date matches any target date
                     if date in target_dates:
                         # Clear price columns
-                        ws.cell(row=row_num, column=14, value="")  # Price 2min (Column N)
-                        ws.cell(row=row_num, column=15, value="")  # Price 10min (Column O)
-                        ws.cell(row=row_num, column=16, value="")  # Price EOD (Column P)
+                        ws.cell(row=row_num, column=price_2min_col, value="")  # Price 2min
+                        ws.cell(row=row_num, column=price_10min_col, value="")  # Price 10min
+                        ws.cell(row=row_num, column=price_eod_col, value="")   # Price EOD
 
                         # Clear any cell fill colors
                         from openpyxl.styles import PatternFill
                         no_fill = PatternFill(fill_type=None)
-                        ws.cell(row=row_num, column=14).fill = no_fill
-                        ws.cell(row=row_num, column=15).fill = no_fill
-                        ws.cell(row=row_num, column=16).fill = no_fill
+                        ws.cell(row=row_num, column=price_2min_col).fill = no_fill
+                        ws.cell(row=row_num, column=price_10min_col).fill = no_fill
+                        ws.cell(row=row_num, column=price_eod_col).fill = no_fill
 
                         # Reset status to "Pending"
-                        ws.cell(row=row_num, column=17, value="Pending")  # Status (Column Q)
+                        ws.cell(row=row_num, column=status_col, value="Pending")  # Status
 
                         sheet_reset_count += 1
                         logger.info(f"  Reset: {symbol} on {date}")
@@ -190,9 +214,15 @@ class AlertPriceResetter:
                 sheet_total = ws.max_row - 1  # Exclude header
                 total_alerts += sheet_total
 
+                # Determine status column based on sheet type (RSI columns added)
+                if sheet_name == "ATR_Breakout_alerts":
+                    status_col = 28  # Column AB (ATR sheet with RSI)
+                else:
+                    status_col = 25  # Column Y (Standard sheets with RSI)
+
                 # Count status
                 for row_num in range(2, ws.max_row + 1):
-                    status = ws.cell(row=row_num, column=17).value  # Status column
+                    status = ws.cell(row=row_num, column=status_col).value  # Status column
 
                     if status == "Complete":
                         complete_count += 1

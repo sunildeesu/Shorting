@@ -102,3 +102,10 @@ ENABLE_EXCEL_LOGGING = os.getenv('ENABLE_EXCEL_LOGGING', 'true').lower() == 'tru
 
 # Yahoo Finance Configuration
 YAHOO_FINANCE_SUFFIX = '.NS'  # NSE stocks suffix for Yahoo Finance
+
+# RSI (Relative Strength Index) Configuration
+# RSI is calculated to provide momentum analysis alongside price alerts
+ENABLE_RSI = os.getenv('ENABLE_RSI', 'true').lower() == 'true'  # Toggle RSI calculation
+RSI_PERIODS = [9, 14, 21]  # Calculate RSI for multiple periods (fast, standard, slow)
+RSI_MIN_DATA_DAYS = int(os.getenv('RSI_MIN_DATA_DAYS', '30'))  # Minimum historical data needed (days)
+RSI_CROSSOVER_LOOKBACK = int(os.getenv('RSI_CROSSOVER_LOOKBACK', '3'))  # Detect crossovers in last N candles

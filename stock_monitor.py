@@ -1,14 +1,17 @@
 import json
 import logging
 import os
-from datetime import datetime, date
-from typing import List, Dict, Tuple
+from datetime import datetime, date, timedelta
+from typing import List, Dict, Tuple, Optional
 import time
 import random
+import pandas as pd
 from price_cache import PriceCache
 from telegram_notifier import TelegramNotifier
 from alert_history_manager import AlertHistoryManager
 from unified_quote_cache import UnifiedQuoteCache
+from unified_data_cache import UnifiedDataCache
+from rsi_analyzer import calculate_rsi_with_crossovers
 import config
 
 # Import data source libraries based on configuration
@@ -38,16 +41,21 @@ class StockMonitor:
 
         # Initialize unified quote cache (if enabled)
         self.quote_cache = None
+        self.data_cache = None
         if config.ENABLE_UNIFIED_CACHE:
             try:
                 self.quote_cache = UnifiedQuoteCache(
                     cache_file=config.QUOTE_CACHE_FILE,
                     ttl_seconds=config.QUOTE_CACHE_TTL_SECONDS
                 )
-                logger.info(f"Unified quote cache enabled (TTL: {config.QUOTE_CACHE_TTL_SECONDS}s)")
+                self.data_cache = UnifiedDataCache(
+                    cache_dir=config.HISTORICAL_CACHE_DIR
+                )
+                logger.info(f"Unified cache enabled (quote + data cache)")
             except Exception as e:
-                logger.error(f"Failed to initialize quote cache: {e}")
+                logger.error(f"Failed to initialize unified cache: {e}")
                 self.quote_cache = None
+                self.data_cache = None
 
         # Initialize Kite Connect if using kite data source
         if not config.DEMO_MODE and config.DATA_SOURCE == 'kite':
@@ -56,6 +64,11 @@ class StockMonitor:
             self.kite = KiteConnect(api_key=config.KITE_API_KEY)
             self.kite.set_access_token(config.KITE_ACCESS_TOKEN)
             logger.info("Kite Connect initialized successfully")
+
+            # Load instrument tokens for historical data fetching
+            self.instrument_tokens = self._load_instrument_tokens()
+        else:
+            self.instrument_tokens = {}
 
     def _load_stock_list(self) -> List[str]:
         """Load F&O stock list from JSON file"""
@@ -90,6 +103,179 @@ class StockMonitor:
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Failed to load shares outstanding: {e}")
             return {}
+
+    def _load_instrument_tokens(self) -> Dict[str, int]:
+        """Load instrument tokens for Kite API historical data fetching"""
+        tokens_file = "data/instrument_tokens.json"
+        try:
+            if os.path.exists(tokens_file):
+                with open(tokens_file, 'r') as f:
+                    tokens = json.load(f)
+                    logger.info(f"Loaded {len(tokens)} instrument tokens")
+                    return tokens
+            else:
+                logger.warning(f"Instrument tokens file not found: {tokens_file}")
+                logger.warning("Will attempt to fetch instrument tokens from Kite")
+                return self._fetch_instrument_tokens()
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Failed to load instrument tokens: {e}")
+            return {}
+
+    def _fetch_instrument_tokens(self) -> Dict[str, int]:
+        """Fetch instrument tokens from Kite instruments dump"""
+        try:
+            instruments = self.kite.instruments("NSE")
+            token_map = {}
+            # Remove .NS suffix from stock symbols for matching
+            clean_stocks = [s.replace('.NS', '') for s in self.stocks]
+
+            for inst in instruments:
+                if inst['tradingsymbol'] in clean_stocks:
+                    token_map[inst['tradingsymbol']] = inst['instrument_token']
+
+            # Save for future use
+            os.makedirs("data", exist_ok=True)
+            with open("data/instrument_tokens.json", 'w') as f:
+                json.dump(token_map, f, indent=2)
+
+            logger.info(f"Fetched and saved {len(token_map)} instrument tokens")
+            return token_map
+        except Exception as e:
+            logger.error(f"Failed to fetch instrument tokens: {e}")
+            return {}
+
+    def fetch_historical_data(
+        self,
+        symbol: str,
+        days_back: int = 50,
+        interval: str = "day"
+    ) -> Optional[pd.DataFrame]:
+        """
+        Fetch historical data from Kite for RSI calculation
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+            days_back: Number of days of historical data (default: 50 for RSI)
+            interval: Candle interval (day, 5minute, 15minute, etc.)
+
+        Returns:
+            DataFrame with OHLCV data or None
+        """
+        # Remove .NS suffix for Kite API
+        clean_symbol = symbol.replace('.NS', '')
+
+        try:
+            # Get instrument token
+            if clean_symbol not in self.instrument_tokens:
+                logger.debug(f"{symbol}: No instrument token found for historical data")
+                return None
+
+            token = self.instrument_tokens[clean_symbol]
+
+            # Calculate date range
+            to_date = datetime.now().date()
+            from_date = to_date - timedelta(days=days_back)
+
+            # Fetch data from Kite
+            data = self.kite.historical_data(
+                instrument_token=token,
+                from_date=from_date,
+                to_date=to_date,
+                interval=interval
+            )
+
+            if not data:
+                logger.debug(f"{symbol}: No historical data returned")
+                return None
+
+            # Convert to DataFrame
+            df = pd.DataFrame(data)
+
+            # Ensure column names are lowercase
+            df.columns = df.columns.str.lower()
+
+            logger.debug(f"{symbol}: Fetched {len(df)} candles ({interval})")
+            return df
+
+        except Exception as e:
+            logger.debug(f"{symbol}: Failed to fetch historical data: {e}")
+            return None
+
+    def _calculate_rsi_for_stock(
+        self,
+        symbol: str,
+        current_price: float,
+        current_volume: int = 0
+    ) -> Optional[Dict]:
+        """
+        Calculate RSI analysis for a stock using cached historical data + today's price
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+            current_price: Current intraday price
+            current_volume: Current trading volume
+
+        Returns:
+            RSI analysis dictionary or None if calculation fails
+        """
+        if not config.ENABLE_RSI:
+            return None
+
+        clean_symbol = symbol.replace('.NS', '')
+
+        try:
+            # Try unified data cache first (50-day data from ATR monitor)
+            df = None
+            if self.data_cache and config.ENABLE_UNIFIED_CACHE:
+                try:
+                    cached_data = self.data_cache.get_atr_data(clean_symbol)
+                    if cached_data:
+                        df = pd.DataFrame(cached_data)
+                        df.columns = df.columns.str.lower()
+                        logger.debug(f"{symbol}: Using cached historical data ({len(df)} candles)")
+                except Exception as e:
+                    logger.debug(f"{symbol}: Cache error: {e}, fetching fresh data")
+
+            # Cache miss or error - fetch from API (fallback)
+            if df is None:
+                df = self.fetch_historical_data(clean_symbol, days_back=50, interval="day")
+
+                # Cache it for next time
+                if df is not None and self.data_cache and config.ENABLE_UNIFIED_CACHE:
+                    try:
+                        cache_data = df.to_dict('records')
+                        self.data_cache.set_atr_data(clean_symbol, cache_data)
+                        logger.debug(f"{symbol}: Cached historical data ({len(df)} candles)")
+                    except Exception as e:
+                        logger.debug(f"{symbol}: Failed to cache data: {e}")
+
+            if df is None or len(df) < config.RSI_MIN_DATA_DAYS:
+                logger.debug(f"{symbol}: Insufficient historical data for RSI (need {config.RSI_MIN_DATA_DAYS} days)")
+                return None
+
+            # Append today's current price as latest candle for real-time RSI
+            today_candle = pd.DataFrame([{
+                'close': current_price,
+                'high': current_price,  # Approximate (real high might be higher)
+                'low': current_price,   # Approximate (real low might be lower)
+                'open': current_price,  # Approximate
+                'volume': current_volume
+            }])
+            df = pd.concat([df, today_candle], ignore_index=True)
+
+            # Calculate RSI with crossovers
+            rsi_analysis = calculate_rsi_with_crossovers(
+                df,
+                periods=config.RSI_PERIODS,
+                crossover_lookback=config.RSI_CROSSOVER_LOOKBACK
+            )
+
+            logger.debug(f"{symbol}: RSI(14)={rsi_analysis.get('rsi_14')}, Summary={rsi_analysis.get('summary')}")
+            return rsi_analysis
+
+        except Exception as e:
+            logger.warning(f"{symbol}: RSI calculation failed: {e}")
+            return None
 
     def calculate_market_cap(self, symbol: str, current_price: float) -> Tuple[float, float]:
         """
@@ -574,7 +760,13 @@ class StockMonitor:
         # Delegate to persistent alert history manager
         return self.alert_history_manager.should_send_alert(symbol, alert_type, cooldown_minutes)
 
-    def check_stock_for_drop(self, symbol: str, current_price: float, current_volume: int = 0) -> bool:
+    def check_stock_for_drop(
+        self,
+        symbol: str,
+        current_price: float,
+        current_volume: int = 0,
+        rsi_analysis: Optional[Dict] = None
+    ) -> bool:
         """
         Check a single stock for significant drops using multiple detection methods (PRIORITY ORDER):
         1. Volume spike with drop (≥1.2% + 2.5x volume, 5-min) - PRIORITY ALERT (checked first)
@@ -586,6 +778,7 @@ class StockMonitor:
             symbol: Stock symbol with .NS suffix
             current_price: Current price of the stock
             current_volume: Current trading volume
+            rsi_analysis: Optional RSI analysis dictionary with RSI values and crossovers
 
         Returns:
             True if any alert was sent, False otherwise
@@ -627,7 +820,8 @@ class StockMonitor:
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="volume_spike",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -645,7 +839,8 @@ class StockMonitor:
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="5min",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -661,7 +856,8 @@ class StockMonitor:
                     symbol, drop_10min, current_price, price_10min_ago,
                     alert_type="10min",
                     volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                    market_cap_cr=market_cap_cr,
+                    rsi_analysis=rsi_analysis
                 )
                 alert_sent = alert_sent or success
 
@@ -679,7 +875,8 @@ class StockMonitor:
                         symbol, drop_30min, current_price, price_30min_ago,
                         alert_type="30min",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -690,7 +887,13 @@ class StockMonitor:
 
         return alert_sent
 
-    def check_stock_for_rise(self, symbol: str, current_price: float, current_volume: int = 0) -> bool:
+    def check_stock_for_rise(
+        self,
+        symbol: str,
+        current_price: float,
+        current_volume: int = 0,
+        rsi_analysis: Optional[Dict] = None
+    ) -> bool:
         """
         Check a single stock for significant rises using multiple detection methods (PRIORITY ORDER):
         1. Volume spike with rise (≥1.2% + 2.5x volume, 5-min) - PRIORITY ALERT (checked first)
@@ -702,6 +905,7 @@ class StockMonitor:
             symbol: Stock symbol with .NS suffix
             current_price: Current price of the stock
             current_volume: Current trading volume
+            rsi_analysis: Optional RSI analysis dictionary with RSI values and crossovers
 
         Returns:
             True if any alert was sent, False otherwise
@@ -740,7 +944,8 @@ class StockMonitor:
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="volume_spike_rise",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -758,7 +963,8 @@ class StockMonitor:
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="5min_rise",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -774,7 +980,8 @@ class StockMonitor:
                     symbol, rise_10min, current_price, price_10min_ago,
                     alert_type="10min_rise",
                     volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                    market_cap_cr=market_cap_cr,
+                    rsi_analysis=rsi_analysis
                 )
                 alert_sent = alert_sent or success
 
@@ -792,7 +999,8 @@ class StockMonitor:
                         symbol, rise_30min, current_price, price_30min_ago,
                         alert_type="30min_rise",
                         volume_data=volume_data,
-                        market_cap_cr=market_cap_cr
+                        market_cap_cr=market_cap_cr,
+                        rsi_analysis=rsi_analysis
                     )
                     alert_sent = alert_sent or success
 
@@ -827,13 +1035,18 @@ class StockMonitor:
         # Check each stock for drops and rises
         for symbol, (current_price, current_volume) in price_data.items():
             try:
-                # Check for drops
-                drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume)
+                # Calculate RSI once for this stock (if enabled)
+                rsi_analysis = None
+                if config.ENABLE_RSI:
+                    rsi_analysis = self._calculate_rsi_for_stock(symbol, current_price, current_volume)
 
-                # Check for rises (if enabled)
+                # Check for drops (pass RSI analysis)
+                drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume, rsi_analysis)
+
+                # Check for rises (if enabled, pass RSI analysis)
                 rise_alert_sent = False
                 if config.ENABLE_RISE_ALERTS:
-                    rise_alert_sent = self.check_stock_for_rise(symbol, current_price, current_volume)
+                    rise_alert_sent = self.check_stock_for_rise(symbol, current_price, current_volume, rsi_analysis)
 
                 stats["checked"] += 1
                 if drop_alert_sent:
