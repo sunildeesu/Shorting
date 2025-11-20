@@ -109,3 +109,12 @@ ENABLE_RSI = os.getenv('ENABLE_RSI', 'true').lower() == 'true'  # Toggle RSI cal
 RSI_PERIODS = [9, 14, 21]  # Calculate RSI for multiple periods (fast, standard, slow)
 RSI_MIN_DATA_DAYS = int(os.getenv('RSI_MIN_DATA_DAYS', '30'))  # Minimum historical data needed (days)
 RSI_CROSSOVER_LOOKBACK = int(os.getenv('RSI_CROSSOVER_LOOKBACK', '3'))  # Detect crossovers in last N candles
+
+# Sector Analysis Configuration
+# Analyze sector performance and fund flow using existing price cache data (ZERO additional API calls)
+ENABLE_SECTOR_ANALYSIS = os.getenv('ENABLE_SECTOR_ANALYSIS', 'true').lower() == 'true'  # Toggle sector analysis
+SECTOR_ROTATION_THRESHOLD = float(os.getenv('SECTOR_ROTATION_THRESHOLD', '2.0'))  # % differential to trigger rotation alert
+SECTOR_SNAPSHOT_TIMES = ["09:30", "12:30", "15:15"]  # 3x daily snapshots (market open, mid-day, pre-close)
+MIN_SECTOR_STOCKS = int(os.getenv('MIN_SECTOR_STOCKS', '3'))  # Minimum stocks needed for valid sector analysis
+ENABLE_SECTOR_CONTEXT_IN_ALERTS = os.getenv('ENABLE_SECTOR_CONTEXT_IN_ALERTS', 'true').lower() == 'true'  # Add sector info to stock alerts
+ENABLE_SECTOR_EOD_REPORT = os.getenv('ENABLE_SECTOR_EOD_REPORT', 'true').lower() == 'true'  # Generate Excel report at EOD (3:25 PM)

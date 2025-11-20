@@ -12,6 +12,9 @@ from alert_history_manager import AlertHistoryManager
 from unified_quote_cache import UnifiedQuoteCache
 from unified_data_cache import UnifiedDataCache
 from rsi_analyzer import calculate_rsi_with_crossovers
+from sector_analyzer import get_sector_analyzer
+from sector_manager import get_sector_manager
+from sector_eod_report_generator import get_sector_eod_report_generator
 import config
 
 # Import data source libraries based on configuration
@@ -38,6 +41,22 @@ class StockMonitor:
 
         # Load shares outstanding for market cap calculation
         self.shares_outstanding = self._load_shares_outstanding()
+
+        # Initialize sector analysis (ZERO additional API calls - uses price_cache)
+        self.sector_analyzer = None
+        self.sector_manager = None
+        self.sector_eod_report_generator = None
+        if config.ENABLE_SECTOR_ANALYSIS:
+            try:
+                self.sector_analyzer = get_sector_analyzer()
+                self.sector_manager = get_sector_manager()
+                self.sector_eod_report_generator = get_sector_eod_report_generator()
+                logger.info(f"Sector analysis enabled ({len(self.sector_manager.get_all_sectors())} sectors)")
+            except Exception as e:
+                logger.error(f"Failed to initialize sector analysis: {e}")
+                self.sector_analyzer = None
+                self.sector_manager = None
+                self.sector_eod_report_generator = None
 
         # Initialize unified quote cache (if enabled)
         self.quote_cache = None
@@ -300,6 +319,72 @@ class StockMonitor:
         market_cap_cr = (current_price * shares) / 10000000
 
         return market_cap_cr, None  # percent change will be calculated from price change
+
+    def _get_sector_context(self, symbol: str, stock_price_change_10min: float) -> Optional[Dict]:
+        """
+        Get sector context for a stock by loading cached sector analysis
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+            stock_price_change_10min: Stock's 10-min price change percentage
+
+        Returns:
+            Dict with sector context, or None if not available
+        """
+        if not config.ENABLE_SECTOR_CONTEXT_IN_ALERTS:
+            return None
+
+        if not self.sector_manager or not self.sector_analyzer:
+            return None
+
+        try:
+            # Remove .NS suffix if present
+            clean_symbol = symbol.replace('.NS', '')
+
+            # Get sector for this stock
+            sector_name = self.sector_manager.get_sector(clean_symbol)
+            if not sector_name:
+                return None
+
+            # Load sector analysis cache
+            sector_cache_file = self.sector_analyzer.sector_cache_file
+            if not os.path.exists(sector_cache_file):
+                return None
+
+            with open(sector_cache_file, 'r') as f:
+                sector_analysis = json.load(f)
+
+            sectors = sector_analysis.get('sectors', {})
+            sector_data = sectors.get(sector_name)
+
+            if not sector_data:
+                return None
+
+            # Extract sector metrics
+            sector_change_10min = sector_data.get('price_change_10min', 0)
+            sector_volume_ratio = sector_data.get('volume_ratio', 1.0)
+            sector_momentum = sector_data.get('momentum_score_10min', 0)
+            stocks_up_10min = sector_data.get('stocks_up_10min', 0)
+            stocks_down_10min = sector_data.get('stocks_down_10min', 0)
+            total_stocks = sector_data.get('total_stocks', 0)
+
+            # Calculate stock vs sector differential
+            stock_vs_sector = stock_price_change_10min - sector_change_10min
+
+            return {
+                'sector_name': sector_name,
+                'sector_change_10min': sector_change_10min,
+                'stock_vs_sector': stock_vs_sector,
+                'sector_volume_ratio': sector_volume_ratio,
+                'sector_momentum': sector_momentum,
+                'stocks_up_10min': stocks_up_10min,
+                'stocks_down_10min': stocks_down_10min,
+                'total_stocks': total_stocks
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting sector context for {symbol}: {e}")
+            return None
 
     def generate_mock_prices(self) -> Dict[str, float]:
         """
@@ -802,26 +887,31 @@ class StockMonitor:
         alert_sent = False
 
         # === CHECK 1: Volume Spike with Drop (PRIORITY ALERT - checked first, 5-min comparison) ===
-        volume_data = self.price_cache.get_volume_data(symbol)
+        volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
 
-        if volume_data["volume_spike"] and price_5min_ago is not None:
+        if volume_data_5min["volume_spike"] and price_5min_ago is not None:
             drop_5min = self.calculate_drop_percentage(current_price, price_5min_ago)
 
             # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
             if drop_5min >= config.DROP_THRESHOLD_VOLUME_SPIKE:
                 # Check if we should send this alert (15-minute cooldown for priority alerts)
                 if self.should_send_alert(symbol, "volume_spike", cooldown_minutes=15):
-                    spike_ratio = volume_data["current_volume"] / volume_data["avg_volume"]
+                    spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
                     logger.info(f"🚨 PRIORITY: VOLUME SPIKE DROP{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
                                f"with {spike_ratio:.1f}x volume spike (5-min) "
                                f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, -drop_10min)
+
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="volume_spike",
-                        volume_data=volume_data,
+                        volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
@@ -835,16 +925,23 @@ class StockMonitor:
                     logger.info(f"DROP DETECTED [5MIN]{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
                                f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, -drop_10min)
+
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="5min",
-                        volume_data=volume_data,
+                        volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
         # === CHECK 3: 10-Minute Drop (Standard Alert) ===
+        volume_data_10min = self.price_cache.get_volume_data_10min(symbol)
+
         if price_10min_ago is not None:
             drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago)
 
@@ -852,16 +949,22 @@ class StockMonitor:
                 logger.info(f"DROP DETECTED [10MIN]{pharma_tag}: {symbol} dropped {drop_10min:.2f}% "
                            f"(₹{price_10min_ago:.2f} → ₹{current_price:.2f})")
 
+                # Get sector context (using 10-min price change for sector comparison)
+                sector_context = self._get_sector_context(symbol, -drop_10min)
+
                 success = self.telegram.send_alert(
                     symbol, drop_10min, current_price, price_10min_ago,
                     alert_type="10min",
-                    volume_data=volume_data,
+                    volume_data=volume_data_10min,
                     market_cap_cr=market_cap_cr,
-                    rsi_analysis=rsi_analysis
+                    rsi_analysis=rsi_analysis,
+                    sector_context=sector_context
                 )
                 alert_sent = alert_sent or success
 
         # === CHECK 4: 30-Minute Cumulative Drop (Gradual Decline) ===
+        volume_data_30min = self.price_cache.get_volume_data_30min(symbol)
+
         if price_30min_ago is not None:
             drop_30min = self.calculate_drop_percentage(current_price, price_30min_ago)
 
@@ -871,12 +974,17 @@ class StockMonitor:
                     logger.info(f"DROP DETECTED [30MIN]{pharma_tag}: {symbol} dropped {drop_30min:.2f}% "
                                f"(₹{price_30min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, -drop_10min)
+
                     success = self.telegram.send_alert(
                         symbol, drop_30min, current_price, price_30min_ago,
                         alert_type="30min",
-                        volume_data=volume_data,
+                        volume_data=volume_data_30min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
@@ -926,26 +1034,31 @@ class StockMonitor:
         alert_sent = False
 
         # === CHECK 1: Volume Spike with Rise (PRIORITY ALERT - checked first, 5-min comparison) ===
-        volume_data = self.price_cache.get_volume_data(symbol)
+        volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
 
-        if volume_data["volume_spike"] and price_5min_ago is not None:
+        if volume_data_5min["volume_spike"] and price_5min_ago is not None:
             rise_5min = self.calculate_rise_percentage(current_price, price_5min_ago)
 
             # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
             if rise_5min >= config.RISE_THRESHOLD_VOLUME_SPIKE:
                 # Check if we should send this alert (15-minute cooldown for priority alerts)
                 if self.should_send_alert(symbol, "volume_spike_rise", cooldown_minutes=15):
-                    spike_ratio = volume_data["current_volume"] / volume_data["avg_volume"]
+                    spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
                     logger.info(f"🚨 PRIORITY: VOLUME SPIKE RISE: {symbol} rose {rise_5min:.2f}% "
                                f"with {spike_ratio:.1f}x volume spike (5-min) "
                                f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, rise_10min)
+
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="volume_spike_rise",
-                        volume_data=volume_data,
+                        volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
@@ -959,16 +1072,23 @@ class StockMonitor:
                     logger.info(f"RISE DETECTED [5MIN]: {symbol} rose {rise_5min:.2f}% "
                                f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, rise_10min)
+
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="5min_rise",
-                        volume_data=volume_data,
+                        volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
         # === CHECK 3: 10-Minute Rise (Standard Alert) ===
+        volume_data_10min = self.price_cache.get_volume_data_10min(symbol)
+
         if price_10min_ago is not None:
             rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago)
 
@@ -976,16 +1096,22 @@ class StockMonitor:
                 logger.info(f"RISE DETECTED [10MIN]: {symbol} rose {rise_10min:.2f}% "
                            f"(₹{price_10min_ago:.2f} → ₹{current_price:.2f})")
 
+                # Get sector context (using 10-min price change for sector comparison)
+                sector_context = self._get_sector_context(symbol, rise_10min)
+
                 success = self.telegram.send_alert(
                     symbol, rise_10min, current_price, price_10min_ago,
                     alert_type="10min_rise",
-                    volume_data=volume_data,
+                    volume_data=volume_data_10min,
                     market_cap_cr=market_cap_cr,
-                    rsi_analysis=rsi_analysis
+                    rsi_analysis=rsi_analysis,
+                    sector_context=sector_context
                 )
                 alert_sent = alert_sent or success
 
         # === CHECK 4: 30-Minute Cumulative Rise (Gradual Increase) ===
+        volume_data_30min = self.price_cache.get_volume_data_30min(symbol)
+
         if price_30min_ago is not None:
             rise_30min = self.calculate_rise_percentage(current_price, price_30min_ago)
 
@@ -995,12 +1121,17 @@ class StockMonitor:
                     logger.info(f"RISE DETECTED [30MIN]: {symbol} rose {rise_30min:.2f}% "
                                f"(₹{price_30min_ago:.2f} → ₹{current_price:.2f})")
 
+                    # Get sector context (using 10-min price change for sector comparison)
+                    rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+                    sector_context = self._get_sector_context(symbol, rise_10min)
+
                     success = self.telegram.send_alert(
                         symbol, rise_30min, current_price, price_30min_ago,
                         alert_type="30min_rise",
-                        volume_data=volume_data,
+                        volume_data=volume_data_30min,
                         market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis
+                        rsi_analysis=rsi_analysis,
+                        sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
 
@@ -1067,4 +1198,101 @@ class StockMonitor:
                    f"Drop alerts: {stats['drop_alerts']}, Rise alerts: {stats['rise_alerts']}, "
                    f"Total alerts: {stats['alerts_sent']}, Errors: {stats['errors']}")
 
+        # Run sector analysis (ZERO additional API calls - reads from price_cache)
+        if config.ENABLE_SECTOR_ANALYSIS and self.sector_analyzer:
+            try:
+                # Check if this is a snapshot time
+                snapshot_time = self._get_snapshot_time_if_due()
+
+                # Analyze sectors and cache results
+                sector_analysis = self.sector_analyzer.analyze_and_cache(save_snapshot_at=snapshot_time)
+
+                if sector_analysis:
+                    logger.debug(f"Sector analysis updated ({len(sector_analysis.get('sectors', {}))} sectors)")
+
+                    # Detect sector rotation if it's a snapshot time
+                    if snapshot_time:
+                        rotation = self.sector_analyzer.detect_rotation(sector_analysis, config.SECTOR_ROTATION_THRESHOLD)
+                        if rotation:
+                            logger.info(f"Sector rotation detected at {snapshot_time}: divergence {rotation['divergence']:.2f}%")
+                            # Send rotation alert
+                            try:
+                                self.telegram.send_sector_rotation_alert(rotation)
+                            except Exception as e:
+                                logger.error(f"Failed to send sector rotation alert: {e}")
+
+                    # Send EOD sector summary at market close (3:25 PM)
+                    if self._should_send_eod_summary():
+                        logger.info("Generating EOD sector summary and report...")
+                        try:
+                            # Send Telegram summary
+                            self.telegram.send_eod_sector_summary(sector_analysis)
+                            logger.info("EOD sector summary sent to Telegram")
+
+                            # Generate Excel report (if enabled)
+                            if config.ENABLE_SECTOR_EOD_REPORT and self.sector_eod_report_generator:
+                                report_path = self.sector_eod_report_generator.generate_report(sector_analysis)
+                                if report_path:
+                                    logger.info(f"EOD sector Excel report generated: {report_path}")
+                                else:
+                                    logger.warning("Failed to generate EOD sector Excel report")
+                        except Exception as e:
+                            logger.error(f"Failed to generate EOD sector summary/report: {e}")
+
+            except Exception as e:
+                logger.error(f"Error in sector analysis: {e}")
+
         return stats
+
+    def _get_snapshot_time_if_due(self) -> Optional[str]:
+        """
+        Check if current time matches any snapshot time
+
+        Returns:
+            Snapshot time string (e.g., "09:30") if due, None otherwise
+        """
+        now = datetime.now()
+        current_time = now.strftime("%H:%M")
+
+        for snapshot_time in config.SECTOR_SNAPSHOT_TIMES:
+            # Allow 1-minute window (e.g., 09:30-09:31, 12:30-12:31, 15:15-15:16)
+            snapshot_hour, snapshot_min = map(int, snapshot_time.split(':'))
+            if now.hour == snapshot_hour and now.minute == snapshot_min:
+                return snapshot_time
+
+        return None
+
+    def _is_eod_time(self) -> bool:
+        """
+        Check if current time is end-of-day (market close at 3:25 PM)
+
+        Returns:
+            True if it's EOD time (15:25), False otherwise
+        """
+        now = datetime.now()
+        # EOD time is 15:25 (3:25 PM) - 5 minutes before market close at 15:30
+        # Allow 1-minute window (15:25-15:26)
+        return now.hour == 15 and now.minute == 25
+
+    # Track whether EOD summary has been sent today
+    _eod_summary_sent_date: Optional[date] = None
+
+    def _should_send_eod_summary(self) -> bool:
+        """
+        Check if EOD summary should be sent
+
+        Returns:
+            True if EOD time and not yet sent today, False otherwise
+        """
+        if not self._is_eod_time():
+            return False
+
+        today = date.today()
+
+        # Check if already sent today
+        if StockMonitor._eod_summary_sent_date == today:
+            return False
+
+        # Mark as sent for today
+        StockMonitor._eod_summary_sent_date = today
+        return True
