@@ -42,3 +42,4 @@ data/backtest_results/
 data/test_cache/
 data/unified_cache/
 data/eod_reports/
+data/friday_reminder_tracking.json

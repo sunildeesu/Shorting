@@ -707,16 +707,99 @@ class ATRBreakoutMonitor:
 
         return message
 
-    def send_friday_exit_reminder(self):
-        """Send reminder to close ATR positions on Friday"""
+    def _load_friday_reminder_tracking(self) -> Dict:
+        """Load tracking data for Friday exit reminders"""
+        tracking_file = "data/friday_reminder_tracking.json"
         try:
-            message = "⚠️⚠️⚠️ FRIDAY EXIT REMINDER ⚠️⚠️⚠️\n"
+            if os.path.exists(tracking_file):
+                with open(tracking_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load Friday reminder tracking: {e}")
+        return {}
+
+    def _save_friday_reminder_tracking(self, tracking_data: Dict):
+        """Save tracking data for Friday exit reminders"""
+        tracking_file = "data/friday_reminder_tracking.json"
+        try:
+            with open(tracking_file, 'w') as f:
+                json.dump(tracking_data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save Friday reminder tracking: {e}")
+
+    def _should_send_friday_reminder(self, current_time: datetime) -> Tuple[bool, str]:
+        """
+        Check if Friday exit reminder should be sent
+
+        Sends reminders only twice on Friday:
+        - 10:00 AM reminder (sent between 10:00-10:30 AM)
+        - 3:00 PM reminder (sent between 3:00-3:30 PM)
+
+        Returns:
+            Tuple of (should_send: bool, reminder_type: str)
+        """
+        # Load tracking data
+        tracking = self._load_friday_reminder_tracking()
+        today_str = current_time.strftime('%Y-%m-%d')
+
+        # Reset tracking if it's a new day
+        if tracking.get('date') != today_str:
+            tracking = {
+                'date': today_str,
+                'morning_sent': False,
+                'afternoon_sent': False
+            }
+
+        current_hour = current_time.hour
+        current_minute = current_time.minute
+
+        # Morning reminder: 10:00-10:30 AM
+        if current_hour == 10 and current_minute < 30:
+            if not tracking.get('morning_sent', False):
+                tracking['morning_sent'] = True
+                tracking['morning_time'] = current_time.strftime('%H:%M:%S')
+                self._save_friday_reminder_tracking(tracking)
+                return True, "morning"
+
+        # Afternoon reminder: 3:00-3:30 PM
+        elif current_hour == 15 and current_minute < 30:
+            if not tracking.get('afternoon_sent', False):
+                tracking['afternoon_sent'] = True
+                tracking['afternoon_time'] = current_time.strftime('%H:%M:%S')
+                self._save_friday_reminder_tracking(tracking)
+                return True, "afternoon"
+
+        return False, ""
+
+    def send_friday_exit_reminder(self, reminder_type: str = "general"):
+        """
+        Send reminder to close ATR positions on Friday
+
+        Args:
+            reminder_type: Type of reminder ("morning", "afternoon", or "general")
+        """
+        try:
+            current_time = datetime.now()
+
+            # Customize message based on reminder type
+            if reminder_type == "morning":
+                header = "⚠️ FRIDAY EXIT REMINDER - MORNING ⚠️"
+                timing_note = "This is your morning reminder. Another reminder will be sent at 3:00 PM."
+            elif reminder_type == "afternoon":
+                header = "⚠️ FRIDAY EXIT REMINDER - FINAL ⚠️"
+                timing_note = "⏰ <b>FINAL REMINDER</b> - Market closes soon! Close all positions before 3:30 PM."
+            else:
+                header = "⚠️⚠️⚠️ FRIDAY EXIT REMINDER ⚠️⚠️⚠️"
+                timing_note = "This is your Friday exit reminder."
+
+            message = f"{header}\n"
             message += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             message += "🔔 <b>ATR Breakout Strategy</b>\n\n"
             message += "Today is Friday. As per the ATR strategy rules:\n"
             message += "📌 Close ALL open ATR breakout positions before market close\n\n"
+            message += f"{timing_note}\n\n"
             message += "This is part of the weekly exit rule to avoid weekend risk.\n\n"
-            message += f"⏰ Time: {datetime.now().strftime('%H:%M:%S')}\n"
+            message += f"⏰ Time: {current_time.strftime('%H:%M:%S')}\n"
 
             url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
@@ -727,7 +810,7 @@ class ATRBreakoutMonitor:
 
             response = requests.post(url, json=payload)
             if response.status_code == 200:
-                logger.info("Friday exit reminder sent successfully")
+                logger.info(f"Friday exit reminder ({reminder_type}) sent successfully")
             else:
                 logger.error(f"Failed to send Friday reminder: {response.text}")
 
@@ -831,10 +914,15 @@ class ATRBreakoutMonitor:
         logger.info(f"  ✓ Expected time: ~20-30 sec (vs 2.5 min unoptimized)")
         logger.info("=" * 60)
 
-        # Check if it's Friday and send reminder
-        if datetime.now().weekday() == 4 and config.ATR_FRIDAY_EXIT:
-            logger.info("Today is Friday - sending exit reminder")
-            self.send_friday_exit_reminder()
+        # Check if it's Friday and send reminder (only at 10 AM and 3 PM)
+        current_time = datetime.now()
+        if current_time.weekday() == 4 and config.ATR_FRIDAY_EXIT:
+            should_send, reminder_type = self._should_send_friday_reminder(current_time)
+            if should_send:
+                logger.info(f"Today is Friday - sending {reminder_type} exit reminder")
+                self.send_friday_exit_reminder(reminder_type)
+            else:
+                logger.info("Today is Friday but reminder already sent for this time slot")
 
         # Scan all stocks
         breakout_signals = self.scan_all_stocks()
