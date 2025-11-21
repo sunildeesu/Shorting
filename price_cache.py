@@ -245,6 +245,7 @@ class PriceCache:
         """
         Get volume data for 5-minute comparison
         Compares current volume with volume from 5 minutes ago (previous)
+        Only compares volumes from the same day (prevents cross-day comparisons)
 
         Returns:
             Dict with current_volume, previous_volume, volume_change, and volume_spike flag
@@ -262,7 +263,18 @@ class PriceCache:
         previous = self.cache[symbol].get("previous")  # 5 minutes ago
 
         current_volume = current.get("volume", 0) if current else 0
-        previous_volume = previous.get("volume", 0) if previous else 0
+        previous_volume = 0
+
+        # Validate same-day timestamps to prevent cross-day volume comparisons
+        if current and previous:
+            current_timestamp = current.get("timestamp")
+            previous_timestamp = previous.get("timestamp")
+
+            if current_timestamp and previous_timestamp:
+                if self._is_same_day(current_timestamp, previous_timestamp):
+                    previous_volume = previous.get("volume", 0)
+                else:
+                    logger.debug(f"{symbol}: Skipping 5-min volume comparison - timestamps from different days")
 
         # Calculate volume change
         volume_change = current_volume - previous_volume if previous_volume > 0 else 0
@@ -284,6 +296,7 @@ class PriceCache:
         """
         Get volume data for 10-minute comparison
         Compares current volume with average of previous 2 snapshots (10 min window)
+        Only compares volumes from the same day (prevents cross-day comparisons)
 
         Returns:
             Dict with current_volume, avg_volume, volume_change, and volume_spike flag
@@ -304,11 +317,25 @@ class PriceCache:
         current_volume = current.get("volume", 0) if current else 0
 
         # Calculate average from previous 2 snapshots (5-min and 10-min ago)
+        # Only include volumes from the same day as current
         volumes = []
-        if previous and "volume" in previous:
-            volumes.append(previous["volume"])
-        if previous2 and "volume" in previous2:
-            volumes.append(previous2["volume"])
+        if current and previous and "volume" in previous:
+            current_timestamp = current.get("timestamp")
+            previous_timestamp = previous.get("timestamp")
+            if current_timestamp and previous_timestamp:
+                if self._is_same_day(current_timestamp, previous_timestamp):
+                    volumes.append(previous["volume"])
+                else:
+                    logger.debug(f"{symbol}: Skipping previous volume - different day")
+
+        if current and previous2 and "volume" in previous2:
+            current_timestamp = current.get("timestamp")
+            previous2_timestamp = previous2.get("timestamp")
+            if current_timestamp and previous2_timestamp:
+                if self._is_same_day(current_timestamp, previous2_timestamp):
+                    volumes.append(previous2["volume"])
+                else:
+                    logger.debug(f"{symbol}: Skipping previous2 volume - different day")
 
         avg_volume = sum(volumes) / len(volumes) if volumes else 0
         volume_change = current_volume - avg_volume if avg_volume > 0 else 0
@@ -330,6 +357,7 @@ class PriceCache:
         """
         Get volume data for 30-minute comparison
         Compares current volume with average of previous 6 snapshots (30 min window)
+        Only compares volumes from the same day (prevents cross-day comparisons)
 
         Returns:
             Dict with current_volume, avg_volume, volume_change, and volume_spike flag
@@ -347,11 +375,18 @@ class PriceCache:
         current_volume = current.get("volume", 0) if current else 0
 
         # Get all available volumes from last 30 minutes
+        # Only include volumes from the same day as current
         volumes = []
         for key in ["previous", "previous2", "previous3", "previous4", "previous5", "previous6"]:
             snapshot = self.cache[symbol].get(key)
-            if snapshot and "volume" in snapshot:
-                volumes.append(snapshot["volume"])
+            if current and snapshot and "volume" in snapshot:
+                current_timestamp = current.get("timestamp")
+                snapshot_timestamp = snapshot.get("timestamp")
+                if current_timestamp and snapshot_timestamp:
+                    if self._is_same_day(current_timestamp, snapshot_timestamp):
+                        volumes.append(snapshot["volume"])
+                    else:
+                        logger.debug(f"{symbol}: Skipping {key} volume - different day")
 
         # Calculate average from historical volumes
         avg_volume = sum(volumes) / len(volumes) if volumes else 0
