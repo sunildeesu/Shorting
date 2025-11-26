@@ -43,3 +43,8 @@ data/test_cache/
 data/unified_cache/
 data/eod_reports/
 data/friday_reminder_tracking.json
+
+# Sector analysis runtime data
+data/sector_eod_reports/
+data/sector_snapshots/
+data/friday_reminder_tracking.json
