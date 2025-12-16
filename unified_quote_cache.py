@@ -79,11 +79,39 @@ class UnifiedQuoteCache:
             self.cache_data = None
             self.cache_timestamp = None
 
+    def _serialize_quotes(self, quotes: Dict) -> Dict:
+        """
+        Serialize quote data for JSON storage (convert datetime objects to strings)
+
+        Args:
+            quotes: Raw quote data from Kite API
+
+        Returns:
+            JSON-serializable dictionary
+        """
+        serialized = {}
+
+        for key, value in quotes.items():
+            if isinstance(value, dict):
+                # Recursively serialize nested dicts
+                serialized[key] = self._serialize_quotes(value)
+            elif hasattr(value, 'isoformat'):
+                # Convert datetime objects to ISO strings
+                serialized[key] = value.isoformat()
+            else:
+                # Keep other values as-is
+                serialized[key] = value
+
+        return serialized
+
     def _save_cache(self):
         """Save cache to disk"""
         try:
+            # Serialize quotes (convert datetime objects to strings)
+            serialized_quotes = self._serialize_quotes(self.cache_data) if self.cache_data else {}
+
             data = {
-                'quotes': self.cache_data,
+                'quotes': serialized_quotes,
                 'timestamp': self.cache_timestamp.isoformat() if self.cache_timestamp else None,
                 'ttl_seconds': self.ttl_seconds
             }
@@ -98,7 +126,7 @@ class UnifiedQuoteCache:
 
             logger.debug(f"Saved quote cache at {self.cache_timestamp}")
 
-        except IOError as e:
+        except Exception as e:
             logger.error(f"Failed to save quote cache: {e}")
 
     def _is_cache_valid(self) -> bool:

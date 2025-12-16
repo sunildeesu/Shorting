@@ -3,11 +3,12 @@
 Unified Data Cache Manager
 
 Handles caching of various types of stock data with configurable TTLs.
-Shared across stock_monitor, atr_breakout_monitor, and eod_analyzer.
+Shared across stock_monitor, atr_breakout_monitor, eod_analyzer, and value_screener.
 
 Data types supported:
 - historical_30d: 30-day daily candles (for EOD analysis)
 - historical_50d: 50-day daily candles (for ATR calculation)
+- historical_3year: 3-year daily candles (for value screener)
 - intraday_5d: 5-day 15-minute candles (for EOD volume analysis)
 
 Author: Sunil Kumar Durganaik
@@ -34,6 +35,7 @@ class UnifiedDataCache:
     DEFAULT_TTL = {
         'historical_30d': 24,    # Daily candles - refresh daily
         'historical_50d': 24,    # Daily candles - refresh daily
+        'historical_3year': 24,  # 3-year daily candles - refresh daily (for value screener)
         'intraday_5d': 1,        # 15-min candles - refresh hourly
         'intraday_1d': 0.25      # 15-min candles - refresh every 15 min
     }
@@ -52,6 +54,7 @@ class UnifiedDataCache:
         self.cache_files = {
             'historical_30d': os.path.join(cache_dir, 'historical_30d.json'),
             'historical_50d': os.path.join(cache_dir, 'historical_50d.json'),
+            'historical_3year': os.path.join(cache_dir, 'historical_3year.json'),
             'intraday_5d': os.path.join(cache_dir, 'intraday_5d.json'),
             'intraday_1d': os.path.join(cache_dir, 'intraday_1d.json')
         }
@@ -117,7 +120,7 @@ class UnifiedDataCache:
 
         Args:
             symbol: Stock symbol (e.g., "RELIANCE" or "RELIANCE.NS")
-            data_type: Type of data ('historical_30d', 'historical_50d', 'intraday_5d')
+            data_type: Type of data ('historical_30d', 'historical_50d', 'historical_3year', 'intraday_5d')
 
         Returns:
             List of OHLCV dicts if cache valid, None if expired/missing
@@ -151,7 +154,7 @@ class UnifiedDataCache:
         Args:
             symbol: Stock symbol (e.g., "RELIANCE" or "RELIANCE.NS")
             data: List of OHLCV dicts from Kite API
-            data_type: Type of data ('historical_30d', 'historical_50d', 'intraday_5d')
+            data_type: Type of data ('historical_30d', 'historical_50d', 'historical_3year', 'intraday_5d')
         """
         if data_type not in self.caches:
             logger.error(f"Invalid data type: {data_type}")

@@ -110,6 +110,14 @@ RSI_PERIODS = [9, 14, 21]  # Calculate RSI for multiple periods (fast, standard,
 RSI_MIN_DATA_DAYS = int(os.getenv('RSI_MIN_DATA_DAYS', '30'))  # Minimum historical data needed (days)
 RSI_CROSSOVER_LOOKBACK = int(os.getenv('RSI_CROSSOVER_LOOKBACK', '3'))  # Detect crossovers in last N candles
 
+# OI (Open Interest) Analysis Configuration
+# Analyze OI changes to distinguish strong moves from weak moves (ZERO additional API calls - already in quotes)
+ENABLE_OI_ANALYSIS = os.getenv('ENABLE_OI_ANALYSIS', 'true').lower() == 'true'  # Toggle OI analysis
+OI_SIGNIFICANT_THRESHOLD = float(os.getenv('OI_SIGNIFICANT_THRESHOLD', '5.0'))  # 5% OI change = significant
+OI_STRONG_THRESHOLD = float(os.getenv('OI_STRONG_THRESHOLD', '10.0'))  # 10% OI change = strong signal
+OI_VERY_STRONG_THRESHOLD = float(os.getenv('OI_VERY_STRONG_THRESHOLD', '15.0'))  # 15% OI change = very strong signal
+OI_CACHE_FILE = 'data/oi_cache/oi_history.json'  # OI history cache for tracking changes
+
 # Sector Analysis Configuration
 # Analyze sector performance and fund flow using existing price cache data (ZERO additional API calls)
 ENABLE_SECTOR_ANALYSIS = os.getenv('ENABLE_SECTOR_ANALYSIS', 'true').lower() == 'true'  # Toggle sector analysis

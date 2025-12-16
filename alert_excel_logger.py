@@ -50,6 +50,7 @@ class AlertExcelLogger:
         "RSI(9)", "RSI(14)", "RSI(21)",
         "RSI 9vs14", "RSI 9vs21", "RSI 14vs21",
         "RSI Recent Cross", "RSI Summary",
+        "OI Current", "OI Change %", "OI Pattern", "OI Signal", "OI Strength", "OI Priority",
         "Price 2min", "Price 10min", "Price EOD",
         "Status", "Row ID"
     ]
@@ -185,11 +186,17 @@ class AlertExcelLogger:
                 'S': 13,  # RSI 14vs21
                 'T': 18,  # RSI Recent Cross
                 'U': 15,  # RSI Summary
-                'V': 12,  # Price 2min
-                'W': 12,  # Price 10min
-                'X': 12,  # Price EOD
-                'Y': 10,  # Status
-                'Z': 25   # Row ID
+                'V': 13,  # OI Current
+                'W': 12,  # OI Change %
+                'X': 16,  # OI Pattern
+                'Y': 14,  # OI Signal
+                'Z': 13,  # OI Strength
+                'AA': 11, # OI Priority
+                'AB': 12, # Price 2min
+                'AC': 12, # Price 10min
+                'AD': 12, # Price EOD
+                'AE': 10, # Status
+                'AF': 25  # Row ID
             }
 
         # Write headers
@@ -225,7 +232,8 @@ class AlertExcelLogger:
         market_cap_cr: Optional[float] = None,
         telegram_sent: bool = False,
         timestamp: Optional[datetime] = None,
-        rsi_analysis: Optional[Dict] = None
+        rsi_analysis: Optional[Dict] = None,
+        oi_analysis: Optional[Dict] = None
     ) -> bool:
         """
         Log an alert to the appropriate sheet.
@@ -241,6 +249,7 @@ class AlertExcelLogger:
             telegram_sent: Whether Telegram alert was sent
             timestamp: Optional timestamp (defaults to now)
             rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
+            oi_analysis: Optional OI analysis dict with pattern and signal
 
         Returns:
             True if logged successfully, False otherwise
@@ -331,6 +340,17 @@ class AlertExcelLogger:
                 rsi_recent_cross = "; ".join(recent_crosses) if recent_crosses else "None"
                 rsi_summary = rsi_analysis.get('summary', "")
 
+            # Extract OI data
+            oi_current = oi_change_pct = oi_pattern = oi_signal = oi_strength = oi_priority = ""
+
+            if oi_analysis:
+                oi_current = int(oi_analysis.get('current_oi', 0))
+                oi_change_pct = round(oi_analysis.get('oi_change_pct', 0), 2)
+                oi_pattern = oi_analysis.get('pattern', '')
+                oi_signal = oi_analysis.get('signal', '')
+                oi_strength = oi_analysis.get('strength', '')
+                oi_priority = oi_analysis.get('priority', '')
+
             # Write data
             row_data = [
                 date_str,                           # Date
@@ -354,6 +374,12 @@ class AlertExcelLogger:
                 rsi_14vs21,                         # RSI 14vs21
                 rsi_recent_cross,                   # RSI Recent Cross
                 rsi_summary,                        # RSI Summary
+                oi_current,                         # OI Current
+                oi_change_pct,                      # OI Change %
+                oi_pattern,                         # OI Pattern
+                oi_signal,                          # OI Signal
+                oi_strength,                        # OI Strength
+                oi_priority,                        # OI Priority
                 "",                                 # Price 2min (to be filled)
                 "",                                 # Price 10min (to be filled)
                 "",                                 # Price EOD (to be filled)

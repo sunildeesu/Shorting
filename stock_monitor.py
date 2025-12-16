@@ -15,6 +15,7 @@ from rsi_analyzer import calculate_rsi_with_crossovers
 from sector_analyzer import get_sector_analyzer
 from sector_manager import get_sector_manager
 from sector_eod_report_generator import get_sector_eod_report_generator
+from oi_analyzer import get_oi_analyzer
 import config
 
 # Import data source libraries based on configuration
@@ -57,6 +58,16 @@ class StockMonitor:
                 self.sector_analyzer = None
                 self.sector_manager = None
                 self.sector_eod_report_generator = None
+
+        # Initialize OI analyzer (ZERO additional API calls - uses OI from quotes)
+        self.oi_analyzer = None
+        if config.ENABLE_OI_ANALYSIS:
+            try:
+                self.oi_analyzer = get_oi_analyzer()
+                logger.info("OI analysis enabled (analyzes open interest patterns)")
+            except Exception as e:
+                logger.error(f"Failed to initialize OI analyzer: {e}")
+                self.oi_analyzer = None
 
         # Initialize unified quote cache (if enabled)
         self.quote_cache = None
@@ -622,7 +633,7 @@ class StockMonitor:
 
         return None, 0
 
-    def fetch_all_prices_batch_kite_optimized(self) -> Dict[str, Tuple[float, int]]:
+    def fetch_all_prices_batch_kite_optimized(self) -> Dict[str, Dict]:
         """
         Fetch prices using Kite's batch quote API with unified cache (OPTIMIZED)
         Supports up to 500 instruments per call, using batches of 50 for safety
@@ -631,7 +642,14 @@ class StockMonitor:
         This reduces API calls from 191 to ~4 per run (98% reduction!)
 
         Returns:
-            Dictionary mapping symbol to (price, volume) tuple
+            Dictionary mapping symbol to quote data dict with keys:
+            {
+                'price': float,
+                'volume': int,
+                'oi': int,
+                'oi_day_high': int,
+                'oi_day_low': int
+            }
         """
         price_data = {}
 
@@ -645,14 +663,23 @@ class StockMonitor:
                     batch_size=50
                 )
 
-                # Convert to price_data format: {symbol: (price, volume)}
+                # Convert to comprehensive price_data format
                 for instrument, quote_data in quotes_dict.items():
                     symbol = instrument.replace("NSE:", "").replace(".NS", "")
                     ltp = quote_data.get('last_price')
                     volume = quote_data.get('volume', 0)
+                    oi = quote_data.get('oi', 0)
+                    oi_day_high = quote_data.get('oi_day_high', 0)
+                    oi_day_low = quote_data.get('oi_day_low', 0)
 
                     if ltp and ltp > 0:
-                        price_data[symbol] = (float(ltp), int(volume))
+                        price_data[symbol] = {
+                            'price': float(ltp),
+                            'volume': int(volume),
+                            'oi': int(oi),
+                            'oi_day_high': int(oi_day_high),
+                            'oi_day_low': int(oi_day_low)
+                        }
 
                 logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks")
                 return price_data
@@ -688,11 +715,20 @@ class StockMonitor:
                     symbol = instrument.replace("NSE:", "").replace(".NS", "")
                     ltp = quote_data.get('last_price')
                     volume = quote_data.get('volume', 0)
+                    oi = quote_data.get('oi', 0)
+                    oi_day_high = quote_data.get('oi_day_high', 0)
+                    oi_day_low = quote_data.get('oi_day_low', 0)
 
                     if ltp and ltp > 0:
-                        price_data[symbol] = (float(ltp), int(volume))
+                        price_data[symbol] = {
+                            'price': float(ltp),
+                            'volume': int(volume),
+                            'oi': int(oi),
+                            'oi_day_high': int(oi_day_high),
+                            'oi_day_low': int(oi_day_low)
+                        }
                         batch_success += 1
-                        logger.debug(f"  {symbol}: ₹{ltp:.2f}, vol:{volume:,}")
+                        logger.debug(f"  {symbol}: ₹{ltp:.2f}, vol:{volume:,}, oi:{oi:,}")
                     else:
                         logger.warning(f"  {symbol}: Invalid price data")
 
@@ -724,20 +760,26 @@ class StockMonitor:
                 try:
                     price, volume = self.fetch_stock_price_with_retry(symbol)
                     if price is not None:
-                        price_data[symbol] = (price, volume)
+                        price_data[symbol] = {
+                            'price': price,
+                            'volume': volume,
+                            'oi': 0,  # Not available in retry
+                            'oi_day_high': 0,
+                            'oi_day_low': 0
+                        }
                         logger.debug(f"  Retry success: {symbol}: ₹{price:.2f}")
                 except Exception as e:
                     logger.error(f"  Retry failed for {symbol}: {e}")
 
         return price_data
 
-    def fetch_all_prices_batch_sequential(self) -> Dict[str, Tuple[float, int]]:
+    def fetch_all_prices_batch_sequential(self) -> Dict[str, Dict]:
         """
         Fetch prices sequentially (one by one) - FALLBACK for Yahoo/NSEpy
         This is the OLD method, kept for compatibility with non-Kite data sources
 
         Returns:
-            Dictionary mapping symbol to (price, volume) tuple
+            Dictionary mapping symbol to quote data dict (OI not available for Yahoo/NSEpy)
         """
         price_data = {}
         failed_stocks = []
@@ -756,7 +798,13 @@ class StockMonitor:
             price, volume = self.fetch_stock_price_with_retry(symbol)
 
             if price is not None:
-                price_data[symbol] = (price, volume)
+                price_data[symbol] = {
+                    'price': price,
+                    'volume': volume,
+                    'oi': 0,  # Not available for Yahoo/NSEpy
+                    'oi_day_high': 0,
+                    'oi_day_low': 0
+                }
                 logger.debug(f"{symbol}: ₹{price:.2f}, vol:{volume:,}")
             else:
                 failed_stocks.append(symbol)
@@ -784,18 +832,24 @@ class StockMonitor:
 
         return price_data
 
-    def fetch_all_prices_batch(self) -> Dict[str, Tuple[float, int]]:
+    def fetch_all_prices_batch(self) -> Dict[str, Dict]:
         """
         Fetch current prices and volumes for all stocks
         Uses optimized batch API for Kite, sequential for others
 
         Returns:
-            Dictionary mapping symbol to (price, volume) tuple
+            Dictionary mapping symbol to quote data dict
         """
         if config.DEMO_MODE:
-            # Convert mock prices to (price, volume) tuples
+            # Convert mock prices to quote data format
             mock_prices = self.generate_mock_prices()
-            return {symbol: (price, 0) for symbol, price in mock_prices.items()}
+            return {symbol: {
+                'price': price,
+                'volume': 0,
+                'oi': 0,
+                'oi_day_high': 0,
+                'oi_day_low': 0
+            } for symbol, price in mock_prices.items()}
 
         # Use optimized batch method for Kite Connect
         if config.DATA_SOURCE == 'kite':
@@ -850,7 +904,8 @@ class StockMonitor:
         symbol: str,
         current_price: float,
         current_volume: int = 0,
-        rsi_analysis: Optional[Dict] = None
+        rsi_analysis: Optional[Dict] = None,
+        oi_analysis: Optional[Dict] = None
     ) -> bool:
         """
         Check a single stock for significant drops using multiple detection methods (PRIORITY ORDER):
@@ -864,6 +919,7 @@ class StockMonitor:
             current_price: Current price of the stock
             current_volume: Current trading volume
             rsi_analysis: Optional RSI analysis dictionary with RSI values and crossovers
+            oi_analysis: Optional OI analysis dictionary with pattern and signal
 
         Returns:
             True if any alert was sent, False otherwise
@@ -911,6 +967,7 @@ class StockMonitor:
                         volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -935,6 +992,7 @@ class StockMonitor:
                         volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -958,6 +1016,7 @@ class StockMonitor:
                     volume_data=volume_data_10min,
                     market_cap_cr=market_cap_cr,
                     rsi_analysis=rsi_analysis,
+                    oi_analysis=oi_analysis,
                     sector_context=sector_context
                 )
                 alert_sent = alert_sent or success
@@ -984,6 +1043,7 @@ class StockMonitor:
                         volume_data=volume_data_30min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -1000,7 +1060,8 @@ class StockMonitor:
         symbol: str,
         current_price: float,
         current_volume: int = 0,
-        rsi_analysis: Optional[Dict] = None
+        rsi_analysis: Optional[Dict] = None,
+        oi_analysis: Optional[Dict] = None
     ) -> bool:
         """
         Check a single stock for significant rises using multiple detection methods (PRIORITY ORDER):
@@ -1014,6 +1075,7 @@ class StockMonitor:
             current_price: Current price of the stock
             current_volume: Current trading volume
             rsi_analysis: Optional RSI analysis dictionary with RSI values and crossovers
+            oi_analysis: Optional OI analysis dictionary with pattern and signal
 
         Returns:
             True if any alert was sent, False otherwise
@@ -1058,6 +1120,7 @@ class StockMonitor:
                         volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -1082,6 +1145,7 @@ class StockMonitor:
                         volume_data=volume_data_5min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -1105,6 +1169,7 @@ class StockMonitor:
                     volume_data=volume_data_10min,
                     market_cap_cr=market_cap_cr,
                     rsi_analysis=rsi_analysis,
+                    oi_analysis=oi_analysis,
                     sector_context=sector_context
                 )
                 alert_sent = alert_sent or success
@@ -1131,6 +1196,7 @@ class StockMonitor:
                         volume_data=volume_data_30min,
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
+                        oi_analysis=oi_analysis,
                         sector_context=sector_context
                     )
                     alert_sent = alert_sent or success
@@ -1164,20 +1230,43 @@ class StockMonitor:
         price_data = self.fetch_all_prices_batch()
 
         # Check each stock for drops and rises
-        for symbol, (current_price, current_volume) in price_data.items():
+        for symbol, quote_data in price_data.items():
             try:
+                current_price = quote_data['price']
+                current_volume = quote_data['volume']
+                current_oi = quote_data.get('oi', 0)
+                oi_day_high = quote_data.get('oi_day_high', 0)
+                oi_day_low = quote_data.get('oi_day_low', 0)
+
                 # Calculate RSI once for this stock (if enabled)
                 rsi_analysis = None
                 if config.ENABLE_RSI:
                     rsi_analysis = self._calculate_rsi_for_stock(symbol, current_price, current_volume)
 
-                # Check for drops (pass RSI analysis)
-                drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume, rsi_analysis)
+                # Calculate OI analysis once for this stock (if enabled and OI data available)
+                oi_analysis = None
+                if config.ENABLE_OI_ANALYSIS and self.oi_analyzer and current_oi > 0:
+                    # Get previous price for price change calculation
+                    _, price_10min_ago = self.price_cache.get_prices(symbol)
+                    if price_10min_ago:
+                        price_change_pct = self.calculate_rise_percentage(current_price, price_10min_ago)
+                        oi_analysis = self.oi_analyzer.analyze_oi_change(
+                            symbol=symbol,
+                            current_oi=current_oi,
+                            price_change_pct=price_change_pct,
+                            oi_day_high=oi_day_high,
+                            oi_day_low=oi_day_low
+                        )
+                        if oi_analysis:
+                            logger.debug(f"{symbol}: OI {oi_analysis['pattern']} - {oi_analysis['interpretation']}")
 
-                # Check for rises (if enabled, pass RSI analysis)
+                # Check for drops (pass RSI and OI analysis)
+                drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume, rsi_analysis, oi_analysis)
+
+                # Check for rises (if enabled, pass RSI and OI analysis)
                 rise_alert_sent = False
                 if config.ENABLE_RISE_ALERTS:
-                    rise_alert_sent = self.check_stock_for_rise(symbol, current_price, current_volume, rsi_analysis)
+                    rise_alert_sent = self.check_stock_for_rise(symbol, current_price, current_volume, rsi_analysis, oi_analysis)
 
                 stats["checked"] += 1
                 if drop_alert_sent:

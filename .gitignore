@@ -48,3 +48,9 @@ data/friday_reminder_tracking.json
 data/sector_eod_reports/
 data/sector_snapshots/
 data/friday_reminder_tracking.json
+
+# OI (Open Interest) analysis cache
+data/oi_cache/
+
+# Screener results
+data/screener_results/

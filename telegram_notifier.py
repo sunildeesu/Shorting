@@ -30,7 +30,8 @@ class TelegramNotifier:
     def send_alert(self, symbol: str, drop_percent: float, current_price: float,
                    previous_price: float, alert_type: str = "10min",
                    volume_data: dict = None, market_cap_cr: float = None,
-                   rsi_analysis: dict = None, sector_context: dict = None) -> bool:
+                   rsi_analysis: dict = None, oi_analysis: dict = None,
+                   sector_context: dict = None) -> bool:
         """
         Send a stock drop alert to Telegram channel
 
@@ -43,13 +44,14 @@ class TelegramNotifier:
             volume_data: Optional volume data dict with current_volume, avg_volume
             market_cap_cr: Optional market cap in crores
             rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
+            oi_analysis: Optional OI analysis dict with pattern and signal
             sector_context: Optional sector context dict with sector performance
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_alert_message(
-            symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr, rsi_analysis, sector_context
+            symbol, drop_percent, current_price, previous_price, alert_type, volume_data, market_cap_cr, rsi_analysis, oi_analysis, sector_context
         )
         telegram_success = self._send_message(message)
 
@@ -65,7 +67,8 @@ class TelegramNotifier:
                     volume_data=volume_data,
                     market_cap_cr=market_cap_cr,
                     telegram_sent=telegram_success,
-                    rsi_analysis=rsi_analysis
+                    rsi_analysis=rsi_analysis,
+                    oi_analysis=oi_analysis
                 )
             except Exception as e:
                 logger.error(f"Failed to log alert to Excel: {e}")
@@ -76,7 +79,7 @@ class TelegramNotifier:
                               current_price: float, previous_price: float,
                               alert_type: str = "10min", volume_data: dict = None,
                               market_cap_cr: float = None, rsi_analysis: dict = None,
-                              sector_context: dict = None) -> str:
+                              oi_analysis: dict = None, sector_context: dict = None) -> str:
         """
         Format alert message with stock details for both drops and rises
 
@@ -90,6 +93,7 @@ class TelegramNotifier:
             volume_data: Volume data if applicable
             market_cap_cr: Market cap in crores
             rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
+            oi_analysis: Optional OI analysis dict with pattern and signal
             sector_context: Optional sector context dict with sector performance
 
         Returns:
@@ -234,6 +238,10 @@ class TelegramNotifier:
         # Add RSI Momentum Analysis
         if rsi_analysis:
             message += self._format_rsi_section(rsi_analysis, is_priority)
+
+        # Add OI Analysis (if enabled and available)
+        if oi_analysis and config.ENABLE_OI_ANALYSIS:
+            message += self._format_oi_section(oi_analysis, is_priority)
 
         # Add Sector Context (if enabled and available)
         if sector_context and config.ENABLE_SECTOR_CONTEXT_IN_ALERTS:
@@ -404,6 +412,87 @@ class TelegramNotifier:
             rsi_section += f"   <b>Summary:</b> {emoji} {summary}\n"
 
         return rsi_section
+
+    def _format_oi_section(self, oi_analysis: dict, is_priority: bool = False) -> str:
+        """
+        Format OI (Open Interest) analysis section for Telegram alert.
+
+        Args:
+            oi_analysis: OI analysis dict with pattern, signal, and strength
+            is_priority: Whether this is a priority alert (for bold formatting)
+
+        Returns:
+            Formatted OI section string
+        """
+        oi_section = "\n\n"
+
+        # Use bold header for priority alerts
+        if is_priority:
+            oi_section += "<b>🔥 OI ANALYSIS:</b> 🔥\n"
+        else:
+            oi_section += "🔥 <b>OI Analysis:</b>\n"
+
+        # Extract OI data
+        pattern = oi_analysis.get('pattern', '')
+        signal = oi_analysis.get('signal', '')
+        interpretation = oi_analysis.get('interpretation', '')
+        oi_change_pct = oi_analysis.get('oi_change_pct', 0)
+        strength = oi_analysis.get('strength', '')
+        priority = oi_analysis.get('priority', '')
+        at_day_high = oi_analysis.get('at_day_high', False)
+        at_day_low = oi_analysis.get('at_day_low', False)
+
+        # Pattern and Signal (with emoji indicators)
+        pattern_emoji_map = {
+            'LONG_BUILDUP': '🟢',
+            'SHORT_BUILDUP': '🔴',
+            'SHORT_COVERING': '🟡',
+            'LONG_UNWINDING': '🟠'
+        }
+        pattern_emoji = pattern_emoji_map.get(pattern, '📊')
+
+        # Format pattern name for display
+        pattern_display = pattern.replace('_', ' ').title()
+
+        oi_section += f"   {pattern_emoji} <b>Pattern:</b> {pattern_display}\n"
+
+        # OI Change with strength indicator
+        strength_emoji_map = {
+            'VERY_STRONG': '🔥🔥🔥',
+            'STRONG': '🔥🔥',
+            'SIGNIFICANT': '🔥',
+            'MINIMAL': '📊'
+        }
+        strength_emoji = strength_emoji_map.get(strength, '📊')
+
+        change_sign = "+" if oi_change_pct >= 0 else ""
+        oi_section += f"   {strength_emoji} <b>OI Change:</b> {change_sign}{oi_change_pct:.2f}% ({strength})\n"
+
+        # Signal interpretation
+        signal_emoji_map = {
+            'BULLISH': '🟢',
+            'BEARISH': '🔴',
+            'WEAK_BULLISH': '🟡',
+            'WEAK_BEARISH': '🟠'
+        }
+        signal_emoji = signal_emoji_map.get(signal, '⚪')
+
+        oi_section += f"   {signal_emoji} <b>Signal:</b> {signal}\n"
+        oi_section += f"   💡 <b>Meaning:</b> {interpretation}\n"
+
+        # Priority indicator
+        if priority == 'HIGH':
+            oi_section += f"   ⚠️ <b>PRIORITY:</b> HIGH - Fresh positions building!\n"
+        elif priority == 'MEDIUM':
+            oi_section += f"   📌 Priority: Medium\n"
+
+        # OI extremes
+        if at_day_high:
+            oi_section += f"   🎯 <b>At Day High!</b> - Maximum institutional interest today\n"
+        elif at_day_low:
+            oi_section += f"   📉 At Day Low - Minimum institutional interest today\n"
+
+        return oi_section
 
     def _send_message(self, message: str) -> bool:
         """
