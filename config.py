@@ -28,6 +28,27 @@ RISE_THRESHOLD_30MIN = float(os.getenv('RISE_THRESHOLD_30MIN', '3.0'))  # 30-min
 RISE_THRESHOLD_VOLUME_SPIKE = float(os.getenv('RISE_THRESHOLD_VOLUME_SPIKE', '1.2'))  # With volume spike (priority alert)
 ENABLE_RISE_ALERTS = os.getenv('ENABLE_RISE_ALERTS', 'true').lower() == 'true'  # Toggle rise detection
 
+# ============================================
+# 1-MINUTE ALERT CONFIGURATION
+# ============================================
+# Ultra-fast detection system for rapid price movements (5x faster than 5-min alerts)
+# Uses fresh API calls every minute for true 1-minute detection
+# Monitors only high-liquidity stocks (500K+ avg daily volume)
+
+ENABLE_1MIN_ALERTS = os.getenv('ENABLE_1MIN_ALERTS', 'true').lower() == 'true'  # Toggle 1-min monitoring
+DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.85'))  # 0.85% drop in 1 minute
+RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.85'))  # 0.85% rise in 1 minute
+
+# Strict volume requirements to reduce noise
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '3.0'))  # 3x average (stricter than 5-min)
+MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '50000'))  # Minimum 50K shares in 1-min window
+MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks
+
+# Alert management
+COOLDOWN_1MIN_ALERTS = int(os.getenv('COOLDOWN_1MIN_ALERTS', '10'))  # 10-minute cooldown per stock
+CHECK_INTERVAL_1MIN = 1  # Run every 1 minute
+CACHE_MAX_AGE_1MIN = 90  # Allow 90s cache age for volume/OI data (price data always fresh)
+
 CHECK_INTERVAL_MINUTES = 5
 
 # Volume Spike Configuration
@@ -117,6 +138,12 @@ OI_SIGNIFICANT_THRESHOLD = float(os.getenv('OI_SIGNIFICANT_THRESHOLD', '5.0'))  
 OI_STRONG_THRESHOLD = float(os.getenv('OI_STRONG_THRESHOLD', '10.0'))  # 10% OI change = strong signal
 OI_VERY_STRONG_THRESHOLD = float(os.getenv('OI_VERY_STRONG_THRESHOLD', '15.0'))  # 15% OI change = very strong signal
 OI_CACHE_FILE = 'data/oi_cache/oi_history.json'  # OI history cache for tracking changes
+
+# Futures Mapping Configuration (for OI data fetching)
+# Enable fetching futures OI data alongside equity prices for accurate OI analysis
+ENABLE_FUTURES_OI = os.getenv('ENABLE_FUTURES_OI', 'true').lower() == 'true'  # Toggle futures OI fetching
+FUTURES_MAPPING_FILE = 'data/futures_mapping.json'  # Cache file for equity → futures mapping
+FUTURES_REFRESH_TIME = "09:15"  # Daily refresh at market open to detect expiry rollovers
 
 # Sector Analysis Configuration
 # Analyze sector performance and fund flow using existing price cache data (ZERO additional API calls)

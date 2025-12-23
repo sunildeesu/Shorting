@@ -172,7 +172,8 @@ class UnifiedQuoteCache:
         self,
         symbols: List[str],
         kite_client,
-        batch_size: int = 50
+        batch_size: int = 50,
+        futures_mapper=None
     ) -> Dict:
         """
         Get quotes from cache if valid, otherwise fetch fresh from Kite API
@@ -183,9 +184,10 @@ class UnifiedQuoteCache:
             symbols: List of stock symbols (without NSE: prefix)
             kite_client: KiteConnect instance
             batch_size: Batch size for API calls (default 50)
+            futures_mapper: Optional FuturesMapper instance for fetching NFO futures OI
 
         Returns:
-            Dictionary mapping "NSE:SYMBOL" to quote data
+            Dictionary mapping "NSE:SYMBOL" (and "NFO:SYMBOL" if futures) to quote data
         """
         # Try to get from cache first
         cached_quotes = self.get_cached_quotes()
@@ -194,7 +196,7 @@ class UnifiedQuoteCache:
 
         # Cache miss or expired - fetch fresh data
         logger.info(f"Quote cache miss - fetching fresh data for {len(symbols)} stocks...")
-        quotes = self._fetch_batch_quotes(symbols, kite_client, batch_size)
+        quotes = self._fetch_batch_quotes(symbols, kite_client, batch_size, futures_mapper)
 
         # Update cache with fresh data
         self.set_cached_quotes(quotes)
@@ -205,18 +207,20 @@ class UnifiedQuoteCache:
         self,
         symbols: List[str],
         kite_client,
-        batch_size: int = 50
+        batch_size: int = 50,
+        futures_mapper=None
     ) -> Dict:
         """
-        Fetch quotes in batches from Kite API
+        Fetch quotes in batches from Kite API (supports mixed NSE+NFO for OI data)
 
         Args:
             symbols: List of stock symbols
             kite_client: KiteConnect instance
             batch_size: Stocks per batch (default 50)
+            futures_mapper: Optional FuturesMapper for fetching NFO futures OI
 
         Returns:
-            Dictionary mapping "NSE:SYMBOL" to quote data
+            Dictionary mapping "NSE:SYMBOL" and "NFO:FUTURES" to quote data
         """
         quote_data = {}
         total_batches = (len(symbols) + batch_size - 1) // batch_size
@@ -227,15 +231,25 @@ class UnifiedQuoteCache:
             batch = symbols[i:i + batch_size]
             batch_index = (i // batch_size) + 1
 
-            # Format as NSE:SYMBOL for Kite API
-            instruments = [f"NSE:{symbol}" for symbol in batch]
+            # Build MIXED batch: NSE equity + NFO futures (if mapper provided)
+            instruments = []
+
+            for symbol in batch:
+                instruments.append(f"NSE:{symbol}")  # Always fetch equity
+
+                # Add futures if available and OI enabled
+                if futures_mapper:
+                    futures_symbol = futures_mapper.get_futures_symbol(symbol)
+                    if futures_symbol:
+                        instruments.append(f"NFO:{futures_symbol}")
 
             try:
-                # SINGLE API CALL FOR ENTIRE BATCH
+                # SINGLE API CALL FOR ENTIRE BATCH (NSE + NFO)
                 quotes = kite_client.quote(*instruments)
                 quote_data.update(quotes)
 
-                logger.debug(f"Batch {batch_index}/{total_batches}: Fetched {len(quotes)} quotes")
+                logger.debug(f"Batch {batch_index}/{total_batches}: Fetched {len(quotes)} quotes "
+                           f"({len(batch)} equity + futures)")
 
                 # Rate limiting between batches
                 if batch_index < total_batches:

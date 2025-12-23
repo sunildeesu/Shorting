@@ -24,12 +24,14 @@ class AlertExcelLogger:
 
     Structure:
     - Single file: data/alerts/alert_tracking.xlsx
-    - 4 sheets: 5min_alerts, 10min_alerts, 30min_alerts, Volume_Spike_alerts
+    - 6 sheets: 1min_alerts, 5min_alerts, 10min_alerts, 30min_alerts, Volume_Spike_alerts, ATR_Breakout_alerts
     - Each sheet tracks: alert details, prices at 2min/10min/EOD
     """
 
     # Sheet names for different alert types
     SHEET_NAMES = {
+        "1min": "1min_alerts",  # Ultra-fast 1-minute alerts
+        "1min_rise": "1min_alerts",
         "5min": "5min_alerts",
         "5min_rise": "5min_alerts",
         "10min": "10min_alerts",

@@ -69,6 +69,17 @@ class StockMonitor:
                 logger.error(f"Failed to initialize OI analyzer: {e}")
                 self.oi_analyzer = None
 
+        # Initialize Futures Mapper (for fetching OI data from futures contracts)
+        self.futures_mapper = None
+        if config.ENABLE_OI_ANALYSIS and config.ENABLE_FUTURES_OI:
+            try:
+                from futures_mapper import get_futures_mapper
+                self.futures_mapper = get_futures_mapper(cache_file=config.FUTURES_MAPPING_FILE)
+                logger.info("Futures mapper initialized (will fetch real OI data from NFO contracts)")
+            except Exception as e:
+                logger.error(f"Failed to initialize futures mapper: {e}")
+                self.futures_mapper = None
+
         # Initialize unified quote cache (if enabled)
         self.quote_cache = None
         self.data_cache = None
@@ -97,6 +108,17 @@ class StockMonitor:
 
             # Load instrument tokens for historical data fetching
             self.instrument_tokens = self._load_instrument_tokens()
+
+            # Refresh futures mappings if needed (daily at market open)
+            if self.futures_mapper and self.futures_mapper.is_refresh_needed():
+                try:
+                    logger.info("Refreshing futures mappings from Kite NFO instruments...")
+                    self.futures_mapper.refresh_mappings(self.kite, stock_symbols=self.stocks)
+                    stats = self.futures_mapper.get_stats()
+                    logger.info(f"✓ Futures mapping complete: {stats['with_futures']}/{stats['total']} stocks have F&O contracts")
+                except Exception as e:
+                    logger.error(f"Failed to refresh futures mappings: {e}")
+                    logger.warning("Continuing with stale cache (if available)")
         else:
             self.instrument_tokens = {}
 
@@ -656,30 +678,43 @@ class StockMonitor:
         # Try to use unified quote cache if enabled
         if self.quote_cache and config.ENABLE_UNIFIED_CACHE:
             try:
-                # Get quotes from cache or fetch fresh
+                # Get quotes from cache or fetch fresh (with futures OI if enabled)
                 quotes_dict = self.quote_cache.get_or_fetch_quotes(
                     self.stocks,
                     self.kite,
-                    batch_size=50
+                    batch_size=100,  # Increased from 50 for better performance
+                    futures_mapper=self.futures_mapper  # Enable futures OI fetching
                 )
 
-                # Convert to comprehensive price_data format
+                # Convert to comprehensive price_data format (two-pass for futures OI)
+                # Pass 1: Extract equity data (price, volume)
                 for instrument, quote_data in quotes_dict.items():
-                    symbol = instrument.replace("NSE:", "").replace(".NS", "")
-                    ltp = quote_data.get('last_price')
-                    volume = quote_data.get('volume', 0)
-                    oi = quote_data.get('oi', 0)
-                    oi_day_high = quote_data.get('oi_day_high', 0)
-                    oi_day_low = quote_data.get('oi_day_low', 0)
+                    if instrument.startswith("NSE:"):
+                        symbol = instrument.replace("NSE:", "").replace(".NS", "")
+                        ltp = quote_data.get('last_price')
+                        volume = quote_data.get('volume', 0)
 
-                    if ltp and ltp > 0:
-                        price_data[symbol] = {
-                            'price': float(ltp),
-                            'volume': int(volume),
-                            'oi': int(oi),
-                            'oi_day_high': int(oi_day_high),
-                            'oi_day_low': int(oi_day_low)
-                        }
+                        if ltp and ltp > 0:
+                            price_data[symbol] = {
+                                'price': float(ltp),
+                                'volume': int(volume),
+                                'oi': 0,  # Will be filled from NFO quotes
+                                'oi_day_high': 0,
+                                'oi_day_low': 0
+                            }
+
+                # Pass 2: Map futures OI to equity symbols
+                if self.futures_mapper:
+                    for instrument, quote_data in quotes_dict.items():
+                        if instrument.startswith("NFO:"):
+                            futures_symbol = instrument.replace("NFO:", "")
+                            # Find which equity this futures contract belongs to
+                            for equity_symbol in price_data.keys():
+                                if self.futures_mapper.get_futures_symbol(equity_symbol) == futures_symbol:
+                                    price_data[equity_symbol]['oi'] = int(quote_data.get('oi', 0) or 0)
+                                    price_data[equity_symbol]['oi_day_high'] = int(quote_data.get('oi_day_high', 0) or 0)
+                                    price_data[equity_symbol]['oi_day_low'] = int(quote_data.get('oi_day_low', 0) or 0)
+                                    break
 
                 logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks")
                 return price_data
@@ -689,48 +724,75 @@ class StockMonitor:
                 # Fall through to original implementation
 
         # FALLBACK: Original implementation (if cache disabled or failed)
-        BATCH_SIZE = 50  # Conservative batch size (Kite supports up to 500)
+        # OPTIMIZED: Increased batch size to 100 equity + ~100 futures = 200 total instruments
+        # This REDUCES API calls from 4 to 2 while adding OI data (50% reduction!)
+        BATCH_SIZE = 100  # Increased from 50 to reduce API calls (Kite supports up to 500)
         failed_batches = []
         start_time = time.time()
 
         total_batches = (len(self.stocks) + BATCH_SIZE - 1) // BATCH_SIZE
         logger.info(f"Fetching prices for {len(self.stocks)} stocks using Kite Connect BATCH API...")
-        logger.info(f"Using {total_batches} batches of {BATCH_SIZE} stocks (optimized from {len(self.stocks)} individual calls)")
+        logger.info(f"Using {total_batches} batches of {BATCH_SIZE} equity stocks (+ futures for OI)")
 
         # Split stocks into batches
         for batch_num in range(0, len(self.stocks), BATCH_SIZE):
             batch_index = batch_num // BATCH_SIZE + 1
             batch = self.stocks[batch_num:batch_num + BATCH_SIZE]
-            instruments = [f"NSE:{symbol}" for symbol in batch]
+
+            # Build MIXED batch: NSE equity + NFO futures
+            instruments = []
+            equity_to_futures = {}  # Track mapping for OI extraction
+
+            for symbol in batch:
+                instruments.append(f"NSE:{symbol}")  # Always fetch equity
+
+                # Add futures if available and OI enabled
+                if self.futures_mapper:
+                    futures_symbol = self.futures_mapper.get_futures_symbol(symbol)
+                    if futures_symbol:
+                        instruments.append(f"NFO:{futures_symbol}")
+                        equity_to_futures[futures_symbol] = symbol
 
             try:
-                logger.debug(f"Batch {batch_index}/{total_batches}: Fetching {len(batch)} stocks in one API call...")
+                logger.debug(f"Batch {batch_index}/{total_batches}: Fetching {len(instruments)} instruments ({len(batch)} equity + {len(equity_to_futures)} futures)...")
 
-                # SINGLE API CALL FOR ENTIRE BATCH!
+                # SINGLE API CALL FOR ENTIRE BATCH (NSE + NFO)!
                 quotes = self.kite.quote(*instruments)
 
-                # Parse results
+                # Parse in two passes: First NSE quotes, then NFO quotes
                 batch_success = 0
-                for instrument, quote_data in quotes.items():
-                    symbol = instrument.replace("NSE:", "").replace(".NS", "")
-                    ltp = quote_data.get('last_price')
-                    volume = quote_data.get('volume', 0)
-                    oi = quote_data.get('oi', 0)
-                    oi_day_high = quote_data.get('oi_day_high', 0)
-                    oi_day_low = quote_data.get('oi_day_low', 0)
 
-                    if ltp and ltp > 0:
-                        price_data[symbol] = {
-                            'price': float(ltp),
-                            'volume': int(volume),
-                            'oi': int(oi),
-                            'oi_day_high': int(oi_day_high),
-                            'oi_day_low': int(oi_day_low)
-                        }
-                        batch_success += 1
-                        logger.debug(f"  {symbol}: ₹{ltp:.2f}, vol:{volume:,}, oi:{oi:,}")
-                    else:
-                        logger.warning(f"  {symbol}: Invalid price data")
+                # Pass 1: Extract equity data (price, volume)
+                for instrument, quote_data in quotes.items():
+                    if instrument.startswith("NSE:"):
+                        symbol = instrument.replace("NSE:", "").replace(".NS", "")
+                        ltp = quote_data.get('last_price')
+                        volume = quote_data.get('volume', 0)
+
+                        if ltp and ltp > 0:
+                            price_data[symbol] = {
+                                'price': float(ltp),
+                                'volume': int(volume),
+                                'oi': 0,  # Will be filled from NFO quotes
+                                'oi_day_high': 0,
+                                'oi_day_low': 0
+                            }
+                            batch_success += 1
+                        else:
+                            logger.warning(f"  {symbol}: Invalid price data")
+
+                # Pass 2: Map futures OI to equity symbols
+                for instrument, quote_data in quotes.items():
+                    if instrument.startswith("NFO:"):
+                        futures_symbol = instrument.replace("NFO:", "")
+                        equity_symbol = equity_to_futures.get(futures_symbol)
+
+                        if equity_symbol and equity_symbol in price_data:
+                            # Override with real OI from futures
+                            price_data[equity_symbol]['oi'] = int(quote_data.get('oi', 0) or 0)
+                            price_data[equity_symbol]['oi_day_high'] = int(quote_data.get('oi_day_high', 0) or 0)
+                            price_data[equity_symbol]['oi_day_low'] = int(quote_data.get('oi_day_low', 0) or 0)
+                            logger.debug(f"  {equity_symbol}: ₹{price_data[equity_symbol]['price']:.2f}, vol:{price_data[equity_symbol]['volume']:,}, oi:{price_data[equity_symbol]['oi']:,}")
 
                 # Progress logging
                 elapsed = time.time() - start_time
@@ -1216,7 +1278,8 @@ class StockMonitor:
             "drop_alerts": 0,
             "rise_alerts": 0,
             "alerts_sent": 0,
-            "errors": 0
+            "errors": 0,
+            "oi_stocks": 0  # Track stocks with OI data (F&O stocks)
         }
 
         detection_methods = []
@@ -1246,19 +1309,27 @@ class StockMonitor:
                 # Calculate OI analysis once for this stock (if enabled and OI data available)
                 oi_analysis = None
                 if config.ENABLE_OI_ANALYSIS and self.oi_analyzer and current_oi > 0:
-                    # Get previous price for price change calculation
+                    stats["oi_stocks"] += 1  # Track F&O stocks with OI data
+
+                    # Calculate price change for OI pattern classification
+                    # Use 10-minute price if available, otherwise use current price (0% change)
                     _, price_10min_ago = self.price_cache.get_prices(symbol)
                     if price_10min_ago:
                         price_change_pct = self.calculate_rise_percentage(current_price, price_10min_ago)
-                        oi_analysis = self.oi_analyzer.analyze_oi_change(
-                            symbol=symbol,
-                            current_oi=current_oi,
-                            price_change_pct=price_change_pct,
-                            oi_day_high=oi_day_high,
-                            oi_day_low=oi_day_low
-                        )
-                        if oi_analysis:
-                            logger.debug(f"{symbol}: OI {oi_analysis['pattern']} - {oi_analysis['interpretation']}")
+                    else:
+                        price_change_pct = 0.0  # No historical price yet, assume 0% change
+
+                    # Run OI analysis (independent of price history availability)
+                    oi_analysis = self.oi_analyzer.analyze_oi_change(
+                        symbol=symbol,
+                        current_oi=current_oi,
+                        price_change_pct=price_change_pct,
+                        oi_day_high=oi_day_high,
+                        oi_day_low=oi_day_low
+                    )
+
+                    if oi_analysis:
+                        logger.info(f"📊 {symbol}: OI {oi_analysis['pattern']} ({oi_analysis['oi_change_pct']:+.1f}%) - {oi_analysis['signal']} - {oi_analysis['interpretation']}")
 
                 # Check for drops (pass RSI and OI analysis)
                 drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume, rsi_analysis, oi_analysis)
@@ -1283,7 +1354,8 @@ class StockMonitor:
         # Count stocks that failed to fetch
         stats["errors"] += (stats["total"] - len(price_data))
 
-        logger.info(f"Monitoring complete. Checked: {stats['checked']}, "
+        oi_info = f", F&O stocks (OI): {stats['oi_stocks']}" if config.ENABLE_OI_ANALYSIS else ""
+        logger.info(f"Monitoring complete. Checked: {stats['checked']}{oi_info}, "
                    f"Drop alerts: {stats['drop_alerts']}, Rise alerts: {stats['rise_alerts']}, "
                    f"Total alerts: {stats['alerts_sent']}, Errors: {stats['errors']}")
 

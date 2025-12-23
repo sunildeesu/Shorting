@@ -15,12 +15,14 @@ class PriceCache:
     Structure: {
         "stock_symbol": {
             "current": {"price": float, "volume": int, "timestamp": str},
+            "previous_1min": {"price": float, "volume": int, "timestamp": str},  # 1 min ago (for 1-min alerts)
             "previous": {"price": float, "volume": int, "timestamp": str},   # 5 min ago
             "previous2": {"price": float, "volume": int, "timestamp": str},  # 10 min ago
             "previous3": {"price": float, "volume": int, "timestamp": str},  # 15 min ago
             "previous4": {"price": float, "volume": int, "timestamp": str},  # 20 min ago
             "previous5": {"price": float, "volume": int, "timestamp": str},  # 25 min ago
-            "previous6": {"price": float, "volume": int, "timestamp": str}   # 30 min ago
+            "previous6": {"price": float, "volume": int, "timestamp": str},  # 30 min ago
+            "avg_daily_volume": int  # Average daily volume for liquidity filtering
         }
     }
     """
@@ -99,6 +101,190 @@ class PriceCache:
             self.cache[symbol]["current"] = {"price": price, "volume": volume, "timestamp": timestamp}
 
         self._save_cache()
+
+    def update_price_1min(self, symbol: str, price: float, volume: int = 0, timestamp: str = None):
+        """
+        Update price and volume for 1-minute monitoring (separate from 5-min updates).
+        This method only updates current and previous_1min snapshots.
+        Does NOT shift the 5-minute snapshots (previous, previous2, etc.)
+
+        Args:
+            symbol: Stock symbol
+            price: Current price
+            volume: Current trading volume
+            timestamp: ISO format timestamp (defaults to now)
+        """
+        if timestamp is None:
+            timestamp = datetime.now().isoformat()
+
+        if symbol not in self.cache:
+            # First time seeing this stock - initialize all fields
+            self.cache[symbol] = {
+                "current": {"price": price, "volume": volume, "timestamp": timestamp},
+                "previous_1min": None,
+                "previous": None,
+                "previous2": None,
+                "previous3": None,
+                "previous4": None,
+                "previous5": None,
+                "previous6": None
+            }
+        else:
+            # Save current as previous_1min, then update current
+            self.cache[symbol]["previous_1min"] = self.cache[symbol]["current"]
+            self.cache[symbol]["current"] = {"price": price, "volume": volume, "timestamp": timestamp}
+
+        self._save_cache()
+
+    def get_price_1min_ago(self, symbol: str) -> Optional[float]:
+        """
+        Get price from 1 minute ago for 1-min alert detection.
+        Only returns price if it's from the same day as current price.
+
+        Returns:
+            Price from 1 minute ago, or None if not available
+        """
+        if symbol not in self.cache:
+            return None
+
+        current = self.cache[symbol].get("current")
+        previous_1min = self.cache[symbol].get("previous_1min")
+
+        if not current or not previous_1min:
+            return None
+
+        # Validate same-day timestamps
+        current_timestamp = current.get("timestamp")
+        previous_timestamp = previous_1min.get("timestamp")
+
+        if current_timestamp and previous_timestamp:
+            if self._is_same_day(current_timestamp, previous_timestamp):
+                return previous_1min.get("price")
+            else:
+                logger.debug(f"{symbol}: Skipping 1-min comparison - timestamps from different days")
+                return None
+
+        return previous_1min.get("price")
+
+    def get_prices_1min(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Get current and 1-minute-ago prices for a stock.
+        Only returns historical price if it's from the same day as current price.
+
+        Returns:
+            Tuple of (current_price, price_1min_ago) or (None, None) if not found
+        """
+        if symbol not in self.cache:
+            return None, None
+
+        current = self.cache[symbol].get("current")
+        previous_1min = self.cache[symbol].get("previous_1min")
+
+        current_price = current.get("price") if current else None
+
+        # Validate same-day timestamps
+        if current and previous_1min:
+            current_timestamp = current.get("timestamp")
+            previous_timestamp = previous_1min.get("timestamp")
+
+            if current_timestamp and previous_timestamp:
+                if self._is_same_day(current_timestamp, previous_timestamp):
+                    previous_price = previous_1min.get("price")
+                else:
+                    logger.debug(f"{symbol}: Skipping 1-min comparison - timestamps from different days")
+                    previous_price = None
+            else:
+                previous_price = previous_1min.get("price") if previous_1min else None
+        else:
+            previous_price = None
+
+        return current_price, previous_price
+
+    def get_volume_data_1min(self, symbol: str) -> Dict:
+        """
+        Get volume data for 1-minute comparison.
+        Compares current volume with volume from 1 minute ago.
+        Only compares volumes from the same day (prevents cross-day comparisons).
+
+        Returns:
+            Dict with current_volume, previous_volume, avg_volume, volume_change, and volume_spike flag
+        """
+        if symbol not in self.cache:
+            return {
+                "current_volume": 0,
+                "previous_volume": 0,
+                "avg_volume": 0,
+                "volume_change": 0,
+                "volume_spike": False
+            }
+
+        current = self.cache[symbol].get("current")
+        previous_1min = self.cache[symbol].get("previous_1min")
+
+        current_volume = current.get("volume", 0) if current else 0
+        previous_volume = 0
+
+        # Validate same-day timestamps
+        if current and previous_1min:
+            current_timestamp = current.get("timestamp")
+            previous_timestamp = previous_1min.get("timestamp")
+
+            if current_timestamp and previous_timestamp:
+                if self._is_same_day(current_timestamp, previous_timestamp):
+                    previous_volume = previous_1min.get("volume", 0)
+                else:
+                    logger.debug(f"{symbol}: Skipping 1-min volume comparison - timestamps from different days")
+
+        # Calculate volume change
+        volume_change = current_volume - previous_volume if previous_volume > 0 else 0
+
+        # Volume spike if current > 3.0x previous (1-min uses stricter multiplier)
+        volume_spike = False
+        if previous_volume > 0:
+            volume_spike = current_volume > (previous_volume * config.VOLUME_SPIKE_MULTIPLIER_1MIN)
+
+        return {
+            "current_volume": current_volume,
+            "previous_volume": previous_volume,
+            "avg_volume": previous_volume,  # For compatibility with alert formatting
+            "volume_change": volume_change,
+            "volume_spike": volume_spike
+        }
+
+    def set_avg_daily_volume(self, symbol: str, avg_daily_volume: int):
+        """
+        Set average daily volume for a stock (for liquidity filtering).
+
+        Args:
+            symbol: Stock symbol
+            avg_daily_volume: Average daily volume
+        """
+        if symbol not in self.cache:
+            self.cache[symbol] = {
+                "current": None,
+                "previous_1min": None,
+                "previous": None,
+                "previous2": None,
+                "previous3": None,
+                "previous4": None,
+                "previous5": None,
+                "previous6": None
+            }
+
+        self.cache[symbol]["avg_daily_volume"] = avg_daily_volume
+        self._save_cache()
+
+    def get_avg_daily_volume(self, symbol: str) -> Optional[int]:
+        """
+        Get average daily volume for a stock (for liquidity filtering).
+
+        Returns:
+            Average daily volume, or None if not available
+        """
+        if symbol not in self.cache:
+            return None
+
+        return self.cache[symbol].get("avg_daily_volume")
 
     def get_prices(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
         """

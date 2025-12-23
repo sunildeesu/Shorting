@@ -96,10 +96,12 @@ export OI_VERY_STRONG_THRESHOLD=15.0
 - OI data (`oi`, `oi_day_high`, `oi_day_low`) is already in Kite quote API responses
 - No additional API calls needed!
 
-### 2. OI Change Calculation
-- System tracks OI history in `data/oi_cache/oi_history.json`
-- Calculates OI change % from previous snapshot
-- Requires minimum 2 snapshots for analysis (ignores first run)
+### 2. OI Change Calculation (Day-Start Comparison)
+- System tracks day-start OI (first OI of trading session) in `data/oi_cache/oi_history.json`
+- **Calculates OI change % from day-start (market open), not previous 5-minute snapshot**
+- Shows cumulative institutional positioning throughout the trading session
+- Automatically resets at market open (9:15 AM) each trading day
+- **More meaningful than minute-by-minute comparison:** OI builds gradually over hours
 
 ### 3. Pattern Classification
 - Combines price change direction + OI change direction
@@ -107,13 +109,13 @@ export OI_VERY_STRONG_THRESHOLD=15.0
 - Determines signal strength and priority
 
 ### 4. Alert Enhancement
-- OI analysis added to Telegram alerts (if significant)
+- **OI analysis added to ALL alerts** (5-min, 10-min, 30-min, volume spike)
 - Logged to Excel with 6 new columns
-- Helps filter noise from genuine institutional moves
+- Shows institutional context for every F&O stock alert
 
 ## Telegram Alert Format
 
-When OI analysis is available and significant (≥5% change), alerts include:
+OI information appears in ALL alerts for F&O stocks:
 
 ```
 🔥 OI ANALYSIS: 🔥
@@ -221,14 +223,14 @@ Result:
 **ZERO** - OI analysis adds negligible overhead:
 - No additional API calls (data already in quotes)
 - Minimal CPU for pattern classification
-- Small disk usage (~100KB for OI history cache)
+- Minimal disk usage (~1KB per stock in OI cache)
 - Analysis runs only when OI data is available (F&O stocks)
 
 ## Limitations
 
 1. **F&O Stocks Only** - OI is only available for stocks with futures/options
-2. **Minimum 2 Snapshots** - Need at least 2 OI snapshots to calculate change
-3. **Intraday Only** - OI history cached for current day (cleared EOD)
+2. **First Alert of Day** - First alert won't have OI data (needs day-start reference)
+3. **Intraday Only** - OI change resets each trading day at market open
 4. **Kite Only** - Requires Kite data source (OI not in Yahoo/NSEpy)
 
 ## Troubleshooting
@@ -242,15 +244,12 @@ Result:
    ```
 
 2. Verify stock has F&O (OI data):
-   ```bash
-   # Check if OI is non-zero in quote data
-   ```
+   - Only F&O stocks have OI data
+   - Check if current_oi > 0 in quote data
 
-3. Check OI change threshold:
-   ```python
-   # OI change must be ≥1% for analysis
-   # Adjust if needed in oi_analyzer.py line 255
-   ```
+3. Check if it's the first alert of the day:
+   - First alert establishes day-start OI baseline
+   - Subsequent alerts will show OI change from day-start
 
 ### Excel Columns Misaligned
 
