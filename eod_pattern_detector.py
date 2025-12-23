@@ -106,6 +106,16 @@ class EODPatternDetector:
             else:
                 logger.debug(f"{symbol}: Resistance Breakout filtered (bearish market regime)")
 
+        # Detect Cup & Handle (Bullish)
+        cup_handle = self._detect_cup_handle(historical_data, avg_volume, market_regime)
+        if cup_handle and cup_handle.get('confidence_score', 0) >= self.min_confidence:
+            # Filter based on market regime
+            if market_regime in ['BULLISH', 'NEUTRAL']:
+                patterns_found.append('CUP_HANDLE')
+                pattern_details['cup_handle'] = cup_handle
+            else:
+                logger.debug(f"{symbol}: Cup & Handle filtered (bearish market regime)")
+
         if patterns_found:
             # Log with confidence scores
             pattern_info = []
@@ -570,6 +580,171 @@ class EODPatternDetector:
                 }
 
         return None
+
+    def _detect_cup_handle(
+        self,
+        data: List[Dict],
+        avg_volume: float,
+        market_regime: str
+    ) -> Optional[Dict]:
+        """
+        Detect Cup & Handle pattern (bullish continuation)
+
+        Pattern Structure:
+        - Cup: Rounded U-shaped bottom over 7-30 days (12-33% depth)
+        - Handle: Small pullback 3-5 days (5-12% retracement)
+        - Breakout: Price breaks above handle with volume (1.5x avg)
+
+        Returns:
+            Pattern details dict with confidence score or None
+        """
+        if len(data) < 15:
+            return None
+
+        # Step 1: Find cup formation (U-shaped bottom)
+        # Look for: left rim → rounded bottom → right rim
+        # Duration: 7-30 days, Depth: 12-33%
+
+        lookback = min(30, len(data))
+        cup_data = data[-lookback:]
+
+        # Find left rim (local high before decline)
+        left_rim_idx = None
+        left_rim_price = 0
+        for i in range(len(cup_data) - 10):
+            if cup_data[i]['high'] > left_rim_price:
+                left_rim_idx = i
+                left_rim_price = cup_data[i]['high']
+
+        if left_rim_idx is None or left_rim_idx < 5:
+            return None
+
+        # Find cup bottom (lowest low after left rim)
+        cup_bottom_idx = left_rim_idx
+        cup_bottom_price = left_rim_price
+        for i in range(left_rim_idx, len(cup_data) - 5):
+            if cup_data[i]['low'] < cup_bottom_price:
+                cup_bottom_idx = i
+                cup_bottom_price = cup_data[i]['low']
+
+        # Validate cup depth (12-33% from rim to bottom)
+        cup_depth_pct = ((left_rim_price - cup_bottom_price) / left_rim_price) * 100
+        if cup_depth_pct < 12.0 or cup_depth_pct > 33.0:
+            logger.debug(f"Cup rejected: depth {cup_depth_pct:.1f}% outside 12-33% range")
+            return None
+
+        # Validate cup shape (U not V) - bottom should span at least 40% of cup width
+        cup_width = cup_bottom_idx - left_rim_idx
+        bottom_zone = cup_data[cup_bottom_idx-2:cup_bottom_idx+3] if cup_bottom_idx >= 2 else []
+        if len(bottom_zone) < 3:
+            return None
+
+        # Check if bottom is rounded (not sharp V)
+        bottom_avg = sum(c['low'] for c in bottom_zone) / len(bottom_zone)
+        if abs(bottom_avg - cup_bottom_price) / cup_bottom_price > 0.05:  # >5% diff = V-shaped
+            logger.debug(f"Cup rejected: V-shaped bottom (not rounded)")
+            return None
+
+        # Find right rim (recovery to near left rim level)
+        right_rim_idx = cup_bottom_idx
+        right_rim_price = cup_bottom_price
+        for i in range(cup_bottom_idx, len(cup_data)):
+            if cup_data[i]['high'] > right_rim_price:
+                right_rim_idx = i
+                right_rim_price = cup_data[i]['high']
+
+        # Right rim should reach 90-100% of left rim
+        rim_recovery_pct = (right_rim_price / left_rim_price) * 100
+        if rim_recovery_pct < 90.0:
+            logger.debug(f"Cup rejected: right rim only {rim_recovery_pct:.1f}% of left rim")
+            return None
+
+        # Calculate cup metrics
+        cup_days = right_rim_idx - left_rim_idx
+        if cup_days < 7 or cup_days > 30:
+            logger.debug(f"Cup rejected: duration {cup_days} days outside 7-30 range")
+            return None
+
+        # Step 2: Find handle formation (3-5 day pullback after cup)
+        if right_rim_idx >= len(cup_data) - 3:
+            return None  # Not enough data for handle
+
+        handle_start_idx = right_rim_idx
+        handle_data = cup_data[handle_start_idx:]
+
+        if len(handle_data) < 3 or len(handle_data) > 5:
+            return None  # Handle duration must be 3-5 days
+
+        # Find handle high and low
+        handle_high = max(c['high'] for c in handle_data)
+        handle_low = min(c['low'] for c in handle_data)
+
+        # Validate handle depth (5-12% below cup rim)
+        handle_depth_pct = ((right_rim_price - handle_low) / right_rim_price) * 100
+        if handle_depth_pct < 5.0 or handle_depth_pct > 12.0:
+            logger.debug(f"Handle rejected: depth {handle_depth_pct:.1f}% outside 5-12% range")
+            return None
+
+        # Step 3: Confirm breakout
+        current_price = data[-1]['close']
+        current_high = data[-1]['high']
+
+        # Breakout: current high must exceed handle resistance
+        if current_high <= handle_high * 1.01:  # Need >1% breakout
+            return None  # No breakout yet
+
+        # Current price should close above handle resistance
+        if current_price <= handle_high:
+            return None  # Weak breakout (didn't hold)
+
+        # Volume confirmation
+        current_volume = data[-1]['volume']
+        volume_confirmed, volume_ratio = self._check_volume_confirmation(
+            current_volume, avg_volume
+        )
+
+        if self.volume_confirmation and not volume_confirmed:
+            logger.debug(f"Cup & Handle rejected: Low volume ({volume_ratio:.2f}x)")
+            return None
+
+        # Step 4: Calculate buy/target/stop prices
+        buy_price = handle_high * 1.005  # Entry above handle breakout
+        cup_depth = left_rim_price - cup_bottom_price
+        target_price = buy_price + cup_depth  # Project cup depth upward
+        stop_loss = handle_low * 0.98  # 2% below handle low
+
+        # Price match percentage (how well right rim matches left rim)
+        rim_match_pct = abs(right_rim_price - left_rim_price) / left_rim_price * 100
+
+        # Calculate confidence score
+        confidence = self._calculate_confidence_score(
+            price_match_pct=rim_match_pct,
+            volume_ratio=volume_ratio,
+            pattern_height_pct=cup_depth_pct,
+            pattern_type='BULLISH',
+            market_regime=market_regime
+        )
+
+        return {
+            'left_rim': left_rim_price,
+            'cup_bottom': cup_bottom_price,
+            'right_rim': right_rim_price,
+            'handle_high': handle_high,
+            'handle_low': handle_low,
+            'cup_depth': cup_depth,
+            'cup_depth_pct': cup_depth_pct,
+            'handle_depth_pct': handle_depth_pct,
+            'cup_days': cup_days,
+            'handle_days': len(handle_data),
+            'current_price': current_price,
+            'buy_price': buy_price,
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'pattern_type': 'BULLISH',
+            'volume_ratio': volume_ratio,
+            'confidence_score': confidence,
+            'pattern_strength': 'Strong' if rim_match_pct < 2.0 else 'Moderate'
+        }
 
     def _empty_result(self, symbol: str, market_regime: str = "NEUTRAL") -> Dict:
         """Return empty result for stocks with no patterns"""

@@ -310,6 +310,27 @@ class EODAnalyzer:
             datetime.now()
         )
 
+        # Step 9: Send EOD pattern summary to Telegram (if patterns found)
+        logger.info("Step 9: Sending EOD pattern summary to Telegram...")
+        try:
+            from telegram_notifier import TelegramNotifier
+            notifier = TelegramNotifier()
+
+            telegram_success = notifier.send_eod_pattern_summary(
+                pattern_results,
+                datetime.now()
+            )
+
+            if telegram_success:
+                logger.info("✓ EOD pattern summary sent to Telegram successfully")
+            else:
+                logger.info("ℹ No high-confidence patterns to report via Telegram")
+
+        except Exception as e:
+            logger.error(f"Failed to send EOD pattern summary to Telegram: {e}")
+            logger.info("Excel report generated successfully despite Telegram failure")
+            # Don't fail entire analysis if Telegram fails
+
         # Clean up expired cache entries
         self.cache_manager.clear_expired()
 

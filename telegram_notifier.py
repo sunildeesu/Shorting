@@ -1,5 +1,6 @@
 import requests
-from typing import Optional
+from typing import Optional, List, Dict
+from datetime import datetime
 import config
 import logging
 from alert_excel_logger import AlertExcelLogger
@@ -74,6 +75,122 @@ class TelegramNotifier:
                 logger.error(f"Failed to log alert to Excel: {e}")
 
         return telegram_success
+
+    def send_1min_alert(self, symbol: str, direction: str, current_price: float,
+                        previous_price: float, change_percent: float,
+                        volume_data: dict = None, market_cap_cr: float = None,
+                        rsi_analysis: dict = None, oi_analysis: dict = None) -> bool:
+        """
+        Send a 1-minute ultra-fast alert to Telegram channel.
+
+        Args:
+            symbol: Stock symbol
+            direction: "drop" or "rise"
+            current_price: Current stock price
+            previous_price: Price from 1 minute ago
+            change_percent: Percentage change (absolute value)
+            volume_data: Volume data dict with current_volume, avg_volume, spike_multiplier
+            market_cap_cr: Market cap in crores
+            rsi_analysis: Optional RSI analysis dict
+            oi_analysis: Optional OI analysis dict
+
+        Returns:
+            True if message sent successfully, False otherwise
+        """
+        message = self._format_1min_alert_message(
+            symbol, direction, current_price, previous_price, change_percent,
+            volume_data, market_cap_cr, rsi_analysis, oi_analysis
+        )
+        telegram_success = self._send_message(message)
+
+        # Excel logging is handled by onemin_monitor.py
+        # (we don't duplicate it here to avoid circular dependencies)
+
+        return telegram_success
+
+    def _format_1min_alert_message(self, symbol: str, direction: str,
+                                     current_price: float, previous_price: float,
+                                     change_percent: float, volume_data: dict = None,
+                                     market_cap_cr: float = None, rsi_analysis: dict = None,
+                                     oi_analysis: dict = None) -> str:
+        """
+        Format 1-minute alert message with ultra-fast alert branding.
+
+        Args:
+            symbol: Stock symbol
+            direction: "drop" or "rise"
+            current_price: Current price
+            previous_price: Price from 1 minute ago
+            change_percent: Percentage change (absolute value)
+            volume_data: Volume data
+            market_cap_cr: Market cap in crores
+            rsi_analysis: Optional RSI analysis
+            oi_analysis: Optional OI analysis
+
+        Returns:
+            Formatted message string
+        """
+        # Remove .NS suffix for display
+        display_symbol = symbol.replace('.NS', '')
+
+        # Determine emoji and header based on direction
+        if direction == "drop":
+            emoji = "📉"
+            direction_text = "DROP"
+            direction_color = "🔴"
+        else:
+            emoji = "📈"
+            direction_text = "RISE"
+            direction_color = "🟢"
+
+        # Ultra-fast alert header
+        header = (
+            "⚡⚡⚡ <b>1-MIN ULTRA-FAST ALERT</b> ⚡⚡⚡\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{emoji} <b>{direction_color} {direction_text} DETECTED {direction_color}</b> {emoji}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+
+        # Base message
+        message = f"{header}\n\n"
+        message += f"📊 <b>Stock:</b> {display_symbol}\n\n"
+
+        # Price section
+        message += "💰 <b>PRICE:</b>\n"
+        message += f"   Current: ₹{current_price:,.2f}\n"
+        message += f"   Previous (1m): ₹{previous_price:,.2f}\n"
+        message += f"   Change: {direction_color} <b>{change_percent:.2f}%</b> in 1 minute\n"
+
+        # Market cap
+        if market_cap_cr and market_cap_cr > 0:
+            message += f"\n💼 <b>Market Cap:</b> ₹{market_cap_cr:,.0f} Cr\n"
+
+        # Volume section (MANDATORY for 1-min alerts)
+        if volume_data:
+            message += "\n📊 <b>VOLUME:</b>\n"
+            current_vol = volume_data.get('current_volume', 0)
+            avg_vol = volume_data.get('avg_volume', 0)
+            spike_mult = volume_data.get('spike_multiplier', 0)
+
+            message += f"   Current: {current_vol:,}\n"
+            if avg_vol > 0:
+                message += f"   Average: {avg_vol:,}\n"
+                message += f"   🔥 <b>Spike: {spike_mult:.1f}x average</b>\n"
+
+        # RSI section
+        if rsi_analysis:
+            message += self._format_rsi_section(rsi_analysis, is_priority=True)
+
+        # OI section
+        if oi_analysis:
+            message += self._format_oi_section(oi_analysis, is_priority=True)
+
+        # Footer
+        message += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += "⚡ <b>Fastest alert system - 1-min detection!</b>\n"
+        message += "⏱️ 5x faster than standard 5-min alerts"
+
+        return message
 
     def _format_alert_message(self, symbol: str, drop_percent: float,
                               current_price: float, previous_price: float,
@@ -486,11 +603,11 @@ class TelegramNotifier:
         elif priority == 'MEDIUM':
             oi_section += f"   📌 Priority: Medium\n"
 
-        # OI extremes
+        # OI extremes (only shown when OI change >= 5%)
         if at_day_high:
-            oi_section += f"   🎯 <b>At Day High!</b> - Maximum institutional interest today\n"
+            oi_section += f"   🎯 <b>At Day High!</b> - OI at intraday peak ({oi_change_pct:+.1f}% from day start)\n"
         elif at_day_low:
-            oi_section += f"   📉 At Day Low - Minimum institutional interest today\n"
+            oi_section += f"   📉 <b>At Day Low!</b> - OI at intraday bottom ({oi_change_pct:+.1f}% from day start)\n"
 
         return oi_section
 
@@ -743,6 +860,199 @@ class TelegramNotifier:
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "💡 <b>Action:</b> Monitor individual stocks in gaining sectors\n"
             "⚠️ <b>Caution:</b> Review positions in losing sectors"
+        )
+
+        return message
+
+    def send_eod_pattern_summary(self, pattern_results: List[Dict], analysis_date: datetime) -> bool:
+        """
+        Send consolidated EOD pattern detection summary to Telegram
+
+        Args:
+            pattern_results: List of pattern detection results from batch_detect()
+            analysis_date: Date of analysis
+
+        Returns:
+            True if message sent successfully, False if no patterns or send failed
+        """
+        # Filter patterns for Telegram (Cup & Handle, Double Bottom, Double Top only)
+        filtered_patterns = self._filter_eod_patterns(pattern_results)
+
+        # Check if any patterns found
+        total_patterns = sum(len(stocks) for stocks in filtered_patterns.values())
+        if total_patterns == 0:
+            logger.info("No EOD patterns meet Telegram alert criteria (confidence >= 7.0)")
+            return False
+
+        # Format consolidated message
+        message = self._format_eod_pattern_summary(filtered_patterns, analysis_date, total_patterns)
+
+        # Send to Telegram
+        try:
+            success = self._send_message(message)
+            if success:
+                logger.info(f"EOD pattern summary sent to Telegram ({total_patterns} patterns)")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send EOD pattern summary: {e}")
+            return False
+
+    def _filter_eod_patterns(self, pattern_results: List[Dict]) -> Dict[str, List[Dict]]:
+        """Filter and group patterns for Telegram alert"""
+
+        # Pattern types to include (user requested only these 3)
+        INCLUDED_PATTERNS = {'CUP_HANDLE', 'DOUBLE_BOTTOM', 'DOUBLE_TOP'}
+        CONFIDENCE_THRESHOLD = 7.0
+
+        grouped = {
+            'cup_handle': [],
+            'double_bottom': [],
+            'double_top': []
+        }
+
+        for result in pattern_results:
+            if not result.get('has_patterns'):
+                continue
+
+            symbol = result['symbol']
+            patterns_found = result.get('patterns_found', [])
+            pattern_details = result.get('pattern_details', {})
+
+            for pattern in patterns_found:
+                if pattern not in INCLUDED_PATTERNS:
+                    continue
+
+                # Get pattern details
+                pattern_key = pattern.lower()
+                details = pattern_details.get(pattern_key, {})
+
+                if not details:
+                    continue
+
+                # Check confidence threshold
+                confidence = details.get('confidence_score', 0)
+                if confidence < CONFIDENCE_THRESHOLD:
+                    logger.debug(f"{symbol} {pattern}: confidence {confidence:.1f} < {CONFIDENCE_THRESHOLD}")
+                    continue
+
+                # Add to grouped results
+                grouped[pattern_key].append({
+                    'symbol': symbol,
+                    'details': details
+                })
+
+        return grouped
+
+    def _format_eod_pattern_summary(self, filtered_patterns: Dict, analysis_date: datetime, total_count: int) -> str:
+        """Format consolidated EOD pattern message"""
+
+        # Header
+        message = (
+            "📊📊📊 <b>EOD PATTERN DETECTION</b> 📊📊📊\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📅 Date: {analysis_date.strftime('%d %B %Y')}\n"
+            f"⏰ Analysis Time: 3:30 PM\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+
+        bullish_count = 0
+        bearish_count = 0
+
+        # Cup & Handle section
+        if filtered_patterns['cup_handle']:
+            stocks = filtered_patterns['cup_handle']
+            bullish_count += len(stocks)
+            message += f"🏆 <b>CUP & HANDLE PATTERNS</b> ({len(stocks)} stocks)\n\n"
+
+            for idx, item in enumerate(stocks, 1):
+                symbol = item['symbol']
+                details = item['details']
+                confidence = details['confidence_score']
+                buy = details['buy_price']
+                target = details['target_price']
+                stop = details['stop_loss']
+                volume = details['volume_ratio']
+                cup_days = details.get('cup_days', 0)
+                handle_days = details.get('handle_days', 0)
+
+                target_gain_pct = ((target - buy) / buy) * 100
+                stop_loss_pct = ((stop - buy) / buy) * 100
+
+                conf_emoji = "🟢" if confidence >= 8.0 else "🟡"
+
+                message += (
+                    f"{idx}. <b>{symbol}</b> - Confidence: {confidence:.1f}/10 {conf_emoji}\n"
+                    f"   💰 Buy: ₹{buy:,.2f}\n"
+                    f"   🎯 Target: ₹{target:,.2f} (+{target_gain_pct:.1f}%)\n"
+                    f"   🛡️ Stop: ₹{stop:,.2f} ({stop_loss_pct:+.1f}%)\n"
+                    f"   📊 Volume: {volume:.1f}x average\n"
+                    f"   💡 Cup: {cup_days} days, Handle: {handle_days} days\n\n"
+                )
+
+        # Double Bottom section
+        if filtered_patterns['double_bottom']:
+            stocks = filtered_patterns['double_bottom']
+            bullish_count += len(stocks)
+            message += f"📈 <b>DOUBLE BOTTOM PATTERNS</b> ({len(stocks)} stocks)\n\n"
+
+            for idx, item in enumerate(stocks, 1):
+                symbol = item['symbol']
+                details = item['details']
+                confidence = details['confidence_score']
+                buy = details['buy_price']
+                target = details['target_price']
+                stop = details['stop_loss']
+                volume = details['volume_ratio']
+
+                target_gain_pct = ((target - buy) / buy) * 100
+                stop_loss_pct = ((stop - buy) / buy) * 100
+
+                conf_emoji = "🟢" if confidence >= 8.0 else "🟡"
+
+                message += (
+                    f"{idx}. <b>{symbol}</b> - Confidence: {confidence:.1f}/10 {conf_emoji}\n"
+                    f"   💰 Buy: ₹{buy:,.2f}\n"
+                    f"   🎯 Target: ₹{target:,.2f} (+{target_gain_pct:.1f}%)\n"
+                    f"   🛡️ Stop: ₹{stop:,.2f} ({stop_loss_pct:+.1f}%)\n"
+                    f"   📊 Volume: {volume:.1f}x average\n\n"
+                )
+
+        # Double Top section
+        if filtered_patterns['double_top']:
+            stocks = filtered_patterns['double_top']
+            bearish_count += len(stocks)
+            message += f"📉 <b>DOUBLE TOP PATTERNS</b> ({len(stocks)} stocks)\n\n"
+
+            for idx, item in enumerate(stocks, 1):
+                symbol = item['symbol']
+                details = item['details']
+                confidence = details['confidence_score']
+                buy = details['buy_price']
+                target = details['target_price']
+                stop = details['stop_loss']
+                volume = details['volume_ratio']
+
+                target_gain_pct = ((target - buy) / buy) * 100
+                stop_loss_pct = ((stop - buy) / buy) * 100
+
+                conf_emoji = "🔴" if confidence >= 8.0 else "🟠"
+
+                message += (
+                    f"{idx}. <b>{symbol}</b> - Confidence: {confidence:.1f}/10 {conf_emoji}\n"
+                    f"   💰 Entry: ₹{buy:,.2f}\n"
+                    f"   🎯 Target: ₹{target:,.2f} ({target_gain_pct:+.1f}%)\n"
+                    f"   🛡️ Stop: ₹{stop:,.2f} ({stop_loss_pct:+.1f}%)\n"
+                    f"   📊 Volume: {volume:.1f}x average\n\n"
+                )
+
+        # Footer
+        message += (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📊 <b>Total Patterns:</b> {total_count} stocks\n"
+            f"🟢 <b>Bullish:</b> {bullish_count} | 🔴 <b>Bearish:</b> {bearish_count}\n"
+            "💡 <b>Min Confidence:</b> 7.0/10\n\n"
+            "⚠️ <b>Risk Disclaimer:</b>\n"
+            "These are technical patterns only. Always use stop losses and manage position sizing appropriately."
         )
 
         return message
