@@ -2,6 +2,8 @@
 """
 OI Analyzer - Analyze Open Interest changes for F&O stocks
 
+Compares current OI to day-start (market open) OI to show cumulative institutional positioning.
+
 Classifies price+OI movements into 4 patterns:
 1. Long Buildup (Price ↑ + OI ↑): Fresh buying, strong bullish momentum
 2. Short Buildup (Price ↓ + OI ↑): Fresh selling, strong bearish momentum
@@ -18,7 +20,7 @@ import os
 
 
 class OIAnalyzer:
-    """Analyzes Open Interest patterns to identify strong vs weak price moves"""
+    """Analyzes Open Interest patterns by comparing to day-start OI"""
 
     # OI change thresholds (in percentage)
     OI_SIGNIFICANT_CHANGE = 5.0   # 5% change - worth noting
@@ -31,7 +33,7 @@ class OIAnalyzer:
     PRICE_LARGE_CHANGE = 3.0      # 3% - large move
 
     def __init__(self, cache_file: str = "data/oi_cache/oi_history.json"):
-        """Initialize OI analyzer with history cache"""
+        """Initialize OI analyzer with day-start tracking"""
         self.cache_file = cache_file
         self.oi_history = self._load_oi_history()
 
@@ -57,9 +59,37 @@ class OIAnalyzer:
         except Exception as e:
             print(f"Warning: Could not save OI history: {e}")
 
+    def _is_new_trading_day(self, last_timestamp: str) -> bool:
+        """
+        Check if we're in a new trading day compared to last update
+
+        Args:
+            last_timestamp: ISO timestamp of last update
+
+        Returns:
+            True if new trading day, False otherwise
+        """
+        try:
+            last_dt = datetime.fromisoformat(last_timestamp)
+            now = datetime.now()
+
+            # Different date = new day
+            if last_dt.date() != now.date():
+                return True
+
+            # Same date but before 9:15 AM (market open) = new day
+            # This handles the case where we run before market opens
+            if now.hour < 9 or (now.hour == 9 and now.minute < 15):
+                return True
+
+            return False
+        except:
+            return True  # If error, treat as new day
+
     def update_oi(self, symbol: str, current_oi: float, timestamp: str = None):
         """
-        Update OI history for a symbol
+        Update OI tracking for a symbol
+        Sets day_start_oi on first update of the day
 
         Args:
             symbol: Stock symbol
@@ -69,43 +99,51 @@ class OIAnalyzer:
         if timestamp is None:
             timestamp = datetime.now().isoformat()
 
+        # Initialize symbol if first time
         if symbol not in self.oi_history:
-            self.oi_history[symbol] = []
+            self.oi_history[symbol] = {
+                'day_start_oi': current_oi,
+                'day_start_timestamp': timestamp,
+                'current_oi': current_oi,
+                'last_updated': timestamp
+            }
+            self._save_oi_history()
+            return
 
-        # Add new OI snapshot
-        self.oi_history[symbol].append({
-            'oi': current_oi,
-            'timestamp': timestamp
-        })
+        symbol_data = self.oi_history[symbol]
 
-        # Keep only last 50 snapshots per symbol (memory management)
-        if len(self.oi_history[symbol]) > 50:
-            self.oi_history[symbol] = self.oi_history[symbol][-50:]
+        # Check if new trading day
+        if self._is_new_trading_day(symbol_data['last_updated']):
+            # Reset for new day
+            symbol_data['day_start_oi'] = current_oi
+            symbol_data['day_start_timestamp'] = timestamp
 
-        # Save periodically (every update for now, can optimize later)
+        # Update current values
+        symbol_data['current_oi'] = current_oi
+        symbol_data['last_updated'] = timestamp
+
         self._save_oi_history()
 
-    def get_oi_change_pct(self, symbol: str, current_oi: float) -> Optional[float]:
+    def get_oi_change_from_day_start(self, symbol: str, current_oi: float) -> Optional[float]:
         """
-        Calculate OI change percentage from previous snapshot
+        Calculate OI change percentage from day-start (market open)
 
         Args:
             symbol: Stock symbol
             current_oi: Current OI value
 
         Returns:
-            OI change percentage, or None if no history
+            OI change percentage from day start, or None if no day-start data
         """
-        if symbol not in self.oi_history or len(self.oi_history[symbol]) == 0:
+        if symbol not in self.oi_history:
             return None
 
-        # Get previous OI (most recent snapshot)
-        previous_oi = self.oi_history[symbol][-1]['oi']
+        day_start_oi = self.oi_history[symbol].get('day_start_oi', 0)
 
-        if previous_oi == 0:
+        if day_start_oi == 0:
             return None
 
-        oi_change_pct = ((current_oi - previous_oi) / previous_oi) * 100
+        oi_change_pct = ((current_oi - day_start_oi) / day_start_oi) * 100
         return round(oi_change_pct, 2)
 
     def classify_oi_pattern(self, price_change_pct: float, oi_change_pct: float) -> Dict:
@@ -160,13 +198,13 @@ class OIAnalyzer:
 
     def calculate_strength(self, oi_change_pct: float) -> str:
         """
-        Calculate strength of OI change
+        Calculate OI change strength based on thresholds
 
         Args:
             oi_change_pct: OI change percentage
 
         Returns:
-            'VERY_STRONG', 'STRONG', 'SIGNIFICANT', or 'MINIMAL'
+            Strength level: VERY_STRONG, STRONG, SIGNIFICANT, or MINIMAL
         """
         abs_change = abs(oi_change_pct)
 
@@ -179,35 +217,35 @@ class OIAnalyzer:
         else:
             return 'MINIMAL'
 
-    def determine_priority(self, pattern_info: Dict, oi_strength: str,
-                          price_change_pct: float) -> str:
+    def determine_priority(self, pattern_info: Dict, oi_strength: str, price_change_pct: float) -> str:
         """
         Determine alert priority based on pattern, OI strength, and price change
 
         Args:
-            pattern_info: Pattern classification from classify_oi_pattern()
-            oi_strength: Strength from calculate_strength()
+            pattern_info: Pattern classification dict
+            oi_strength: OI change strength
             price_change_pct: Price change percentage
 
         Returns:
-            'HIGH', 'MEDIUM', or 'LOW'
+            Priority level: HIGH, MEDIUM, or LOW
         """
-        # HIGH priority: Very strong OI change with strong price move
-        if oi_strength == 'VERY_STRONG' and abs(price_change_pct) >= self.PRICE_MODERATE_CHANGE:
+        pattern = pattern_info['pattern']
+        abs_price_change = abs(price_change_pct)
+
+        # HIGH priority: Very strong OI change + moderate price move
+        if oi_strength == 'VERY_STRONG' and abs_price_change >= self.PRICE_MODERATE_CHANGE:
             return 'HIGH'
 
-        # HIGH priority: Strong buildup patterns (LONG_BUILDUP or SHORT_BUILDUP)
-        # with at least strong OI change
-        if pattern_info['pattern'] in ['LONG_BUILDUP', 'SHORT_BUILDUP']:
-            if oi_strength in ['STRONG', 'VERY_STRONG']:
-                return 'HIGH'
+        # HIGH priority: Long/Short buildup with strong OI
+        if pattern in ['LONG_BUILDUP', 'SHORT_BUILDUP'] and oi_strength == 'STRONG':
+            return 'HIGH'
 
-        # MEDIUM priority: Strong OI change with any pattern
+        # MEDIUM priority: Strong or Very Strong OI change
         if oi_strength in ['STRONG', 'VERY_STRONG']:
             return 'MEDIUM'
 
-        # MEDIUM priority: Significant OI change with buildup patterns
-        if oi_strength == 'SIGNIFICANT' and pattern_info['pattern'] in ['LONG_BUILDUP', 'SHORT_BUILDUP']:
+        # MEDIUM priority: Buildup patterns with significant OI
+        if oi_strength == 'SIGNIFICANT' and pattern in ['LONG_BUILDUP', 'SHORT_BUILDUP']:
             return 'MEDIUM'
 
         # LOW priority: Everything else
@@ -218,7 +256,7 @@ class OIAnalyzer:
                          oi_day_high: float = 0,
                          oi_day_low: float = 0) -> Optional[Dict]:
         """
-        Complete OI analysis for a symbol
+        Complete OI analysis for a symbol (comparing to day-start OI)
 
         Args:
             symbol: Stock symbol
@@ -238,21 +276,18 @@ class OIAnalyzer:
                 'priority': str,
                 'confidence': str,
                 'at_day_high': bool,
-                'at_day_low': bool
+                'at_day_low': bool,
+                'current_oi': int
             }
         """
-        # Get OI change percentage
-        oi_change_pct = self.get_oi_change_pct(symbol, current_oi)
-
-        # Update history with current OI
+        # Update OI tracking
         self.update_oi(symbol, current_oi)
 
-        # If no previous data, return None (need at least 2 snapshots)
-        if oi_change_pct is None:
-            return None
+        # Get OI change from day start
+        oi_change_pct = self.get_oi_change_from_day_start(symbol, current_oi)
 
-        # Skip analysis if OI change is too small (< 1%)
-        if abs(oi_change_pct) < 1.0:
+        # If no day-start data yet (first snapshot), return None
+        if oi_change_pct is None:
             return None
 
         # Classify pattern
@@ -264,13 +299,19 @@ class OIAnalyzer:
         # Determine priority
         priority = self.determine_priority(pattern_info, oi_strength, price_change_pct)
 
-        # Check if at extremes
+        # Check if at extremes (stricter threshold + significance filter)
+        # Only mark as "at day high/low" if:
+        # 1. Within 0.1% of the extreme (10x stricter than before)
+        # 2. OI change from day start is significant (>= 5%)
         at_day_high = False
         at_day_low = False
-        if oi_day_high > 0:
-            at_day_high = abs(current_oi - oi_day_high) / oi_day_high < 0.01  # Within 1%
-        if oi_day_low > 0:
-            at_day_low = abs(current_oi - oi_day_low) / oi_day_low < 0.01  # Within 1%
+
+        # Only show extremes if OI change is significant
+        if abs(oi_change_pct) >= self.OI_SIGNIFICANT_CHANGE:
+            if oi_day_high > 0:
+                at_day_high = abs(current_oi - oi_day_high) / oi_day_high < 0.001  # Within 0.1%
+            if oi_day_low > 0:
+                at_day_low = abs(current_oi - oi_day_low) / oi_day_low < 0.001  # Within 0.1%
 
         return {
             'pattern': pattern_info['pattern'],
@@ -284,74 +325,6 @@ class OIAnalyzer:
             'at_day_low': at_day_low,
             'current_oi': current_oi
         }
-
-    def get_recent_oi_trend(self, symbol: str, periods: int = 5) -> Optional[Dict]:
-        """
-        Analyze OI trend over last N periods
-
-        Args:
-            symbol: Stock symbol
-            periods: Number of periods to analyze (default: 5)
-
-        Returns:
-            Dict with trend analysis or None
-        """
-        if symbol not in self.oi_history or len(self.oi_history[symbol]) < 2:
-            return None
-
-        history = self.oi_history[symbol][-periods:]
-
-        if len(history) < 2:
-            return None
-
-        # Calculate overall change
-        first_oi = history[0]['oi']
-        last_oi = history[-1]['oi']
-
-        if first_oi == 0:
-            return None
-
-        overall_change_pct = ((last_oi - first_oi) / first_oi) * 100
-
-        # Count increasing periods
-        increasing_count = 0
-        for i in range(1, len(history)):
-            if history[i]['oi'] > history[i-1]['oi']:
-                increasing_count += 1
-
-        trend_direction = 'INCREASING' if overall_change_pct > 0 else 'DECREASING'
-        trend_consistency = (increasing_count / (len(history) - 1)) * 100
-
-        return {
-            'trend_direction': trend_direction,
-            'overall_change_pct': round(overall_change_pct, 2),
-            'consistency_pct': round(trend_consistency, 2),
-            'periods_analyzed': len(history)
-        }
-
-    def clear_old_history(self, days_to_keep: int = 1):
-        """
-        Clear OI history older than specified days
-
-        Args:
-            days_to_keep: Number of days to keep (default: 1)
-        """
-        from datetime import timedelta
-
-        cutoff_time = datetime.now() - timedelta(days=days_to_keep)
-
-        for symbol in list(self.oi_history.keys()):
-            # Filter snapshots to keep only recent ones
-            self.oi_history[symbol] = [
-                snapshot for snapshot in self.oi_history[symbol]
-                if datetime.fromisoformat(snapshot['timestamp']) >= cutoff_time
-            ]
-
-            # Remove symbol if no snapshots left
-            if len(self.oi_history[symbol]) == 0:
-                del self.oi_history[symbol]
-
-        self._save_oi_history()
 
 
 # Singleton instance
@@ -368,58 +341,55 @@ def get_oi_analyzer() -> OIAnalyzer:
 if __name__ == "__main__":
     # Test the OI analyzer
     print("=" * 80)
-    print("OI ANALYZER TEST")
+    print("OI ANALYZER TEST - Day-Start Comparison")
     print("=" * 80)
 
     analyzer = get_oi_analyzer()
 
-    # Simulate RELIANCE with long buildup
-    print("\n1. Testing LONG BUILDUP (Price UP + OI UP):")
+    # Simulate day-start OI for RELIANCE
+    print("\n1. Day Start: RELIANCE OI = 1,000,000")
     analyzer.update_oi("RELIANCE", 1000000)
+
+    # Simulate RELIANCE with long buildup (+15% OI from day start)
+    print("\n2. Testing LONG BUILDUP (Price +2.5%, OI now 1,150,000 = +15%):")
     result = analyzer.analyze_oi_change("RELIANCE", 1150000, price_change_pct=2.5)
     if result:
         print(f"   Pattern: {result['pattern']}")
         print(f"   Signal: {result['signal']}")
-        print(f"   OI Change: {result['oi_change_pct']:.2f}%")
+        print(f"   OI Change from Day Start: {result['oi_change_pct']:+.2f}%")
         print(f"   Strength: {result['strength']}")
         print(f"   Priority: {result['priority']}")
         print(f"   Interpretation: {result['interpretation']}")
 
-    # Simulate TCS with short buildup
-    print("\n2. Testing SHORT BUILDUP (Price DOWN + OI UP):")
+    # Simulate TCS day start
+    print("\n3. Day Start: TCS OI = 800,000")
     analyzer.update_oi("TCS", 800000)
+
+    # Simulate TCS with short buildup (+11.25% OI from day start)
+    print("\n4. Testing SHORT BUILDUP (Price -2.0%, OI now 890,000 = +11.25%):")
     result = analyzer.analyze_oi_change("TCS", 890000, price_change_pct=-2.0)
     if result:
         print(f"   Pattern: {result['pattern']}")
         print(f"   Signal: {result['signal']}")
-        print(f"   OI Change: {result['oi_change_pct']:.2f}%")
+        print(f"   OI Change from Day Start: {result['oi_change_pct']:+.2f}%")
         print(f"   Strength: {result['strength']}")
         print(f"   Priority: {result['priority']}")
         print(f"   Interpretation: {result['interpretation']}")
 
-    # Simulate INFY with short covering
-    print("\n3. Testing SHORT COVERING (Price UP + OI DOWN):")
+    # Simulate INFY day start
+    print("\n5. Day Start: INFY OI = 1,200,000")
     analyzer.update_oi("INFY", 1200000)
+
+    # Simulate INFY with short covering (-10% OI from day start)
+    print("\n6. Testing SHORT COVERING (Price +1.5%, OI now 1,080,000 = -10%):")
     result = analyzer.analyze_oi_change("INFY", 1080000, price_change_pct=1.5)
     if result:
         print(f"   Pattern: {result['pattern']}")
         print(f"   Signal: {result['signal']}")
-        print(f"   OI Change: {result['oi_change_pct']:.2f}%")
+        print(f"   OI Change from Day Start: {result['oi_change_pct']:+.2f}%")
         print(f"   Strength: {result['strength']}")
         print(f"   Priority: {result['priority']}")
         print(f"   Interpretation: {result['interpretation']}")
-
-    # Test trend analysis
-    print("\n4. Testing OI Trend Analysis:")
-    # Add more snapshots for RELIANCE
-    for i in range(5):
-        analyzer.update_oi("RELIANCE", 1150000 + (i * 20000))
-
-    trend = analyzer.get_recent_oi_trend("RELIANCE", periods=5)
-    if trend:
-        print(f"   Trend Direction: {trend['trend_direction']}")
-        print(f"   Overall Change: {trend['overall_change_pct']:.2f}%")
-        print(f"   Consistency: {trend['consistency_pct']:.1f}%")
 
     print("\n" + "=" * 80)
     print("✅ OI Analyzer test completed!")

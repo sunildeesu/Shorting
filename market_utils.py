@@ -1,20 +1,64 @@
-from datetime import datetime, time
+from datetime import datetime, time, date
 import pytz
 import config
+
+# NSE Holidays for 2025
+# Source: https://www.nseindia.com/regulations/trading-holidays
+NSE_HOLIDAYS_2025 = [
+    date(2025, 1, 26),   # Republic Day
+    date(2025, 3, 14),   # Holi
+    date(2025, 3, 31),   # Id-Ul-Fitr
+    date(2025, 4, 10),   # Mahavir Jayanti
+    date(2025, 4, 14),   # Dr. Ambedkar Jayanti
+    date(2025, 4, 18),   # Good Friday
+    date(2025, 5, 1),    # Maharashtra Day
+    date(2025, 6, 7),    # Id-Ul-Adha (Bakri Id)
+    date(2025, 8, 15),   # Independence Day
+    date(2025, 8, 27),   # Ganesh Chaturthi
+    date(2025, 10, 2),   # Mahatma Gandhi Jayanti
+    date(2025, 10, 21),  # Dussehra
+    date(2025, 11, 5),   # Diwali (Laxmi Pujan)
+    date(2025, 11, 6),   # Diwali-Balipratipada
+    date(2025, 11, 24),  # Gurunanak Jayanti
+    date(2025, 12, 25),  # Christmas
+]
 
 def get_current_ist_time() -> datetime:
     """Get current time in IST timezone"""
     ist = pytz.timezone(config.MARKET_TIMEZONE)
     return datetime.now(ist)
 
+def is_nse_holiday(check_date: date = None) -> bool:
+    """
+    Check if given date is an NSE holiday
+
+    Args:
+        check_date: Date to check (defaults to today)
+
+    Returns:
+        True if NSE holiday, False otherwise
+    """
+    if check_date is None:
+        check_date = get_current_ist_time().date()
+
+    return check_date in NSE_HOLIDAYS_2025
+
 def is_trading_day() -> bool:
     """
-    Check if today is a trading day (Monday-Friday)
-    Note: Does not account for NSE holidays - only checks weekday
+    Check if today is a trading day (Monday-Friday, excluding NSE holidays)
     """
     current_time = get_current_ist_time()
-    # Monday = 0, Sunday = 6
-    return current_time.weekday() < 5
+    current_date = current_time.date()
+
+    # Check if weekend (Saturday=5, Sunday=6)
+    if current_time.weekday() >= 5:
+        return False
+
+    # Check if NSE holiday
+    if is_nse_holiday(current_date):
+        return False
+
+    return True
 
 def is_market_hours() -> bool:
     """
