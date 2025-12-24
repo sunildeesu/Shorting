@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Prevent Mac from sleeping during market hours (9:00 AM - 4:00 PM on weekdays) -->
+    <key>Label</key>
+    <string>com.nse.prevent.sleep</string>
+
+    <!-- Run caffeinate to prevent system sleep -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-dis</string>
+    </array>
+
+    <!-- Only run on weekdays -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Monday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Tuesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Wednesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Thursday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Friday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <!-- Keep running until 4:00 PM (use TimeOut to kill after 7 hours) -->
+    <key>TimeOut</key>
+    <integer>25200</integer>
+
+    <!-- Keep process alive (restart if crashes) -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- Standard output log -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/caffeinate-stdout.log</string>
+
+    <!-- Standard error log -->
+    <key>StandardErrorPath</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/caffeinate-stderr.log</string>
+
+    <!-- Process type (background, low priority) -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Nice value (lowest priority to not interfere with other apps) -->
+    <key>Nice</key>
+    <integer>20</integer>
+</dict>
+</plist>
