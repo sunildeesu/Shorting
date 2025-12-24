@@ -151,9 +151,15 @@ class TelegramNotifier:
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
+        # Add timestamp in IST
+        from market_utils import get_current_ist_time
+        current_time = get_current_ist_time()
+        time_str = current_time.strftime("%I:%M:%S %p")
+
         # Base message
         message = f"{header}\n\n"
-        message += f"📊 <b>Stock:</b> {display_symbol}\n\n"
+        message += f"📊 <b>Stock:</b> {display_symbol}\n"
+        message += f"⏰ <b>Alert Time:</b> {time_str}\n\n"
 
         # Price section
         message += "💰 <b>PRICE:</b>\n"
@@ -257,17 +263,22 @@ class TelegramNotifier:
 
         # Base message - use bold for priority alerts
         is_priority = alert_type in ["volume_spike", "volume_spike_rise"]
+
+        # Add timestamp in IST
+        from market_utils import get_current_ist_time
+        current_time = get_current_ist_time()
+        time_str = current_time.strftime("%I:%M:%S %p")
+
         if is_priority:
-            message = f"{header}\n\n📊 <b>Stock: {display_symbol}</b>\n"
+            message = f"{header}\n\n📊 <b>Stock: {display_symbol}</b>\n⏰ Alert Time: {time_str}\n"
         else:
-            message = f"{header}\n\n📊 Stock: {display_symbol}\n"
+            message = f"{header}\n\n📊 Stock: {display_symbol}\n⏰ Alert Time: {time_str}\n"
 
         # Add market cap if available
         if market_cap_cr:
             # Format market cap in crores with commas
             market_cap_formatted = f"{market_cap_cr:,.0f}"
-            # Market cap % change = price % change
-            message += f"💰 Market Cap: ₹{market_cap_formatted} Cr ({drop_percent:+.2f}%)\n"
+            message += f"💰 Market Cap: ₹{market_cap_formatted} Cr\n"
 
         # Add pharma indicator (only for drops)
         if is_pharma and not is_rise:
