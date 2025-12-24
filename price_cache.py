@@ -139,7 +139,7 @@ class PriceCache:
     def get_price_1min_ago(self, symbol: str) -> Optional[float]:
         """
         Get price from 1 minute ago for 1-min alert detection.
-        Only returns price if it's from the same day as current price.
+        Only returns price if it's from the same day AND within 2 minutes.
 
         Returns:
             Price from 1 minute ago, or None if not available
@@ -153,18 +153,36 @@ class PriceCache:
         if not current or not previous_1min:
             return None
 
-        # Validate same-day timestamps
+        # Validate timestamps: must be same day AND within 2 minutes
         current_timestamp = current.get("timestamp")
         previous_timestamp = previous_1min.get("timestamp")
 
         if current_timestamp and previous_timestamp:
-            if self._is_same_day(current_timestamp, previous_timestamp):
-                return previous_1min.get("price")
-            else:
+            # Check if same day
+            if not self._is_same_day(current_timestamp, previous_timestamp):
                 logger.debug(f"{symbol}: Skipping 1-min comparison - timestamps from different days")
                 return None
 
-        return previous_1min.get("price")
+            # Check if within 2 minutes (allowing 1 min tolerance)
+            try:
+                from datetime import datetime
+                current_dt = datetime.fromisoformat(current_timestamp)
+                previous_dt = datetime.fromisoformat(previous_timestamp)
+                time_diff_seconds = (current_dt - previous_dt).total_seconds()
+
+                if time_diff_seconds > 120:  # > 2 minutes
+                    logger.debug(f"{symbol}: Skipping 1-min comparison - timestamps {time_diff_seconds:.1f}s apart (> 120s threshold)")
+                    return None
+                elif time_diff_seconds < 30:  # < 30 seconds
+                    logger.debug(f"{symbol}: Skipping 1-min comparison - timestamps {time_diff_seconds:.1f}s apart (< 30s threshold)")
+                    return None
+
+                return previous_1min.get("price")
+            except Exception as e:
+                logger.warning(f"{symbol}: Error parsing timestamps for 1-min comparison: {e}")
+                return None
+
+        return None
 
     def get_prices_1min(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
         """
@@ -289,11 +307,11 @@ class PriceCache:
     def get_prices(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
         """
         Get current and 10-minute-ago prices for a stock
-        Only returns historical price if it's from the same day as current price
+        Only returns historical price if it's from the same day AND within 12 minutes
 
         Returns:
             Tuple of (current_price, price_10min_ago) or (None, None) if not found
-            Returns (current_price, None) if historical price is from a different day
+            Returns (current_price, None) if timestamps are too far apart
         """
         if symbol not in self.cache:
             return None, None
@@ -303,16 +321,34 @@ class PriceCache:
 
         current_price = current["price"] if current else None
 
-        # Validate same-day timestamps to prevent cross-day comparisons
+        # Validate timestamps: must be same day AND within 12 minutes
         if current and previous2:
             current_timestamp = current.get("timestamp")
             previous2_timestamp = previous2.get("timestamp")
 
             if current_timestamp and previous2_timestamp:
-                if self._is_same_day(current_timestamp, previous2_timestamp):
-                    previous2_price = previous2["price"]
-                else:
+                # Check if same day
+                if not self._is_same_day(current_timestamp, previous2_timestamp):
                     logger.debug(f"{symbol}: Skipping 10-min comparison - timestamps from different days")
+                    return current_price, None
+
+                # Check if within 12 minutes (allowing 2 min tolerance)
+                try:
+                    from datetime import datetime
+                    current_dt = datetime.fromisoformat(current_timestamp)
+                    previous2_dt = datetime.fromisoformat(previous2_timestamp)
+                    time_diff_minutes = (current_dt - previous2_dt).total_seconds() / 60
+
+                    if time_diff_minutes > 12:
+                        logger.debug(f"{symbol}: Skipping 10-min comparison - timestamps {time_diff_minutes:.1f} min apart (> 12 min threshold)")
+                        return current_price, None
+                    elif time_diff_minutes < 8:
+                        logger.debug(f"{symbol}: Skipping 10-min comparison - timestamps {time_diff_minutes:.1f} min apart (< 8 min threshold)")
+                        return current_price, None
+
+                    previous2_price = previous2["price"]
+                except Exception as e:
+                    logger.warning(f"{symbol}: Error parsing timestamps for 10-min comparison: {e}")
                     previous2_price = None
             else:
                 previous2_price = previous2["price"] if previous2 else None
@@ -324,11 +360,11 @@ class PriceCache:
     def get_prices_5min(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
         """
         Get current and 5-minute-ago prices for a stock (rapid detection)
-        Only returns historical price if it's from the same day as current price
+        Only returns historical price if it's from the same day AND within 7 minutes
 
         Returns:
             Tuple of (current_price, price_5min_ago) or (None, None) if not found
-            Returns (current_price, None) if historical price is from a different day
+            Returns (current_price, None) if timestamps are too far apart
         """
         if symbol not in self.cache:
             return None, None
@@ -338,16 +374,34 @@ class PriceCache:
 
         current_price = current["price"] if current else None
 
-        # Validate same-day timestamps to prevent cross-day comparisons
+        # Validate timestamps: must be same day AND within 7 minutes
         if current and previous:
             current_timestamp = current.get("timestamp")
             previous_timestamp = previous.get("timestamp")
 
             if current_timestamp and previous_timestamp:
-                if self._is_same_day(current_timestamp, previous_timestamp):
-                    previous_price = previous["price"]
-                else:
+                # Check if same day
+                if not self._is_same_day(current_timestamp, previous_timestamp):
                     logger.debug(f"{symbol}: Skipping 5-min comparison - timestamps from different days")
+                    return current_price, None
+
+                # Check if within 7 minutes (allowing 2 min tolerance for gaps)
+                try:
+                    from datetime import datetime
+                    current_dt = datetime.fromisoformat(current_timestamp)
+                    previous_dt = datetime.fromisoformat(previous_timestamp)
+                    time_diff_minutes = (current_dt - previous_dt).total_seconds() / 60
+
+                    if time_diff_minutes > 7:
+                        logger.debug(f"{symbol}: Skipping 5-min comparison - timestamps {time_diff_minutes:.1f} min apart (> 7 min threshold)")
+                        return current_price, None
+                    elif time_diff_minutes < 3:
+                        logger.debug(f"{symbol}: Skipping 5-min comparison - timestamps {time_diff_minutes:.1f} min apart (< 3 min threshold)")
+                        return current_price, None
+
+                    previous_price = previous["price"]
+                except Exception as e:
+                    logger.warning(f"{symbol}: Error parsing timestamps for 5-min comparison: {e}")
                     previous_price = None
             else:
                 previous_price = previous["price"] if previous else None
@@ -359,11 +413,11 @@ class PriceCache:
     def get_price_30min(self, symbol: str) -> Tuple[Optional[float], Optional[float]]:
         """
         Get current and 30-minute-ago prices for a stock
-        Only returns historical price if it's from the same day as current price
+        Only returns historical price if it's from the same day AND within 35 minutes
 
         Returns:
             Tuple of (current_price, price_30min_ago) or (None, None) if not found
-            Returns (current_price, None) if historical price is from a different day
+            Returns (current_price, None) if timestamps are too far apart
         """
         if symbol not in self.cache:
             return None, None
@@ -373,16 +427,34 @@ class PriceCache:
 
         current_price = current["price"] if current else None
 
-        # Validate same-day timestamps to prevent cross-day comparisons
+        # Validate timestamps: must be same day AND within 35 minutes
         if current and previous6:
             current_timestamp = current.get("timestamp")
             previous6_timestamp = previous6.get("timestamp")
 
             if current_timestamp and previous6_timestamp:
-                if self._is_same_day(current_timestamp, previous6_timestamp):
-                    previous6_price = previous6["price"]
-                else:
+                # Check if same day
+                if not self._is_same_day(current_timestamp, previous6_timestamp):
                     logger.debug(f"{symbol}: Skipping 30-min comparison - timestamps from different days")
+                    return current_price, None
+
+                # Check if within 35 minutes (allowing 5 min tolerance)
+                try:
+                    from datetime import datetime
+                    current_dt = datetime.fromisoformat(current_timestamp)
+                    previous6_dt = datetime.fromisoformat(previous6_timestamp)
+                    time_diff_minutes = (current_dt - previous6_dt).total_seconds() / 60
+
+                    if time_diff_minutes > 35:
+                        logger.debug(f"{symbol}: Skipping 30-min comparison - timestamps {time_diff_minutes:.1f} min apart (> 35 min threshold)")
+                        return current_price, None
+                    elif time_diff_minutes < 25:
+                        logger.debug(f"{symbol}: Skipping 30-min comparison - timestamps {time_diff_minutes:.1f} min apart (< 25 min threshold)")
+                        return current_price, None
+
+                    previous6_price = previous6["price"]
+                except Exception as e:
+                    logger.warning(f"{symbol}: Error parsing timestamps for 30-min comparison: {e}")
                     previous6_price = None
             else:
                 previous6_price = previous6["price"] if previous6 else None
