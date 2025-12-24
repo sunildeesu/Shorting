@@ -239,9 +239,12 @@ class OneMinMonitor:
                         logger.debug(f"{symbol}: No previous 1-min price for comparison")
                         continue  # Need at least 1 previous snapshot
 
+                    # Get price from 5 minutes ago (for momentum confirmation)
+                    _, price_5min_ago = self.price_cache.get_prices_5min(symbol)
+
                     # Check for 1-min drop
                     if self.detector.check_for_drop_1min(symbol, current_price, price_1min_ago,
-                                                          current_volume, oi):
+                                                          current_volume, oi, price_5min_ago):
                         change_pct = self.detector.get_drop_percentage(current_price, price_1min_ago)
                         logger.info(f"🔴 {symbol}: DROP detected - {change_pct:.2f}% in 1 minute")
 
@@ -253,7 +256,7 @@ class OneMinMonitor:
                     # Check for 1-min rise (if enabled)
                     elif config.ENABLE_RISE_ALERTS and \
                          self.detector.check_for_rise_1min(symbol, current_price, price_1min_ago,
-                                                            current_volume, oi):
+                                                            current_volume, oi, price_5min_ago):
                         change_pct = self.detector.get_rise_percentage(current_price, price_1min_ago)
                         logger.info(f"🟢 {symbol}: RISE detected - {change_pct:.2f}% in 1 minute")
 

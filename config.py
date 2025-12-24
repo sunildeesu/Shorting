@@ -40,7 +40,7 @@ DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.85'))  # 0.85% d
 RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.85'))  # 0.85% rise in 1 minute
 
 # Strict volume requirements to reduce noise
-VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '3.0'))  # 3x average (stricter than 5-min)
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '5.0'))  # 5x average (high quality signals only)
 MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '50000'))  # Minimum 50K shares in 1-min window
 MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks
 

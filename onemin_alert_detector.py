@@ -5,10 +5,11 @@ Multi-layer filtering to ensure high-quality alerts only
 
 Filters:
 1. Price threshold (0.85% change in 1 minute)
-2. Volume spike requirement (3x average + minimum 50K shares)
+2. Volume spike requirement (5x average + minimum 50K shares)
 3. Quality filters (price >=50, no ban list stocks)
 4. Cooldown (10 minutes per stock)
 5. Cross-alert deduplication (no 5-min alert in last 3 minutes)
+6. Momentum confirmation (price acceleration check - 20% faster than 4-min avg)
 """
 
 from typing import Optional
@@ -30,9 +31,9 @@ class OneMinAlertDetector:
 
     def check_for_drop_1min(self, symbol: str, current_price: float,
                             price_1min_ago: float, current_volume: int,
-                            oi: float = 0) -> bool:
+                            oi: float = 0, price_5min_ago: float = None) -> bool:
         """
-        Check if stock meets 1-min drop criteria with 5-layer filtering.
+        Check if stock meets 1-min drop criteria with 6-layer filtering.
 
         Args:
             symbol: Stock symbol
@@ -40,6 +41,7 @@ class OneMinAlertDetector:
             price_1min_ago: Price from 1 minute ago
             current_volume: Current trading volume
             oi: Open interest (optional)
+            price_5min_ago: Price from 5 minutes ago (optional, for momentum check)
 
         Returns:
             True if all filters pass, False otherwise
@@ -64,13 +66,17 @@ class OneMinAlertDetector:
         if not self._no_recent_5min_alert(symbol):
             return False
 
+        # Layer 6: Momentum confirmation (drop acceleration)
+        if price_5min_ago and not self._has_drop_momentum(current_price, price_1min_ago, price_5min_ago):
+            return False
+
         return True  # All checks passed
 
     def check_for_rise_1min(self, symbol: str, current_price: float,
                             price_1min_ago: float, current_volume: int,
-                            oi: float = 0) -> bool:
+                            oi: float = 0, price_5min_ago: float = None) -> bool:
         """
-        Check if stock meets 1-min rise criteria with 5-layer filtering.
+        Check if stock meets 1-min rise criteria with 6-layer filtering.
 
         Args:
             symbol: Stock symbol
@@ -78,6 +84,7 @@ class OneMinAlertDetector:
             price_1min_ago: Price from 1 minute ago
             current_volume: Current trading volume
             oi: Open interest (optional)
+            price_5min_ago: Price from 5 minutes ago (optional, for momentum check)
 
         Returns:
             True if all filters pass, False otherwise
@@ -100,6 +107,10 @@ class OneMinAlertDetector:
 
         # Layer 5: Cross-alert deduplication
         if not self._no_recent_5min_alert(symbol):
+            return False
+
+        # Layer 6: Momentum confirmation (rise acceleration)
+        if price_5min_ago and not self._has_rise_momentum(current_price, price_1min_ago, price_5min_ago):
             return False
 
         return True  # All checks passed
@@ -249,6 +260,74 @@ class OneMinAlertDetector:
                 return False
 
         return True
+
+    # ====================================
+    # Layer 6: Momentum Confirmation
+    # ====================================
+
+    def _has_drop_momentum(self, current_price: float, price_1min_ago: float,
+                           price_5min_ago: float) -> bool:
+        """
+        Check if drop is accelerating (momentum confirmation).
+        Requires that the 1-minute drop rate is faster than the 4-minute average.
+
+        This prevents alerts on temporary blips by ensuring sustained downward momentum.
+
+        Args:
+            current_price: Current price
+            price_1min_ago: Price 1 minute ago
+            price_5min_ago: Price 5 minutes ago
+
+        Returns:
+            True if drop is accelerating, False otherwise
+        """
+        # Calculate drop rate per minute
+        drop_1min_rate = ((price_1min_ago - current_price) / price_1min_ago) * 100
+
+        # Calculate average drop rate from 5min to 1min (4 minutes)
+        drop_4min = ((price_5min_ago - price_1min_ago) / price_5min_ago) * 100
+        drop_4min_rate = drop_4min / 4  # Average per minute
+
+        # Require acceleration: current 1-min drop must be > 4-min average
+        # This ensures the drop is getting faster, not slowing down
+        if drop_1min_rate > drop_4min_rate * 1.2:  # 20% faster than recent average
+            logger.debug(f"Drop accelerating: 1min={drop_1min_rate:.2f}%/min vs 4min_avg={drop_4min_rate:.2f}%/min")
+            return True
+
+        logger.debug(f"Drop NOT accelerating: 1min={drop_1min_rate:.2f}%/min <= 4min_avg={drop_4min_rate:.2f}%/min")
+        return False
+
+    def _has_rise_momentum(self, current_price: float, price_1min_ago: float,
+                           price_5min_ago: float) -> bool:
+        """
+        Check if rise is accelerating (momentum confirmation).
+        Requires that the 1-minute rise rate is faster than the 4-minute average.
+
+        This prevents alerts on temporary spikes by ensuring sustained upward momentum.
+
+        Args:
+            current_price: Current price
+            price_1min_ago: Price 1 minute ago
+            price_5min_ago: Price 5 minutes ago
+
+        Returns:
+            True if rise is accelerating, False otherwise
+        """
+        # Calculate rise rate per minute
+        rise_1min_rate = ((current_price - price_1min_ago) / price_1min_ago) * 100
+
+        # Calculate average rise rate from 5min to 1min (4 minutes)
+        rise_4min = ((price_1min_ago - price_5min_ago) / price_5min_ago) * 100
+        rise_4min_rate = rise_4min / 4  # Average per minute
+
+        # Require acceleration: current 1-min rise must be > 4-min average
+        # This ensures the rise is getting faster, not slowing down
+        if rise_1min_rate > rise_4min_rate * 1.2:  # 20% faster than recent average
+            logger.debug(f"Rise accelerating: 1min={rise_1min_rate:.2f}%/min vs 4min_avg={rise_4min_rate:.2f}%/min")
+            return True
+
+        logger.debug(f"Rise NOT accelerating: 1min={rise_1min_rate:.2f}%/min <= 4min_avg={rise_4min_rate:.2f}%/min")
+        return False
 
     # ====================================
     # Helper Methods
