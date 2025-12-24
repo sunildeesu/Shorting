@@ -62,7 +62,8 @@ def is_trading_day() -> bool:
 
 def is_market_hours() -> bool:
     """
-    Check if current time is within market hours (9:30 AM - 3:25 PM IST)
+    Check if current time is within market hours (9:25 AM - 3:25 PM IST)
+    NSE trading: 9:15 AM - 3:30 PM (we start monitoring at 9:25 AM for market stabilization)
     """
     current_time = get_current_ist_time()
     current_time_only = current_time.time()

@@ -11,7 +11,7 @@ TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 # Market Configuration
 MARKET_TIMEZONE = 'Asia/Kolkata'
 MARKET_START_HOUR = 9
-MARKET_START_MINUTE = 30
+MARKET_START_MINUTE = 25  # Start monitoring at 9:25 AM (allow 10 min for market stabilization after 9:15 open)
 MARKET_END_HOUR = 15
 MARKET_END_MINUTE = 25
 
