@@ -2,18 +2,23 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Prevent Mac from sleeping during market hours (9:00 AM - 4:00 PM on weekdays) -->
+    <!-- Prevent Mac from sleeping during market hours on TRADING DAYS ONLY -->
+    <!-- Checks for weekends AND NSE holidays using market_utils.is_trading_day() -->
     <key>Label</key>
     <string>com.nse.prevent.sleep</string>
 
-    <!-- Run caffeinate to prevent system sleep -->
+    <!-- Run wrapper script that checks if it's a trading day before starting caffeinate -->
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/caffeinate</string>
-        <string>-dis</string>
+        <string>/bin/bash</string>
+        <string>/Users/sunildeesu/myProjects/ShortIndicator/start_caffeinate_if_trading_day.sh</string>
     </array>
 
-    <!-- Only run on weekdays -->
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+
+    <!-- Schedule: Run at 9:00 AM on weekdays (wrapper will skip if holiday) -->
     <key>StartCalendarInterval</key>
     <array>
         <!-- Monday -->
@@ -63,11 +68,11 @@
         </dict>
     </array>
 
-    <!-- Keep running until 4:00 PM (use TimeOut to kill after 7 hours) -->
+    <!-- Keep running until 4:00 PM (use TimeOut to kill after 7 hours = 25200 seconds) -->
     <key>TimeOut</key>
     <integer>25200</integer>
 
-    <!-- Keep process alive (restart if crashes) -->
+    <!-- Keep process alive (restart if crashes) - only during market hours -->
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
