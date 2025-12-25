@@ -54,3 +54,7 @@ data/oi_cache/
 
 # Screener results
 data/screener_results/
+
+# Runtime process files
+data/caffeinate.pid
+*.pid
