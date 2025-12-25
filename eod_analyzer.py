@@ -46,7 +46,7 @@ class EODAnalyzer:
         self.pattern_detector = EODPatternDetector(
             pattern_tolerance=2.0,
             volume_confirmation=True,
-            min_confidence=7.0
+            min_confidence=8.0  # RAISED from 7.0 - filters out low-quality patterns
         )
         self.report_generator = EODReportGenerator()
         self.regime_detector = MarketRegimeDetector(self.kite)
