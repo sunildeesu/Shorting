@@ -1,27 +1,39 @@
 from datetime import datetime, time, date
 import pytz
 import config
+import logging
 
-# NSE Holidays for 2025
+logger = logging.getLogger(__name__)
+
+# NSE Holidays by Year
 # Source: https://www.nseindia.com/regulations/trading-holidays
-NSE_HOLIDAYS_2025 = [
-    date(2025, 1, 26),   # Republic Day
-    date(2025, 3, 14),   # Holi
-    date(2025, 3, 31),   # Id-Ul-Fitr
-    date(2025, 4, 10),   # Mahavir Jayanti
-    date(2025, 4, 14),   # Dr. Ambedkar Jayanti
-    date(2025, 4, 18),   # Good Friday
-    date(2025, 5, 1),    # Maharashtra Day
-    date(2025, 6, 7),    # Id-Ul-Adha (Bakri Id)
-    date(2025, 8, 15),   # Independence Day
-    date(2025, 8, 27),   # Ganesh Chaturthi
-    date(2025, 10, 2),   # Mahatma Gandhi Jayanti
-    date(2025, 10, 21),  # Dussehra
-    date(2025, 11, 5),   # Diwali (Laxmi Pujan)
-    date(2025, 11, 6),   # Diwali-Balipratipada
-    date(2025, 11, 24),  # Gurunanak Jayanti
-    date(2025, 12, 25),  # Christmas
-]
+# NOTE: Update this dictionary at the end of each year with next year's holidays
+
+NSE_HOLIDAYS = {
+    2025: [
+        date(2025, 1, 26),   # Republic Day
+        date(2025, 3, 14),   # Holi
+        date(2025, 3, 31),   # Id-Ul-Fitr
+        date(2025, 4, 10),   # Mahavir Jayanti
+        date(2025, 4, 14),   # Dr. Ambedkar Jayanti
+        date(2025, 4, 18),   # Good Friday
+        date(2025, 5, 1),    # Maharashtra Day
+        date(2025, 6, 7),    # Id-Ul-Adha (Bakri Id)
+        date(2025, 8, 15),   # Independence Day
+        date(2025, 8, 27),   # Ganesh Chaturthi
+        date(2025, 10, 2),   # Mahatma Gandhi Jayanti
+        date(2025, 10, 21),  # Dussehra
+        date(2025, 11, 5),   # Diwali (Laxmi Pujan)
+        date(2025, 11, 6),   # Diwali-Balipratipada
+        date(2025, 11, 24),  # Gurunanak Jayanti
+        date(2025, 12, 25),  # Christmas
+    ],
+    # TODO: Add 2026 holidays when NSE publishes the list (usually in December)
+    # 2026: [
+    #     date(2026, 1, 26),   # Republic Day
+    #     ...
+    # ],
+}
 
 def get_current_ist_time() -> datetime:
     """Get current time in IST timezone"""
@@ -37,11 +49,70 @@ def is_nse_holiday(check_date: date = None) -> bool:
 
     Returns:
         True if NSE holiday, False otherwise
+
+    Note:
+        If holiday list for the year is not available, logs warning and assumes NOT a holiday.
+        This ensures trading continues even if list is outdated (safer than blocking all trading).
     """
     if check_date is None:
         check_date = get_current_ist_time().date()
 
-    return check_date in NSE_HOLIDAYS_2025
+    year = check_date.year
+
+    # Check if we have holiday list for this year
+    if year not in NSE_HOLIDAYS:
+        logger.warning(f"⚠️ NSE holiday list for {year} not available in market_utils.py!")
+        logger.warning(f"⚠️ Assuming {check_date.strftime('%Y-%m-%d')} is NOT a holiday")
+        logger.warning(f"⚠️ Update NSE_HOLIDAYS dict in market_utils.py with {year} holidays")
+        logger.warning(f"⚠️ Source: https://www.nseindia.com/regulations/trading-holidays")
+        return False  # Assume NOT a holiday if list missing (safer for trading)
+
+    return check_date in NSE_HOLIDAYS[year]
+
+def check_holiday_list_status() -> dict:
+    """
+    Check if holiday lists are up-to-date and warn if missing
+
+    Returns:
+        dict with status information
+    """
+    current_time = get_current_ist_time()
+    current_year = current_time.year
+    next_year = current_year + 1
+    current_month = current_time.month
+
+    status = {
+        'current_year_available': current_year in NSE_HOLIDAYS,
+        'next_year_available': next_year in NSE_HOLIDAYS,
+        'needs_update': False,
+        'warning_message': None
+    }
+
+    # If it's November or December, check if next year's list is ready
+    if current_month >= 11:
+        if next_year not in NSE_HOLIDAYS:
+            status['needs_update'] = True
+            status['warning_message'] = (
+                f"⚠️ WARNING: NSE holiday list for {next_year} not yet added!\n"
+                f"⚠️ Current month: {current_time.strftime('%B %Y')}\n"
+                f"⚠️ Action needed: Update NSE_HOLIDAYS dict in market_utils.py\n"
+                f"⚠️ Source: https://www.nseindia.com/regulations/trading-holidays\n"
+                f"⚠️ Add {next_year} holidays before January 1st to avoid monitoring failures"
+            )
+            logger.warning(status['warning_message'])
+
+    # If current year's list is missing
+    if current_year not in NSE_HOLIDAYS:
+        status['needs_update'] = True
+        status['warning_message'] = (
+            f"🚨 CRITICAL: NSE holiday list for {current_year} is MISSING!\n"
+            f"🚨 System will treat all days as trading days (incorrect behavior)\n"
+            f"🚨 URGENT: Update NSE_HOLIDAYS dict in market_utils.py immediately\n"
+            f"🚨 Source: https://www.nseindia.com/regulations/trading-holidays"
+        )
+        logger.error(status['warning_message'])
+
+    return status
 
 def is_trading_day() -> bool:
     """
