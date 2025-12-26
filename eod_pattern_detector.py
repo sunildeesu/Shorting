@@ -17,7 +17,8 @@ class EODPatternDetector:
         self,
         pattern_tolerance: float = 2.0,
         volume_confirmation: bool = True,
-        min_confidence: float = 7.0
+        min_confidence: float = 7.0,
+        require_confirmation: bool = True
     ):
         """
         Initialize pattern detector
@@ -26,10 +27,13 @@ class EODPatternDetector:
             pattern_tolerance: Price tolerance percentage for pattern matching (default: 2%)
             volume_confirmation: Require 1.5× average volume on pattern completion (default: True)
             min_confidence: Minimum confidence score to report pattern (default: 7.0/10)
+            require_confirmation: Require 1-day confirmation after pattern breakout (default: True)
+                                 Set to False to allow immediate signals without waiting
         """
         self.pattern_tolerance = pattern_tolerance
         self.volume_confirmation = volume_confirmation
         self.min_confidence = min_confidence
+        self.require_confirmation = require_confirmation
 
     def detect_patterns(
         self,
@@ -185,8 +189,9 @@ class EODPatternDetector:
 
     def _check_volume_confirmation(self, current_volume: int, avg_volume: float) -> Tuple[bool, float]:
         """
-        Check if current volume meets 2.0× average threshold
-        RAISED from 1.5× - patterns with 2.0x+ volume have 68% win rate vs 52% for 1.5x
+        Check if current volume meets 1.75× average threshold
+        LOWERED from 2.0× - backtest showed 2.0x too restrictive (0 trades found)
+        Still maintains strong volume conviction while allowing more patterns through
 
         Returns:
             Tuple of (confirmation_passed, volume_ratio)
@@ -195,7 +200,7 @@ class EODPatternDetector:
             return True, 1.0
 
         volume_ratio = current_volume / avg_volume
-        return volume_ratio >= 2.0, volume_ratio  # RAISED from 1.5
+        return volume_ratio >= 1.75, volume_ratio  # LOWERED from 2.0 to balance quality vs quantity
 
     def _require_confirmation_day(self, historical_data: List[Dict], breakout_idx: int,
                                    pattern_type: str = 'BULLISH') -> bool:
@@ -417,11 +422,12 @@ class EODPatternDetector:
                             logger.debug(f"Double Bottom rejected: Low volume ({volume_ratio:.2f}x)")
                             return None
 
-                        # Confirmation day check - wait 1 day to confirm pattern holds
-                        breakout_idx = len(data) - 1  # Last candle
-                        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-                            logger.debug(f"Double Bottom waiting for confirmation day (next day must hold above pattern)")
-                            return None
+                        # Confirmation day check - wait 1 day to confirm pattern holds (if enabled)
+                        if self.require_confirmation:
+                            breakout_idx = len(data) - 1  # Last candle
+                            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                                logger.debug(f"Double Bottom waiting for confirmation day (next day must hold above pattern)")
+                                return None
 
                         # Calculate buy price and target
                         buy_price = second_low[1] * 1.005
@@ -678,11 +684,12 @@ class EODPatternDetector:
                     logger.debug(f"Resistance Breakout rejected: Low volume ({volume_ratio:.2f}x)")
                     return None
 
-                # Confirmation day check - wait 1 day to confirm breakout holds
-                breakout_idx = len(data) - 1  # Last candle is the breakout
-                if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-                    logger.debug(f"Resistance Breakout waiting for confirmation day (next day must hold above breakout)")
-                    return None
+                # Confirmation day check - wait 1 day to confirm breakout holds (if enabled)
+                if self.require_confirmation:
+                    breakout_idx = len(data) - 1  # Last candle is the breakout
+                    if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                        logger.debug(f"Resistance Breakout waiting for confirmation day (next day must hold above breakout)")
+                        return None
 
                 # Calculate buy price and target
                 buy_price = current_price
@@ -846,11 +853,12 @@ class EODPatternDetector:
             logger.debug(f"Cup & Handle rejected: Low volume ({volume_ratio:.2f}x)")
             return None
 
-        # Confirmation day check - wait 1 day to confirm breakout holds
-        breakout_idx = len(data) - 1  # Last candle is the breakout
-        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-            logger.debug(f"Cup & Handle waiting for confirmation day (next day must hold above breakout)")
-            return None
+        # Confirmation day check - wait 1 day to confirm breakout holds (if enabled)
+        if self.require_confirmation:
+            breakout_idx = len(data) - 1  # Last candle is the breakout
+            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                logger.debug(f"Cup & Handle waiting for confirmation day (next day must hold above breakout)")
+                return None
 
         # Step 4: Calculate buy/target/stop prices
         buy_price = handle_high * 1.005  # Entry above handle breakout
@@ -974,21 +982,21 @@ class EODPatternDetector:
             return None
 
         # Step 4: Validate pattern structure
-        # Head must be significantly lower than both shoulders (8-20%)
+        # Head must be significantly lower than both shoulders (5-25% - RELAXED from 8-20%)
         head_depth_vs_ls = ((left_shoulder_low - head_low) / left_shoulder_low) * 100
         head_depth_vs_rs = ((right_shoulder_low - head_low) / right_shoulder_low) * 100
 
-        if head_depth_vs_ls < 8.0 or head_depth_vs_ls > 20.0:
-            logger.debug(f"IHS rejected: head depth vs LS {head_depth_vs_ls:.1f}% outside 8-20% range")
+        if head_depth_vs_ls < 5.0 or head_depth_vs_ls > 25.0:  # RELAXED from 8-20%
+            logger.debug(f"IHS rejected: head depth vs LS {head_depth_vs_ls:.1f}% outside 5-25% range")
             return None
 
-        if head_depth_vs_rs < 8.0 or head_depth_vs_rs > 20.0:
-            logger.debug(f"IHS rejected: head depth vs RS {head_depth_vs_rs:.1f}% outside 8-20% range")
+        if head_depth_vs_rs < 5.0 or head_depth_vs_rs > 25.0:  # RELAXED from 8-20%
+            logger.debug(f"IHS rejected: head depth vs RS {head_depth_vs_rs:.1f}% outside 5-25% range")
             return None
 
-        # Shoulders should be symmetrical (within 3% of each other)
+        # Shoulders should be symmetrical (within 5% of each other - RELAXED from 3%)
         shoulder_symmetry = abs(left_shoulder_low - right_shoulder_low) / left_shoulder_low * 100
-        if shoulder_symmetry > 3.0:
+        if shoulder_symmetry > 5.0:  # RELAXED from 3.0%
             logger.debug(f"IHS rejected: shoulders asymmetric ({shoulder_symmetry:.1f}% diff)")
             return None
 
@@ -1034,11 +1042,12 @@ class EODPatternDetector:
             logger.debug(f"IHS rejected: Low volume ({volume_ratio:.2f}x)")
             return None
 
-        # Confirmation day check
-        breakout_idx = len(data) - 1
-        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-            logger.debug(f"IHS waiting for confirmation day")
-            return None
+        # Confirmation day check (if enabled)
+        if self.require_confirmation:
+            breakout_idx = len(data) - 1
+            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                logger.debug(f"IHS waiting for confirmation day")
+                return None
 
         # Step 7: Calculate buy/target/stop prices
         buy_price = neckline_level * 1.005  # Entry above neckline
@@ -1120,20 +1129,20 @@ class EODPatternDetector:
         pole_gain_pct = 0
 
         for start in range(0, len(pattern_data) - 10):
-            for end in range(start + 5, min(start + 11, len(pattern_data) - 5)):
+            for end in range(start + 3, min(start + 13, len(pattern_data) - 5)):  # RELAXED from 5-11 to 3-13
                 start_low = pattern_data[start]['low']
                 end_high = pattern_data[end]['high']
                 gain_pct = ((end_high - start_low) / start_low) * 100
 
-                if 10.0 <= gain_pct <= 30.0:
+                if 8.0 <= gain_pct <= 35.0:  # RELAXED from 10-30% to 8-35%
                     # Check if it's a relatively straight move (no major pullbacks)
                     max_pullback = 0
                     for i in range(start + 1, end):
                         pullback = ((end_high - pattern_data[i]['low']) / end_high) * 100
                         max_pullback = max(max_pullback, pullback)
 
-                    # Allow max 8% pullback during pole formation
-                    if max_pullback <= 8.0:
+                    # Allow max 12% pullback during pole formation (RELAXED from 8%)
+                    if max_pullback <= 12.0:  # RELAXED from 8.0%
                         pole_found = True
                         pole_start_idx = start
                         pole_end_idx = end
@@ -1200,11 +1209,12 @@ class EODPatternDetector:
             logger.debug(f"Bull Flag rejected: Low breakout volume ({volume_ratio:.2f}x)")
             return None
 
-        # Confirmation day check
-        breakout_idx = len(data) - 1
-        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-            logger.debug(f"Bull Flag waiting for confirmation day")
-            return None
+        # Confirmation day check (if enabled)
+        if self.require_confirmation:
+            breakout_idx = len(data) - 1
+            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                logger.debug(f"Bull Flag waiting for confirmation day")
+                return None
 
         # Step 4: Calculate buy/target/stop prices
         buy_price = flag_high * 1.005  # Entry above flag breakout
@@ -1286,10 +1296,10 @@ class EODPatternDetector:
         # Find the highest high in the lookback period
         max_high = max(h[1] for h in highs)
 
-        # Find all touches within 1% of max high
+        # Find all touches within 2% of max high (RELAXED from 1%)
         resistance_touches = []
         for idx, high in highs:
-            if high >= max_high * 0.99:  # Within 1% of max high
+            if high >= max_high * 0.98:  # Within 2% of max high (RELAXED from 1%)
                 resistance_touches.append((idx, high))
 
         # Need at least 2 touches on resistance
@@ -1349,8 +1359,8 @@ class EODPatternDetector:
         last_low_idx, last_low = lows_in_pattern[-1]
         support_slope_pct = ((last_low - first_low) / first_low) * 100
 
-        # Support should be rising at least 3% over the pattern period
-        if support_slope_pct < 3.0:
+        # Support should be rising at least 2% over the pattern period (RELAXED from 3%)
+        if support_slope_pct < 2.0:  # RELAXED from 3.0%
             logger.debug(f"Ascending Triangle rejected: support slope {support_slope_pct:.1f}% too flat")
             return None
 
@@ -1376,11 +1386,12 @@ class EODPatternDetector:
             logger.debug(f"Ascending Triangle rejected: Low breakout volume ({volume_ratio:.2f}x)")
             return None
 
-        # Confirmation day check
-        breakout_idx = len(data) - 1
-        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-            logger.debug(f"Ascending Triangle waiting for confirmation day")
-            return None
+        # Confirmation day check (if enabled)
+        if self.require_confirmation:
+            breakout_idx = len(data) - 1
+            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                logger.debug(f"Ascending Triangle waiting for confirmation day")
+                return None
 
         # Step 4: Calculate buy/target/stop prices
         buy_price = resistance_level * 1.005  # Entry above resistance breakout
@@ -1458,11 +1469,12 @@ class EODPatternDetector:
         pattern_data = data[-lookback:]
 
         # Step 1: Find lower highs (resistance trendline)
-        # Identify local highs (peaks)
+        # Identify local highs (peaks) - RELAXED tolerance to allow near-peaks
         highs_in_pattern = []
         for i in range(1, len(pattern_data) - 1):
-            if (pattern_data[i]['high'] > pattern_data[i-1]['high'] and
-                pattern_data[i]['high'] > pattern_data[i+1]['high']):
+            # Allow 1% tolerance for peak detection (more lenient)
+            if (pattern_data[i]['high'] >= pattern_data[i-1]['high'] * 0.99 and
+                pattern_data[i]['high'] >= pattern_data[i+1]['high'] * 0.99):
                 highs_in_pattern.append((i, pattern_data[i]['high']))
 
         # Need at least 2 highs for resistance trendline
@@ -1480,11 +1492,12 @@ class EODPatternDetector:
             return None
 
         # Step 2: Find lower lows (support trendline)
-        # Identify local lows (troughs)
+        # Identify local lows (troughs) - RELAXED tolerance to allow near-troughs
         lows_in_pattern = []
         for i in range(1, len(pattern_data) - 1):
-            if (pattern_data[i]['low'] < pattern_data[i-1]['low'] and
-                pattern_data[i]['low'] < pattern_data[i+1]['low']):
+            # Allow 1% tolerance for trough detection (more lenient)
+            if (pattern_data[i]['low'] <= pattern_data[i-1]['low'] * 1.01 and
+                pattern_data[i]['low'] <= pattern_data[i+1]['low'] * 1.01):
                 lows_in_pattern.append((i, pattern_data[i]['low']))
 
         # Need at least 2 lows for support trendline
@@ -1557,11 +1570,12 @@ class EODPatternDetector:
             logger.debug(f"Falling Wedge rejected: Low breakout volume ({volume_ratio:.2f}x)")
             return None
 
-        # Confirmation day check
-        breakout_idx = len(data) - 1
-        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
-            logger.debug(f"Falling Wedge waiting for confirmation day")
-            return None
+        # Confirmation day check (if enabled)
+        if self.require_confirmation:
+            breakout_idx = len(data) - 1
+            if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+                logger.debug(f"Falling Wedge waiting for confirmation day")
+                return None
 
         # Step 6: Calculate buy/target/stop prices
         buy_price = current_resistance * 1.005  # Entry above resistance breakout
