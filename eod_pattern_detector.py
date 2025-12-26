@@ -116,6 +116,48 @@ class EODPatternDetector:
             else:
                 logger.debug(f"{symbol}: Cup & Handle filtered (bearish market regime)")
 
+        # PHASE 2 PATTERNS - High-probability patterns with 65-80% win rates
+
+        # Detect Inverse Head & Shoulders (Bullish Reversal) - 70-80% win rate
+        inverse_hs = self._detect_inverse_head_shoulders(historical_data, avg_volume, market_regime)
+        if inverse_hs and inverse_hs.get('confidence_score', 0) >= self.min_confidence:
+            # Filter based on market regime
+            if market_regime in ['BULLISH', 'NEUTRAL']:
+                patterns_found.append('INVERSE_HEAD_SHOULDERS')
+                pattern_details['inverse_head_shoulders'] = inverse_hs
+            else:
+                logger.debug(f"{symbol}: Inverse H&S filtered (bearish market regime)")
+
+        # Detect Bull Flag (Bullish Continuation) - 65-75% win rate
+        bull_flag = self._detect_bull_flag(historical_data, avg_volume, market_regime)
+        if bull_flag and bull_flag.get('confidence_score', 0) >= self.min_confidence:
+            # Filter based on market regime (only in bullish/neutral markets)
+            if market_regime in ['BULLISH', 'NEUTRAL']:
+                patterns_found.append('BULL_FLAG')
+                pattern_details['bull_flag'] = bull_flag
+            else:
+                logger.debug(f"{symbol}: Bull Flag filtered (bearish market regime)")
+
+        # Detect Ascending Triangle (Bullish Continuation) - 65-70% win rate
+        ascending_triangle = self._detect_ascending_triangle(historical_data, avg_volume, market_regime)
+        if ascending_triangle and ascending_triangle.get('confidence_score', 0) >= self.min_confidence:
+            # Filter based on market regime
+            if market_regime in ['BULLISH', 'NEUTRAL']:
+                patterns_found.append('ASCENDING_TRIANGLE')
+                pattern_details['ascending_triangle'] = ascending_triangle
+            else:
+                logger.debug(f"{symbol}: Ascending Triangle filtered (bearish market regime)")
+
+        # Detect Falling Wedge (Bullish Reversal) - 68-74% win rate
+        falling_wedge = self._detect_falling_wedge(historical_data, avg_volume, market_regime)
+        if falling_wedge and falling_wedge.get('confidence_score', 0) >= self.min_confidence:
+            # Filter based on market regime
+            if market_regime in ['BULLISH', 'NEUTRAL']:
+                patterns_found.append('FALLING_WEDGE')
+                pattern_details['falling_wedge'] = falling_wedge
+            else:
+                logger.debug(f"{symbol}: Falling Wedge filtered (bearish market regime)")
+
         if patterns_found:
             # Log with confidence scores
             pattern_info = []
@@ -847,6 +889,722 @@ class EODPatternDetector:
             'volume_ratio': volume_ratio,
             'confidence_score': confidence,
             'pattern_strength': 'Strong' if rim_match_pct < 2.0 else 'Moderate'
+        }
+
+    def _detect_inverse_head_shoulders(
+        self,
+        data: List[Dict],
+        avg_volume: float,
+        market_regime: str
+    ) -> Optional[Dict]:
+        """
+        Detect Inverse Head & Shoulders pattern (bullish reversal)
+        Win Rate: 70-80% (historically most reliable reversal pattern)
+
+        Pattern Structure:
+        - Left Shoulder (LS): Local low
+        - Head (H): Lower low (center, deepest point)
+        - Right Shoulder (RS): Local low similar to LS (within 3% tolerance)
+        - Neckline: Resistance connecting highs between LS-H and H-RS
+        - Breakout: Price breaks above neckline with volume (2.0x avg)
+
+        Requirements:
+        - Head must be 8-20% lower than shoulders
+        - Shoulders should be symmetrical (within 3% of each other)
+        - Pattern formation: 10-25 days
+        - Neckline breakout with 2.0x volume
+
+        Returns:
+            Pattern details dict with confidence score or None
+        """
+        if len(data) < 15:
+            return None
+
+        # Look for pattern in last 25 days
+        lookback = min(25, len(data))
+        pattern_data = data[-lookback:]
+
+        # Step 1: Find potential head (lowest low in middle section)
+        # Head should be in middle 60% of lookback period
+        start_idx = int(lookback * 0.2)
+        end_idx = int(lookback * 0.8)
+
+        head_idx = start_idx
+        head_low = pattern_data[start_idx]['low']
+
+        for i in range(start_idx, end_idx):
+            if pattern_data[i]['low'] < head_low:
+                head_idx = i
+                head_low = pattern_data[i]['low']
+
+        # Need at least 3 candles on each side of head
+        if head_idx < 3 or head_idx > len(pattern_data) - 4:
+            return None
+
+        # Step 2: Find left shoulder (local low before head)
+        left_shoulder_idx = None
+        left_shoulder_low = float('inf')
+
+        for i in range(max(0, head_idx - 10), head_idx - 2):
+            if pattern_data[i]['low'] < left_shoulder_low:
+                # Check if it's a local low (lower than neighbors)
+                if i > 0 and i < len(pattern_data) - 1:
+                    if (pattern_data[i]['low'] < pattern_data[i-1]['low'] and
+                        pattern_data[i]['low'] < pattern_data[i+1]['low']):
+                        left_shoulder_idx = i
+                        left_shoulder_low = pattern_data[i]['low']
+
+        if left_shoulder_idx is None:
+            return None
+
+        # Step 3: Find right shoulder (local low after head)
+        right_shoulder_idx = None
+        right_shoulder_low = float('inf')
+
+        for i in range(head_idx + 3, min(len(pattern_data), head_idx + 12)):
+            if pattern_data[i]['low'] < right_shoulder_low:
+                # Check if it's a local low
+                if i > 0 and i < len(pattern_data) - 1:
+                    if (pattern_data[i]['low'] < pattern_data[i-1]['low'] and
+                        pattern_data[i]['low'] < pattern_data[i+1]['low']):
+                        right_shoulder_idx = i
+                        right_shoulder_low = pattern_data[i]['low']
+
+        if right_shoulder_idx is None:
+            return None
+
+        # Step 4: Validate pattern structure
+        # Head must be significantly lower than both shoulders (8-20%)
+        head_depth_vs_ls = ((left_shoulder_low - head_low) / left_shoulder_low) * 100
+        head_depth_vs_rs = ((right_shoulder_low - head_low) / right_shoulder_low) * 100
+
+        if head_depth_vs_ls < 8.0 or head_depth_vs_ls > 20.0:
+            logger.debug(f"IHS rejected: head depth vs LS {head_depth_vs_ls:.1f}% outside 8-20% range")
+            return None
+
+        if head_depth_vs_rs < 8.0 or head_depth_vs_rs > 20.0:
+            logger.debug(f"IHS rejected: head depth vs RS {head_depth_vs_rs:.1f}% outside 8-20% range")
+            return None
+
+        # Shoulders should be symmetrical (within 3% of each other)
+        shoulder_symmetry = abs(left_shoulder_low - right_shoulder_low) / left_shoulder_low * 100
+        if shoulder_symmetry > 3.0:
+            logger.debug(f"IHS rejected: shoulders asymmetric ({shoulder_symmetry:.1f}% diff)")
+            return None
+
+        # Step 5: Define neckline (resistance connecting peaks between shoulders and head)
+        # Peak between LS and H
+        ls_h_peak_idx = left_shoulder_idx
+        ls_h_peak_high = pattern_data[left_shoulder_idx]['high']
+        for i in range(left_shoulder_idx + 1, head_idx):
+            if pattern_data[i]['high'] > ls_h_peak_high:
+                ls_h_peak_idx = i
+                ls_h_peak_high = pattern_data[i]['high']
+
+        # Peak between H and RS
+        h_rs_peak_idx = head_idx
+        h_rs_peak_high = pattern_data[head_idx]['high']
+        for i in range(head_idx + 1, right_shoulder_idx + 1):
+            if pattern_data[i]['high'] > h_rs_peak_high:
+                h_rs_peak_idx = i
+                h_rs_peak_high = pattern_data[i]['high']
+
+        # Neckline is average of two peaks
+        neckline_level = (ls_h_peak_high + h_rs_peak_high) / 2
+
+        # Step 6: Check for neckline breakout
+        current_price = data[-1]['close']
+        current_high = data[-1]['high']
+
+        # Must break above neckline by at least 1%
+        if current_high <= neckline_level * 1.01:
+            return None  # No breakout yet
+
+        # Current close should hold above neckline
+        if current_price <= neckline_level:
+            return None  # Weak breakout
+
+        # Volume confirmation
+        current_volume = data[-1]['volume']
+        volume_confirmed, volume_ratio = self._check_volume_confirmation(
+            current_volume, avg_volume
+        )
+
+        if self.volume_confirmation and not volume_confirmed:
+            logger.debug(f"IHS rejected: Low volume ({volume_ratio:.2f}x)")
+            return None
+
+        # Confirmation day check
+        breakout_idx = len(data) - 1
+        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+            logger.debug(f"IHS waiting for confirmation day")
+            return None
+
+        # Step 7: Calculate buy/target/stop prices
+        buy_price = neckline_level * 1.005  # Entry above neckline
+        pattern_height = neckline_level - head_low
+        target_price = buy_price + pattern_height  # Project pattern height upward
+        stop_loss = right_shoulder_low * 0.98  # 2% below right shoulder
+
+        # Calculate metrics
+        pattern_height_pct = (pattern_height / head_low) * 100
+        pattern_days = right_shoulder_idx - left_shoulder_idx
+
+        # Price match percentage (shoulder symmetry)
+        price_match_pct = shoulder_symmetry
+
+        # Calculate confidence score
+        confidence = self._calculate_confidence_score(
+            price_match_pct=price_match_pct,
+            volume_ratio=volume_ratio,
+            pattern_height_pct=pattern_height_pct,
+            pattern_type='BULLISH',
+            market_regime=market_regime
+        )
+
+        return {
+            'left_shoulder_low': left_shoulder_low,
+            'head_low': head_low,
+            'right_shoulder_low': right_shoulder_low,
+            'neckline': neckline_level,
+            'pattern_height': pattern_height,
+            'pattern_height_pct': pattern_height_pct,
+            'pattern_days': pattern_days,
+            'shoulder_symmetry_pct': shoulder_symmetry,
+            'current_price': current_price,
+            'buy_price': buy_price,
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'pattern_type': 'BULLISH',
+            'volume_ratio': volume_ratio,
+            'confidence_score': confidence,
+            'pattern_strength': 'Strong' if price_match_pct < 1.5 else 'Moderate'
+        }
+
+    def _detect_bull_flag(
+        self,
+        data: List[Dict],
+        avg_volume: float,
+        market_regime: str
+    ) -> Optional[Dict]:
+        """
+        Detect Bull Flag/Pennant pattern (bullish continuation)
+        Win Rate: 65-75% (best continuation pattern in uptrends)
+
+        Pattern Structure:
+        - Pole: Sharp upward move (10-30% gain in 5-10 days)
+        - Flag: Consolidation in downward-sloping or sideways channel (5-15 days)
+        - Breakout: Price breaks above flag resistance with volume (2.0x avg)
+
+        Requirements:
+        - Pole: 10-30% gain in 5-10 days
+        - Flag: 5-15 days, retracement 30-50% of pole height
+        - Volume: Decreasing during flag, surging on breakout
+        - Breakout: Above flag resistance with 2.0x volume
+
+        Returns:
+            Pattern details dict with confidence score or None
+        """
+        if len(data) < 15:
+            return None
+
+        # Look for pattern in last 25 days
+        lookback = min(25, len(data))
+        pattern_data = data[-lookback:]
+
+        # Step 1: Find the pole (sharp upward move)
+        # Look for significant price rise in 5-10 days
+        pole_found = False
+        pole_start_idx = None
+        pole_end_idx = None
+        pole_gain_pct = 0
+
+        for start in range(0, len(pattern_data) - 10):
+            for end in range(start + 5, min(start + 11, len(pattern_data) - 5)):
+                start_low = pattern_data[start]['low']
+                end_high = pattern_data[end]['high']
+                gain_pct = ((end_high - start_low) / start_low) * 100
+
+                if 10.0 <= gain_pct <= 30.0:
+                    # Check if it's a relatively straight move (no major pullbacks)
+                    max_pullback = 0
+                    for i in range(start + 1, end):
+                        pullback = ((end_high - pattern_data[i]['low']) / end_high) * 100
+                        max_pullback = max(max_pullback, pullback)
+
+                    # Allow max 8% pullback during pole formation
+                    if max_pullback <= 8.0:
+                        pole_found = True
+                        pole_start_idx = start
+                        pole_end_idx = end
+                        pole_gain_pct = gain_pct
+                        break
+            if pole_found:
+                break
+
+        if not pole_found:
+            return None
+
+        pole_low = pattern_data[pole_start_idx]['low']
+        pole_high = pattern_data[pole_end_idx]['high']
+        pole_height = pole_high - pole_low
+
+        # Step 2: Find the flag (consolidation after pole)
+        # Flag should start at pole end and last 5-15 days
+        flag_start_idx = pole_end_idx
+        flag_data = pattern_data[flag_start_idx:]
+
+        if len(flag_data) < 5 or len(flag_data) > 15:
+            return None
+
+        # Find flag high and low
+        flag_high = max(c['high'] for c in flag_data[:-1])  # Exclude current candle
+        flag_low = min(c['low'] for c in flag_data[:-1])
+
+        # Flag should retrace 30-50% of pole height
+        flag_retracement = pole_high - flag_low
+        flag_retracement_pct = (flag_retracement / pole_height) * 100
+
+        if flag_retracement_pct < 30.0 or flag_retracement_pct > 50.0:
+            logger.debug(f"Bull Flag rejected: flag retracement {flag_retracement_pct:.1f}% outside 30-50% range")
+            return None
+
+        # Check volume pattern: should decrease during flag formation
+        pole_avg_volume = sum(pattern_data[i]['volume'] for i in range(pole_start_idx, pole_end_idx + 1)) / (pole_end_idx - pole_start_idx + 1)
+        flag_avg_volume = sum(c['volume'] for c in flag_data[:-1]) / max(1, len(flag_data) - 1)
+
+        # Flag volume should be lower than pole volume (healthy consolidation)
+        if flag_avg_volume >= pole_avg_volume:
+            logger.debug(f"Bull Flag rejected: flag volume {flag_avg_volume:.0f} >= pole volume {pole_avg_volume:.0f}")
+            return None
+
+        # Step 3: Check for breakout above flag resistance
+        current_price = data[-1]['close']
+        current_high = data[-1]['high']
+
+        # Breakout: current high must exceed flag high by at least 1%
+        if current_high <= flag_high * 1.01:
+            return None  # No breakout yet
+
+        # Current close should hold above flag high
+        if current_price <= flag_high:
+            return None  # Weak breakout
+
+        # Volume confirmation (breakout volume should be strong)
+        current_volume = data[-1]['volume']
+        volume_confirmed, volume_ratio = self._check_volume_confirmation(
+            current_volume, avg_volume
+        )
+
+        if self.volume_confirmation and not volume_confirmed:
+            logger.debug(f"Bull Flag rejected: Low breakout volume ({volume_ratio:.2f}x)")
+            return None
+
+        # Confirmation day check
+        breakout_idx = len(data) - 1
+        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+            logger.debug(f"Bull Flag waiting for confirmation day")
+            return None
+
+        # Step 4: Calculate buy/target/stop prices
+        buy_price = flag_high * 1.005  # Entry above flag breakout
+        target_price = buy_price + pole_height  # Project pole height upward from breakout
+        stop_loss = flag_low * 0.98  # 2% below flag low
+
+        # Calculate metrics
+        pattern_days = len(flag_data) + (pole_end_idx - pole_start_idx)
+        flag_slope = ((flag_high - flag_low) / flag_high) * 100
+
+        # Price match percentage (how tight the flag is)
+        price_match_pct = flag_slope
+
+        # Calculate confidence score
+        confidence = self._calculate_confidence_score(
+            price_match_pct=price_match_pct,
+            volume_ratio=volume_ratio,
+            pattern_height_pct=pole_gain_pct,
+            pattern_type='BULLISH',
+            market_regime=market_regime
+        )
+
+        return {
+            'pole_low': pole_low,
+            'pole_high': pole_high,
+            'pole_height': pole_height,
+            'pole_gain_pct': pole_gain_pct,
+            'flag_high': flag_high,
+            'flag_low': flag_low,
+            'flag_retracement_pct': flag_retracement_pct,
+            'pattern_days': pattern_days,
+            'flag_days': len(flag_data),
+            'current_price': current_price,
+            'buy_price': buy_price,
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'pattern_type': 'BULLISH',
+            'volume_ratio': volume_ratio,
+            'confidence_score': confidence,
+            'pattern_strength': 'Strong' if flag_retracement_pct < 40.0 else 'Moderate'
+        }
+
+    def _detect_ascending_triangle(
+        self,
+        data: List[Dict],
+        avg_volume: float,
+        market_regime: str
+    ) -> Optional[Dict]:
+        """
+        Detect Ascending Triangle pattern (bullish continuation)
+        Win Rate: 65-70% (clear breakout point, reliable pattern)
+
+        Pattern Structure:
+        - Flat Resistance: Horizontal resistance line (same high tested 2-3 times)
+        - Rising Support: Upward sloping trendline (higher lows)
+        - Duration: 10-25 days
+        - Breakout: Price breaks above flat resistance with volume (2.0x avg)
+
+        Requirements:
+        - At least 2 touches on flat resistance (within 1% tolerance)
+        - At least 2 higher lows forming rising support
+        - Pattern duration: 10-25 days
+        - Breakout with 2.0x volume
+
+        Returns:
+            Pattern details dict with confidence score or None
+        """
+        if len(data) < 15:
+            return None
+
+        # Look for pattern in last 25 days
+        lookback = min(25, len(data))
+        pattern_data = data[-lookback:]
+
+        # Step 1: Find flat resistance level (horizontal line tested 2-3 times)
+        # Look for multiple highs at similar levels
+        highs = [(i, candle['high']) for i, candle in enumerate(pattern_data)]
+
+        # Find the highest high in the lookback period
+        max_high = max(h[1] for h in highs)
+
+        # Find all touches within 1% of max high
+        resistance_touches = []
+        for idx, high in highs:
+            if high >= max_high * 0.99:  # Within 1% of max high
+                resistance_touches.append((idx, high))
+
+        # Need at least 2 touches on resistance
+        if len(resistance_touches) < 2:
+            return None
+
+        # Resistance touches should be spread out (not consecutive days)
+        # Check if touches are at least 3 days apart
+        if len(resistance_touches) >= 2:
+            touch_spacing_ok = True
+            for i in range(len(resistance_touches) - 1):
+                if resistance_touches[i+1][0] - resistance_touches[i][0] < 3:
+                    touch_spacing_ok = False
+                    break
+            if not touch_spacing_ok:
+                return None
+
+        # Calculate average resistance level
+        resistance_level = sum(t[1] for t in resistance_touches) / len(resistance_touches)
+
+        # Find first and last resistance touch for pattern duration
+        first_touch_idx = resistance_touches[0][0]
+        last_touch_idx = resistance_touches[-1][0]
+        pattern_duration = last_touch_idx - first_touch_idx
+
+        if pattern_duration < 10 or pattern_duration > 25:
+            logger.debug(f"Ascending Triangle rejected: pattern duration {pattern_duration} days outside 10-25 range")
+            return None
+
+        # Step 2: Find rising support (higher lows)
+        # Look for lows in the pattern period
+        lows_in_pattern = []
+        for i in range(first_touch_idx, last_touch_idx + 1):
+            # Identify local lows (lower than neighbors)
+            if i > 0 and i < len(pattern_data) - 1:
+                if (pattern_data[i]['low'] < pattern_data[i-1]['low'] and
+                    pattern_data[i]['low'] < pattern_data[i+1]['low']):
+                    lows_in_pattern.append((i, pattern_data[i]['low']))
+
+        # Need at least 2 lows to form support trendline
+        if len(lows_in_pattern) < 2:
+            return None
+
+        # Check if lows are rising (higher lows)
+        higher_lows = True
+        for i in range(len(lows_in_pattern) - 1):
+            if lows_in_pattern[i+1][1] <= lows_in_pattern[i][1]:
+                higher_lows = False
+                break
+
+        if not higher_lows:
+            logger.debug(f"Ascending Triangle rejected: lows are not rising")
+            return None
+
+        # Calculate support trendline slope
+        first_low_idx, first_low = lows_in_pattern[0]
+        last_low_idx, last_low = lows_in_pattern[-1]
+        support_slope_pct = ((last_low - first_low) / first_low) * 100
+
+        # Support should be rising at least 3% over the pattern period
+        if support_slope_pct < 3.0:
+            logger.debug(f"Ascending Triangle rejected: support slope {support_slope_pct:.1f}% too flat")
+            return None
+
+        # Step 3: Check for breakout above resistance
+        current_price = data[-1]['close']
+        current_high = data[-1]['high']
+
+        # Breakout: current high must exceed resistance by at least 1%
+        if current_high <= resistance_level * 1.01:
+            return None  # No breakout yet
+
+        # Current close should hold above resistance
+        if current_price <= resistance_level:
+            return None  # Weak breakout
+
+        # Volume confirmation
+        current_volume = data[-1]['volume']
+        volume_confirmed, volume_ratio = self._check_volume_confirmation(
+            current_volume, avg_volume
+        )
+
+        if self.volume_confirmation and not volume_confirmed:
+            logger.debug(f"Ascending Triangle rejected: Low breakout volume ({volume_ratio:.2f}x)")
+            return None
+
+        # Confirmation day check
+        breakout_idx = len(data) - 1
+        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+            logger.debug(f"Ascending Triangle waiting for confirmation day")
+            return None
+
+        # Step 4: Calculate buy/target/stop prices
+        buy_price = resistance_level * 1.005  # Entry above resistance breakout
+        pattern_height = resistance_level - first_low
+        target_price = buy_price + pattern_height  # Project pattern height upward
+        stop_loss = last_low * 0.98  # 2% below most recent low
+
+        # Calculate metrics
+        pattern_height_pct = (pattern_height / first_low) * 100
+
+        # Price match percentage (how flat the resistance is)
+        resistance_variance = max(abs(t[1] - resistance_level) / resistance_level * 100 for t in resistance_touches)
+        price_match_pct = resistance_variance
+
+        # Calculate confidence score
+        confidence = self._calculate_confidence_score(
+            price_match_pct=price_match_pct,
+            volume_ratio=volume_ratio,
+            pattern_height_pct=pattern_height_pct,
+            pattern_type='BULLISH',
+            market_regime=market_regime
+        )
+
+        return {
+            'resistance_level': resistance_level,
+            'resistance_touches': len(resistance_touches),
+            'first_low': first_low,
+            'last_low': last_low,
+            'support_slope_pct': support_slope_pct,
+            'pattern_height': pattern_height,
+            'pattern_height_pct': pattern_height_pct,
+            'pattern_days': pattern_duration,
+            'current_price': current_price,
+            'buy_price': buy_price,
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'pattern_type': 'BULLISH',
+            'volume_ratio': volume_ratio,
+            'confidence_score': confidence,
+            'pattern_strength': 'Strong' if price_match_pct < 0.5 else 'Moderate'
+        }
+
+    def _detect_falling_wedge(
+        self,
+        data: List[Dict],
+        avg_volume: float,
+        market_regime: str
+    ) -> Optional[Dict]:
+        """
+        Detect Falling Wedge pattern (bullish reversal)
+        Win Rate: 68-74% (strong bullish reversal in downtrends)
+
+        Pattern Structure:
+        - Descending Resistance: Upper trendline connecting lower highs
+        - Descending Support: Lower trendline connecting lower lows (steeper slope)
+        - Wedge Narrowing: Lines converge (support declines faster)
+        - Duration: 10-25 days
+        - Breakout: Price breaks above resistance with volume (2.0x avg)
+
+        Requirements:
+        - At least 2 lower highs (resistance trendline)
+        - At least 2 lower lows (support trendline)
+        - Support slope steeper than resistance slope (wedge narrows)
+        - Pattern duration: 10-25 days
+        - Breakout above resistance with 2.0x volume
+
+        Returns:
+            Pattern details dict with confidence score or None
+        """
+        if len(data) < 15:
+            return None
+
+        # Look for pattern in last 25 days
+        lookback = min(25, len(data))
+        pattern_data = data[-lookback:]
+
+        # Step 1: Find lower highs (resistance trendline)
+        # Identify local highs (peaks)
+        highs_in_pattern = []
+        for i in range(1, len(pattern_data) - 1):
+            if (pattern_data[i]['high'] > pattern_data[i-1]['high'] and
+                pattern_data[i]['high'] > pattern_data[i+1]['high']):
+                highs_in_pattern.append((i, pattern_data[i]['high']))
+
+        # Need at least 2 highs for resistance trendline
+        if len(highs_in_pattern) < 2:
+            return None
+
+        # Check if highs are descending (lower highs)
+        lower_highs = True
+        for i in range(len(highs_in_pattern) - 1):
+            if highs_in_pattern[i+1][1] >= highs_in_pattern[i][1]:
+                lower_highs = False
+                break
+
+        if not lower_highs:
+            return None
+
+        # Step 2: Find lower lows (support trendline)
+        # Identify local lows (troughs)
+        lows_in_pattern = []
+        for i in range(1, len(pattern_data) - 1):
+            if (pattern_data[i]['low'] < pattern_data[i-1]['low'] and
+                pattern_data[i]['low'] < pattern_data[i+1]['low']):
+                lows_in_pattern.append((i, pattern_data[i]['low']))
+
+        # Need at least 2 lows for support trendline
+        if len(lows_in_pattern) < 2:
+            return None
+
+        # Check if lows are descending (lower lows)
+        lower_lows = True
+        for i in range(len(lows_in_pattern) - 1):
+            if lows_in_pattern[i+1][1] >= lows_in_pattern[i][1]:
+                lower_lows = False
+                break
+
+        if not lower_lows:
+            return None
+
+        # Step 3: Calculate trendline slopes
+        # Resistance trendline (connecting highs)
+        first_high_idx, first_high = highs_in_pattern[0]
+        last_high_idx, last_high = highs_in_pattern[-1]
+        resistance_slope_pct = ((last_high - first_high) / first_high) * 100
+
+        # Support trendline (connecting lows)
+        first_low_idx, first_low = lows_in_pattern[0]
+        last_low_idx, last_low = lows_in_pattern[-1]
+        support_slope_pct = ((last_low - first_low) / first_low) * 100
+
+        # Verify it's a falling wedge: both slopes negative, support steeper
+        if resistance_slope_pct >= 0 or support_slope_pct >= 0:
+            return None  # Not falling
+
+        if abs(support_slope_pct) <= abs(resistance_slope_pct):
+            logger.debug(f"Falling Wedge rejected: support slope {support_slope_pct:.1f}% not steeper than resistance {resistance_slope_pct:.1f}%")
+            return None  # Not converging (wedge should narrow)
+
+        # Pattern duration
+        pattern_start = min(first_high_idx, first_low_idx)
+        pattern_end = max(last_high_idx, last_low_idx)
+        pattern_duration = pattern_end - pattern_start
+
+        if pattern_duration < 10 or pattern_duration > 25:
+            logger.debug(f"Falling Wedge rejected: pattern duration {pattern_duration} days outside 10-25 range")
+            return None
+
+        # Step 4: Calculate current resistance level (extrapolate upper trendline)
+        # Linear interpolation of resistance trendline to current day
+        days_from_first_high = len(pattern_data) - 1 - first_high_idx
+        resistance_decline_per_day = (last_high - first_high) / (last_high_idx - first_high_idx) if last_high_idx != first_high_idx else 0
+        current_resistance = first_high + (resistance_decline_per_day * days_from_first_high)
+
+        # Step 5: Check for breakout above resistance
+        current_price = data[-1]['close']
+        current_high = data[-1]['high']
+
+        # Breakout: current high must exceed resistance by at least 1%
+        if current_high <= current_resistance * 1.01:
+            return None  # No breakout yet
+
+        # Current close should hold above resistance
+        if current_price <= current_resistance:
+            return None  # Weak breakout
+
+        # Volume confirmation
+        current_volume = data[-1]['volume']
+        volume_confirmed, volume_ratio = self._check_volume_confirmation(
+            current_volume, avg_volume
+        )
+
+        if self.volume_confirmation and not volume_confirmed:
+            logger.debug(f"Falling Wedge rejected: Low breakout volume ({volume_ratio:.2f}x)")
+            return None
+
+        # Confirmation day check
+        breakout_idx = len(data) - 1
+        if not self._require_confirmation_day(data, breakout_idx, pattern_type='BULLISH'):
+            logger.debug(f"Falling Wedge waiting for confirmation day")
+            return None
+
+        # Step 6: Calculate buy/target/stop prices
+        buy_price = current_resistance * 1.005  # Entry above resistance breakout
+        pattern_height = first_high - last_low  # Widest part of wedge
+        target_price = buy_price + pattern_height  # Project pattern height upward
+        stop_loss = last_low * 0.98  # 2% below most recent low
+
+        # Calculate metrics
+        pattern_height_pct = (pattern_height / last_low) * 100
+        slope_convergence = abs(support_slope_pct) - abs(resistance_slope_pct)
+
+        # Price match percentage (how well trendlines converge)
+        price_match_pct = abs(slope_convergence)
+
+        # Calculate confidence score
+        confidence = self._calculate_confidence_score(
+            price_match_pct=price_match_pct,
+            volume_ratio=volume_ratio,
+            pattern_height_pct=pattern_height_pct,
+            pattern_type='BULLISH',
+            market_regime=market_regime
+        )
+
+        return {
+            'first_high': first_high,
+            'last_high': last_high,
+            'first_low': first_low,
+            'last_low': last_low,
+            'resistance_slope_pct': resistance_slope_pct,
+            'support_slope_pct': support_slope_pct,
+            'slope_convergence': slope_convergence,
+            'current_resistance': current_resistance,
+            'pattern_height': pattern_height,
+            'pattern_height_pct': pattern_height_pct,
+            'pattern_days': pattern_duration,
+            'current_price': current_price,
+            'buy_price': buy_price,
+            'target_price': target_price,
+            'stop_loss': stop_loss,
+            'pattern_type': 'BULLISH',
+            'volume_ratio': volume_ratio,
+            'confidence_score': confidence,
+            'pattern_strength': 'Strong' if slope_convergence > 5.0 else 'Moderate'
         }
 
     def _empty_result(self, symbol: str, market_regime: str = "NEUTRAL") -> Dict:

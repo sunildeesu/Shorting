@@ -369,9 +369,14 @@ class EODReportGenerator:
         patterns = stock['patterns'].upper()
 
         # Check for both bullish and bearish patterns
+        # Phase 1 patterns + Phase 2 high-probability patterns (65-80% win rates)
         has_bullish = ('RESISTANCE_BREAKOUT' in patterns or
                        'DOUBLE_BOTTOM' in patterns or
-                       'CUP_HANDLE' in patterns)
+                       'CUP_HANDLE' in patterns or
+                       'INVERSE_HEAD_SHOULDERS' in patterns or
+                       'BULL_FLAG' in patterns or
+                       'ASCENDING_TRIANGLE' in patterns or
+                       'FALLING_WEDGE' in patterns)
         has_bearish = 'SUPPORT_BREAKOUT' in patterns or 'DOUBLE_TOP' in patterns
 
         # If both exist, return Mixed signal
@@ -392,7 +397,14 @@ class EODReportGenerator:
 
         # Check for mixed signals
         patterns = stock['patterns'].upper()
-        has_bullish = 'RESISTANCE_BREAKOUT' in patterns or 'DOUBLE_BOTTOM' in patterns
+        # Phase 1 + Phase 2 patterns
+        has_bullish = ('RESISTANCE_BREAKOUT' in patterns or
+                       'DOUBLE_BOTTOM' in patterns or
+                       'CUP_HANDLE' in patterns or
+                       'INVERSE_HEAD_SHOULDERS' in patterns or
+                       'BULL_FLAG' in patterns or
+                       'ASCENDING_TRIANGLE' in patterns or
+                       'FALLING_WEDGE' in patterns)
         has_bearish = 'SUPPORT_BREAKOUT' in patterns or 'DOUBLE_TOP' in patterns
 
         if has_bullish and has_bearish:
