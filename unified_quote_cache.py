@@ -13,12 +13,15 @@ Author: Sunil Kumar Durganaik
 
 import json
 import os
+import sqlite3
+import shutil
 import time
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 import fcntl
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +46,260 @@ class UnifiedQuoteCache:
             ttl_seconds: Time-to-live for cached data (default 60 seconds)
         """
         self.cache_file = cache_file
+        self.db_file = config.QUOTE_CACHE_DB_FILE
         self.ttl_seconds = ttl_seconds
         self.cache_data = None
         self.cache_timestamp = None
+        self.use_sqlite = config.ENABLE_SQLITE_CACHE
+        self.db_conn = None
 
         # Ensure directory exists
         Path(cache_file).parent.mkdir(parents=True, exist_ok=True)
 
+        # Initialize SQLite database
+        if self.use_sqlite:
+            self._init_database()
+
         # Load existing cache if available
         self._load_cache()
 
+    def _init_database(self):
+        """Initialize SQLite database with WAL mode and optimizations"""
+        try:
+            # Create data directory if needed
+            os.makedirs(os.path.dirname(self.db_file), exist_ok=True)
+
+            # Connect with check_same_thread=False
+            self.db_conn = sqlite3.connect(
+                self.db_file,
+                check_same_thread=False,
+                timeout=10.0
+            )
+
+            # Enable WAL mode (allows concurrent reads during writes)
+            self.db_conn.execute("PRAGMA journal_mode=WAL")
+            self.db_conn.execute("PRAGMA synchronous=NORMAL")
+            self.db_conn.execute("PRAGMA cache_size=-32000")  # 32MB cache
+            self.db_conn.execute("PRAGMA temp_store=MEMORY")
+
+            # Create tables
+            self._create_tables()
+
+            logger.info(f"SQLite database initialized: {self.db_file}")
+        except Exception as e:
+            logger.error(f"Failed to initialize SQLite database: {e}")
+            self.db_conn = None
+            self.use_sqlite = False
+
+    def _create_tables(self):
+        """Create SQLite tables and indexes"""
+        try:
+            # Quote cache table - stores individual quote records
+            self.db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS quote_cache (
+                    symbol TEXT PRIMARY KEY,
+                    quote_data TEXT NOT NULL,
+                    cached_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Cache metadata table - stores global cache settings
+            self.db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS cache_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Create indexes
+            self.db_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_quote_symbol
+                ON quote_cache(symbol)
+            """)
+
+            self.db_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_quote_cached_at
+                ON quote_cache(cached_at)
+            """)
+
+            # Commit schema changes
+            self.db_conn.commit()
+
+            logger.info("SQLite schema initialized for quote cache")
+        except Exception as e:
+            logger.error(f"Failed to create SQLite tables: {e}")
+            raise
+
+    def _load_from_sqlite(self):
+        """Load quote cache from SQLite database"""
+        if not self.db_conn:
+            logger.warning("SQLite not initialized")
+            return None, None
+
+        try:
+            # Load all quotes
+            cursor = self.db_conn.execute("""
+                SELECT symbol, quote_data, cached_at
+                FROM quote_cache
+            """)
+
+            quotes = {}
+            latest_timestamp = None
+
+            for row in cursor:
+                symbol, quote_data_json, cached_at = row
+
+                # Deserialize quote data
+                quote_data = json.loads(quote_data_json)
+                quotes[symbol] = quote_data
+
+                # Track latest timestamp
+                ts = datetime.fromisoformat(cached_at)
+                if latest_timestamp is None or ts > latest_timestamp:
+                    latest_timestamp = ts
+
+            # Load TTL from metadata
+            cursor = self.db_conn.execute("""
+                SELECT value FROM cache_metadata WHERE key = 'ttl_seconds'
+            """)
+            row = cursor.fetchone()
+            if row:
+                self.ttl_seconds = int(row[0])
+
+            logger.info(f"Loaded {len(quotes)} quotes from SQLite")
+            return quotes, latest_timestamp
+
+        except sqlite3.Error as e:
+            logger.error(f"Failed to load from SQLite: {e}")
+            return None, None
+
+    def _save_to_sqlite(self):
+        """Save quote cache to SQLite database"""
+        if not self.db_conn:
+            logger.warning("SQLite not initialized, skipping save")
+            return
+
+        try:
+            # Start transaction
+            self.db_conn.execute("BEGIN IMMEDIATE")
+
+            # Clear existing data
+            self.db_conn.execute("DELETE FROM quote_cache")
+            self.db_conn.execute("DELETE FROM cache_metadata")
+
+            # Prepare quote rows for bulk insert
+            quote_rows = []
+            cached_at = self.cache_timestamp.isoformat() if self.cache_timestamp else datetime.now().isoformat()
+
+            for symbol, quote_data in (self.cache_data or {}).items():
+                # Serialize quote data to JSON
+                quote_data_json = json.dumps(self._serialize_quotes({symbol: quote_data})[symbol])
+                quote_rows.append((symbol, quote_data_json, cached_at))
+
+            # Bulk insert quotes
+            if quote_rows:
+                self.db_conn.executemany("""
+                    INSERT INTO quote_cache (symbol, quote_data, cached_at)
+                    VALUES (?, ?, ?)
+                """, quote_rows)
+
+            # Save metadata
+            self.db_conn.execute("""
+                INSERT INTO cache_metadata (key, value)
+                VALUES ('ttl_seconds', ?)
+            """, (str(self.ttl_seconds),))
+
+            self.db_conn.execute("""
+                INSERT INTO cache_metadata (key, value)
+                VALUES ('last_refresh', ?)
+            """, (cached_at,))
+
+            # Commit transaction
+            self.db_conn.commit()
+
+        except sqlite3.Error as e:
+            self.db_conn.rollback()
+            logger.error(f"SQLite save failed: {e}")
+            raise
+        except Exception as e:
+            self.db_conn.rollback()
+            logger.error(f"Unexpected error during SQLite save: {e}")
+            raise
+
+    def _migrate_json_to_sqlite(self, json_data: Dict, timestamp: datetime):
+        """
+        One-time migration from JSON to SQLite.
+        Called automatically on first run if SQLite is empty.
+        """
+        logger.info("Migrating quote cache from JSON to SQLite...")
+
+        try:
+            # Start transaction
+            self.db_conn.execute("BEGIN TRANSACTION")
+
+            quotes = json_data.get('quotes', {})
+            cached_at = timestamp.isoformat() if timestamp else datetime.now().isoformat()
+            ttl = json_data.get('ttl_seconds', 60)
+
+            migrated_count = 0
+
+            for symbol, quote_data in quotes.items():
+                # Serialize quote data
+                quote_data_json = json.dumps(quote_data)
+
+                self.db_conn.execute("""
+                    INSERT OR REPLACE INTO quote_cache
+                    (symbol, quote_data, cached_at)
+                    VALUES (?, ?, ?)
+                """, (symbol, quote_data_json, cached_at))
+
+                migrated_count += 1
+
+            # Save metadata
+            self.db_conn.execute("""
+                INSERT OR REPLACE INTO cache_metadata (key, value)
+                VALUES ('ttl_seconds', ?)
+            """, (str(ttl),))
+
+            self.db_conn.execute("""
+                INSERT OR REPLACE INTO cache_metadata (key, value)
+                VALUES ('last_refresh', ?)
+            """, (cached_at,))
+
+            # Commit transaction
+            self.db_conn.commit()
+
+            logger.info(f"Migration complete: {migrated_count} quotes migrated")
+
+            # Create JSON backup
+            backup_file = self.cache_file + ".pre_sqlite_backup"
+            if os.path.exists(self.cache_file):
+                shutil.copy2(self.cache_file, backup_file)
+                logger.info(f"JSON backup created: {backup_file}")
+
+        except Exception as e:
+            self.db_conn.rollback()
+            logger.error(f"Migration failed: {e}")
+            raise
+
     def _load_cache(self):
-        """Load cache from disk"""
+        """Load cache from SQLite, fallback to JSON, migrate if needed"""
+
+        # Try SQLite first
+        if self.use_sqlite and self.db_conn:
+            try:
+                quotes, timestamp = self._load_from_sqlite()
+                if quotes:
+                    self.cache_data = quotes
+                    self.cache_timestamp = timestamp
+                    logger.debug(f"Loaded {len(quotes)} quotes from SQLite")
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to load from SQLite: {e}")
+
+        # Fallback to JSON
         if not os.path.exists(self.cache_file):
             logger.debug("No existing quote cache found")
             return
@@ -70,7 +315,13 @@ class UnifiedQuoteCache:
 
                     if timestamp_str:
                         self.cache_timestamp = datetime.fromisoformat(timestamp_str)
-                        logger.debug(f"Loaded quote cache from {self.cache_timestamp}")
+                        logger.debug(f"Loaded quote cache from JSON: {self.cache_timestamp}")
+
+                    # Auto-migrate JSON to SQLite (one-time)
+                    if self.use_sqlite and self.db_conn and self.cache_data:
+                        logger.info("Auto-migrating quote cache from JSON to SQLite...")
+                        self._migrate_json_to_sqlite(data, self.cache_timestamp)
+
                 finally:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
@@ -105,29 +356,40 @@ class UnifiedQuoteCache:
         return serialized
 
     def _save_cache(self):
-        """Save cache to disk"""
-        try:
-            # Serialize quotes (convert datetime objects to strings)
-            serialized_quotes = self._serialize_quotes(self.cache_data) if self.cache_data else {}
+        """Save cache to storage (SQLite primary, JSON backup)"""
 
-            data = {
-                'quotes': serialized_quotes,
-                'timestamp': self.cache_timestamp.isoformat() if self.cache_timestamp else None,
-                'ttl_seconds': self.ttl_seconds
-            }
+        # Save to SQLite (primary)
+        if self.use_sqlite and self.db_conn:
+            try:
+                self._save_to_sqlite()
+            except Exception as e:
+                logger.error(f"SQLite save failed: {e}")
+                # Continue to JSON backup
 
-            with open(self.cache_file, 'w') as f:
-                # Acquire exclusive lock for writing
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                try:
-                    json.dump(data, f, indent=2)
-                finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        # Save to JSON (backup - can be disabled after SQLite is proven stable)
+        if config.ENABLE_JSON_BACKUP:
+            try:
+                # Serialize quotes (convert datetime objects to strings)
+                serialized_quotes = self._serialize_quotes(self.cache_data) if self.cache_data else {}
 
-            logger.debug(f"Saved quote cache at {self.cache_timestamp}")
+                data = {
+                    'quotes': serialized_quotes,
+                    'timestamp': self.cache_timestamp.isoformat() if self.cache_timestamp else None,
+                    'ttl_seconds': self.ttl_seconds
+                }
 
-        except Exception as e:
-            logger.error(f"Failed to save quote cache: {e}")
+                with open(self.cache_file, 'w') as f:
+                    # Acquire exclusive lock for writing
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    try:
+                        json.dump(data, f, indent=2)
+                    finally:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+                logger.debug(f"Saved quote cache at {self.cache_timestamp}")
+
+            except Exception as e:
+                logger.error(f"Failed to save quote cache: {e}")
 
     def _is_cache_valid(self) -> bool:
         """Check if cache is still valid (within TTL)"""

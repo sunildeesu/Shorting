@@ -125,6 +125,7 @@ LOG_FILE = 'logs/stock_monitor.log'
 # SQLite Cache Configuration
 # Migrating from JSON to SQLite for 100x better performance and concurrency safety
 PRICE_CACHE_DB_FILE = 'data/price_cache.db'  # SQLite database for price cache
+QUOTE_CACHE_DB_FILE = 'data/unified_cache/quote_cache.db'  # SQLite database for quote cache
 ENABLE_SQLITE_CACHE = os.getenv('ENABLE_SQLITE_CACHE', 'true').lower() == 'true'  # Enable SQLite storage
 ENABLE_JSON_BACKUP = os.getenv('ENABLE_JSON_BACKUP', 'true').lower() == 'true'  # Keep JSON backup during transition
 
