@@ -20,6 +20,10 @@ data/eod_reports/
 logs/*.log
 !logs/.gitkeep
 
+# SQLite temporary files (WAL mode)
+*.db-wal
+*.db-shm
+
 # IDE
 .vscode/
 .idea/

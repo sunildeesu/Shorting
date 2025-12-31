@@ -1,5 +1,7 @@
 import json
 import os
+import sqlite3
+import shutil
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 import logging
@@ -29,23 +31,355 @@ class PriceCache:
 
     def __init__(self):
         self.cache_file = config.PRICE_CACHE_FILE
+        self.db_file = config.PRICE_CACHE_DB_FILE
+        self.use_sqlite = config.ENABLE_SQLITE_CACHE
+        self.db_conn = None
+
+        # Initialize SQLite database
+        if self.use_sqlite:
+            self._init_database()
+
         self.cache = self._load_cache()
 
+    def _init_database(self):
+        """Initialize SQLite database with WAL mode and optimizations"""
+        try:
+            # Create data directory if needed
+            os.makedirs(os.path.dirname(self.db_file), exist_ok=True)
+
+            # Connect with check_same_thread=False (we control thread safety)
+            self.db_conn = sqlite3.connect(
+                self.db_file,
+                check_same_thread=False,  # We'll handle thread safety
+                timeout=10.0  # Wait up to 10s for locks
+            )
+
+            # Enable WAL mode (allows concurrent reads during writes)
+            self.db_conn.execute("PRAGMA journal_mode=WAL")
+
+            # Performance optimizations
+            self.db_conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes, still safe with WAL
+            self.db_conn.execute("PRAGMA cache_size=-32000")   # 32MB cache
+            self.db_conn.execute("PRAGMA temp_store=MEMORY")   # Use RAM for temp tables
+
+            # Create tables if not exist
+            self._create_tables()
+
+            logger.info(f"SQLite database initialized: {self.db_file}")
+        except Exception as e:
+            logger.error(f"Failed to initialize SQLite database: {e}")
+            self.db_conn = None
+            self.use_sqlite = False
+
+    def _create_tables(self):
+        """Create SQLite tables and indexes if they don't exist"""
+        try:
+            # Create snapshots table
+            self.db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS price_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    snapshot_type TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    volume INTEGER NOT NULL DEFAULT 0,
+                    timestamp TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(symbol, snapshot_type)
+                )
+            """)
+
+            # Create avg daily volumes table
+            self.db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS avg_daily_volumes (
+                    symbol TEXT PRIMARY KEY,
+                    avg_daily_volume INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Create schema version table
+            self.db_conn.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Insert schema version if not exists
+            self.db_conn.execute("""
+                INSERT OR IGNORE INTO schema_version (version) VALUES (1)
+            """)
+
+            # Create indexes
+            self.db_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_snapshots_symbol
+                ON price_snapshots(symbol)
+            """)
+
+            self.db_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_snapshots_symbol_type
+                ON price_snapshots(symbol, snapshot_type)
+            """)
+
+            self.db_conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp
+                ON price_snapshots(timestamp)
+            """)
+
+            # Commit schema changes
+            self.db_conn.commit()
+
+            logger.info("SQLite schema initialized")
+        except Exception as e:
+            logger.error(f"Failed to create SQLite tables: {e}")
+            raise
+
+    def _load_from_sqlite(self) -> Dict:
+        """Load all data from SQLite into in-memory dict"""
+        if not self.db_conn:
+            logger.warning("SQLite not initialized")
+            return {}
+
+        cache = {}
+
+        try:
+            # Load all snapshots
+            cursor = self.db_conn.execute("""
+                SELECT symbol, snapshot_type, price, volume, timestamp
+                FROM price_snapshots
+                ORDER BY symbol, snapshot_type
+            """)
+
+            for row in cursor:
+                symbol, snapshot_type, price, volume, timestamp = row
+
+                # Initialize symbol dict if needed
+                if symbol not in cache:
+                    cache[symbol] = {
+                        "current": None,
+                        "previous_1min": None,
+                        "previous": None,
+                        "previous2": None,
+                        "previous3": None,
+                        "previous4": None,
+                        "previous5": None,
+                        "previous6": None
+                    }
+
+                # Populate snapshot
+                cache[symbol][snapshot_type] = {
+                    "price": price,
+                    "volume": volume,
+                    "timestamp": timestamp
+                }
+
+            # Load avg daily volumes
+            cursor = self.db_conn.execute("""
+                SELECT symbol, avg_daily_volume
+                FROM avg_daily_volumes
+            """)
+
+            for row in cursor:
+                symbol, avg_daily_volume = row
+
+                # Initialize symbol dict if needed
+                if symbol not in cache:
+                    cache[symbol] = {
+                        "current": None,
+                        "previous_1min": None,
+                        "previous": None,
+                        "previous2": None,
+                        "previous3": None,
+                        "previous4": None,
+                        "previous5": None,
+                        "previous6": None
+                    }
+
+                cache[symbol]["avg_daily_volume"] = avg_daily_volume
+
+            logger.info(f"Loaded {len(cache)} stocks from SQLite")
+            return cache
+
+        except sqlite3.Error as e:
+            logger.error(f"Failed to load from SQLite: {e}")
+            return {}
+
+    def _save_to_sqlite(self):
+        """Save in-memory cache to SQLite database using transactions"""
+        if not self.db_conn:
+            logger.warning("SQLite not initialized, skipping save")
+            return
+
+        try:
+            # Start transaction
+            self.db_conn.execute("BEGIN IMMEDIATE")
+
+            # Clear existing data (full replace strategy - simpler than delta)
+            self.db_conn.execute("DELETE FROM price_snapshots")
+            self.db_conn.execute("DELETE FROM avg_daily_volumes")
+
+            # Prepare snapshot rows for bulk insert
+            snapshot_rows = []
+            volume_rows = []
+
+            for symbol, data in self.cache.items():
+                # Collect all snapshots for this symbol
+                for snapshot_type in ['current', 'previous_1min', 'previous',
+                                      'previous2', 'previous3', 'previous4',
+                                      'previous5', 'previous6']:
+                    snapshot = data.get(snapshot_type)
+                    if snapshot and isinstance(snapshot, dict):
+                        snapshot_rows.append((
+                            symbol,
+                            snapshot_type,
+                            snapshot.get('price', 0.0),
+                            snapshot.get('volume', 0),
+                            snapshot.get('timestamp', datetime.now().isoformat())
+                        ))
+
+                # Collect avg daily volume
+                if 'avg_daily_volume' in data:
+                    volume_rows.append((symbol, data['avg_daily_volume']))
+
+            # Bulk insert (much faster than individual inserts)
+            if snapshot_rows:
+                self.db_conn.executemany("""
+                    INSERT INTO price_snapshots
+                    (symbol, snapshot_type, price, volume, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                """, snapshot_rows)
+
+            if volume_rows:
+                self.db_conn.executemany("""
+                    INSERT INTO avg_daily_volumes (symbol, avg_daily_volume)
+                    VALUES (?, ?)
+                """, volume_rows)
+
+            # Commit transaction (atomic)
+            self.db_conn.commit()
+
+        except sqlite3.Error as e:
+            # Rollback on any error
+            self.db_conn.rollback()
+            logger.error(f"SQLite save failed: {e}")
+            raise
+        except Exception as e:
+            self.db_conn.rollback()
+            logger.error(f"Unexpected error during SQLite save: {e}")
+            raise
+
+    def _migrate_json_to_sqlite(self, json_cache: Dict):
+        """
+        One-time migration from JSON to SQLite.
+        Called automatically on first run if SQLite is empty.
+        """
+        logger.info(f"Migrating {len(json_cache)} stocks from JSON to SQLite...")
+
+        try:
+            # Start transaction
+            self.db_conn.execute("BEGIN TRANSACTION")
+
+            migrated_stocks = 0
+            migrated_snapshots = 0
+
+            for symbol, data in json_cache.items():
+                # Migrate snapshots
+                for snapshot_type in ['current', 'previous_1min', 'previous',
+                                      'previous2', 'previous3', 'previous4',
+                                      'previous5', 'previous6']:
+                    snapshot = data.get(snapshot_type)
+                    if snapshot and isinstance(snapshot, dict):
+                        self.db_conn.execute("""
+                            INSERT OR REPLACE INTO price_snapshots
+                            (symbol, snapshot_type, price, volume, timestamp)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            symbol,
+                            snapshot_type,
+                            snapshot.get('price', 0.0),
+                            snapshot.get('volume', 0),
+                            snapshot.get('timestamp', datetime.now().isoformat())
+                        ))
+                        migrated_snapshots += 1
+
+                # Migrate avg_daily_volume
+                if 'avg_daily_volume' in data:
+                    self.db_conn.execute("""
+                        INSERT OR REPLACE INTO avg_daily_volumes
+                        (symbol, avg_daily_volume)
+                        VALUES (?, ?)
+                    """, (symbol, data['avg_daily_volume']))
+
+                migrated_stocks += 1
+
+            # Commit transaction
+            self.db_conn.commit()
+
+            logger.info(f"Migration complete: {migrated_stocks} stocks, "
+                       f"{migrated_snapshots} snapshots")
+
+            # Create JSON backup after successful migration
+            backup_file = self.cache_file + ".pre_sqlite_backup"
+            shutil.copy2(self.cache_file, backup_file)
+            logger.info(f"JSON backup created: {backup_file}")
+
+        except Exception as e:
+            self.db_conn.rollback()
+            logger.error(f"Migration failed: {e}")
+            raise
+
     def _load_cache(self) -> Dict:
-        """Load cache from file, create empty if doesn't exist"""
+        """Load cache from SQLite, fallback to JSON, migrate if needed"""
+
+        # Try SQLite first
+        if self.use_sqlite and self.db_conn:
+            try:
+                cache = self._load_from_sqlite()
+                if cache:
+                    logger.info(f"Loaded {len(cache)} stocks from SQLite")
+                    return cache
+            except Exception as e:
+                logger.warning(f"Failed to load from SQLite: {e}")
+
+        # Fallback to JSON
         if os.path.exists(self.cache_file):
             try:
                 with open(self.cache_file, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return {}
+                    cache = json.load(f)
+                logger.info(f"Loaded {len(cache)} stocks from JSON")
+
+                # Auto-migrate JSON to SQLite (one-time)
+                if self.use_sqlite and self.db_conn and cache:
+                    logger.info("Auto-migrating JSON data to SQLite...")
+                    self._migrate_json_to_sqlite(cache)
+
+                return cache
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Failed to load from JSON: {e}")
+
+        # Empty cache
+        logger.info("Starting with empty cache")
         return {}
 
     def _save_cache(self):
-        """Save cache to file"""
-        os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
-        with open(self.cache_file, 'w') as f:
-            json.dump(self.cache, f, indent=2)
+        """Save cache to storage (SQLite primary, JSON backup)"""
+
+        # Save to SQLite (primary)
+        if self.use_sqlite and self.db_conn:
+            try:
+                self._save_to_sqlite()
+            except Exception as e:
+                logger.error(f"SQLite save failed: {e}")
+                # Continue to JSON backup
+
+        # Save to JSON (backup - can be disabled after SQLite is proven stable)
+        if config.ENABLE_JSON_BACKUP:
+            try:
+                os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+                with open(self.cache_file, 'w') as f:
+                    json.dump(self.cache, f, indent=2)
+            except Exception as e:
+                logger.error(f"JSON save failed: {e}")
 
     def _is_same_day(self, timestamp1: str, timestamp2: str) -> bool:
         """

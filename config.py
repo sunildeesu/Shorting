@@ -122,6 +122,12 @@ STOCK_LIST_FILE = 'fo_stocks.json'
 PRICE_CACHE_FILE = 'data/price_cache.json'
 LOG_FILE = 'logs/stock_monitor.log'
 
+# SQLite Cache Configuration
+# Migrating from JSON to SQLite for 100x better performance and concurrency safety
+PRICE_CACHE_DB_FILE = 'data/price_cache.db'  # SQLite database for price cache
+ENABLE_SQLITE_CACHE = os.getenv('ENABLE_SQLITE_CACHE', 'true').lower() == 'true'  # Enable SQLite storage
+ENABLE_JSON_BACKUP = os.getenv('ENABLE_JSON_BACKUP', 'true').lower() == 'true'  # Keep JSON backup during transition
+
 # Alert Excel Logging Configuration
 ALERT_EXCEL_PATH = 'data/alerts/alert_tracking.xlsx'
 ENABLE_EXCEL_LOGGING = os.getenv('ENABLE_EXCEL_LOGGING', 'true').lower() == 'true'
