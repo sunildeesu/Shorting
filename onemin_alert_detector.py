@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 1-Minute Alert Detection Logic
-Multi-layer filtering to ensure high-quality alerts only
+Multi-layer filtering with TIERED PRIORITY system
 
-Filters:
-1. Price threshold (0.85% change in 1 minute)
-2. Volume spike requirement (5x average + minimum 50K shares)
+NORMAL Priority (Layers 1-5):
+1. Price threshold (0.75% change in 1 minute)
+2. Volume spike requirement (3x average + minimum 50K shares)
 3. Quality filters (price >=50, no ban list stocks)
 4. Cooldown (10 minutes per stock)
 5. Cross-alert deduplication (no 5-min alert in last 3 minutes)
-6. Momentum confirmation (price acceleration check - 20% faster than 4-min avg)
+
+HIGH Priority (All 6 Layers):
+6. Momentum confirmation (price acceleration - 10% faster than 4-min avg)
+   → Only HIGH priority alerts show strong momentum acceleration
 """
 
 from typing import Optional
@@ -31,9 +34,9 @@ class OneMinAlertDetector:
 
     def check_for_drop_1min(self, symbol: str, current_price: float,
                             price_1min_ago: float, current_volume: int,
-                            oi: float = 0, price_5min_ago: float = None) -> bool:
+                            oi: float = 0, price_5min_ago: float = None) -> Optional[str]:
         """
-        Check if stock meets 1-min drop criteria with 6-layer filtering.
+        Check if stock meets 1-min drop criteria with tiered priority.
 
         Args:
             symbol: Stock symbol
@@ -44,39 +47,47 @@ class OneMinAlertDetector:
             price_5min_ago: Price from 5 minutes ago (optional, for momentum check)
 
         Returns:
-            True if all filters pass, False otherwise
+            "HIGH" if passes all 6 layers (with momentum)
+            "NORMAL" if passes layers 1-5 (without momentum)
+            None if doesn't pass basic filters
         """
         # Layer 1: Price threshold
         if not self._meets_price_threshold_drop(current_price, price_1min_ago):
-            return False
+            return None
 
         # Layer 2: Volume spike requirement (MANDATORY)
         if not self._has_volume_spike(symbol, current_volume):
-            return False
+            return None
 
         # Layer 3: Quality filters
         if not self._is_high_quality_alert(symbol, current_price):
-            return False
+            return None
 
         # Layer 4: Cooldown check
         if not self._meets_cooldown(symbol):
-            return False
+            return None
 
         # Layer 5: Cross-alert deduplication
         if not self._no_recent_5min_alert(symbol):
-            return False
+            return None
 
-        # Layer 6: Momentum confirmation (drop acceleration)
-        if price_5min_ago and not self._has_drop_momentum(current_price, price_1min_ago, price_5min_ago):
-            return False
+        # Layers 1-5 passed → At least NORMAL priority
+        priority = "NORMAL"
 
-        return True  # All checks passed
+        # Layer 6: Momentum confirmation (drop acceleration) → Upgrade to HIGH priority
+        if price_5min_ago and self._has_drop_momentum(current_price, price_1min_ago, price_5min_ago):
+            priority = "HIGH"
+            logger.debug(f"{symbol}: HIGH priority (momentum acceleration detected)")
+        else:
+            logger.debug(f"{symbol}: NORMAL priority (no momentum acceleration)")
+
+        return priority
 
     def check_for_rise_1min(self, symbol: str, current_price: float,
                             price_1min_ago: float, current_volume: int,
-                            oi: float = 0, price_5min_ago: float = None) -> bool:
+                            oi: float = 0, price_5min_ago: float = None) -> Optional[str]:
         """
-        Check if stock meets 1-min rise criteria with 6-layer filtering.
+        Check if stock meets 1-min rise criteria with tiered priority.
 
         Args:
             symbol: Stock symbol
@@ -87,33 +98,41 @@ class OneMinAlertDetector:
             price_5min_ago: Price from 5 minutes ago (optional, for momentum check)
 
         Returns:
-            True if all filters pass, False otherwise
+            "HIGH" if passes all 6 layers (with momentum)
+            "NORMAL" if passes layers 1-5 (without momentum)
+            None if doesn't pass basic filters
         """
         # Layer 1: Price threshold
         if not self._meets_price_threshold_rise(current_price, price_1min_ago):
-            return False
+            return None
 
         # Layer 2: Volume spike requirement (MANDATORY)
         if not self._has_volume_spike(symbol, current_volume):
-            return False
+            return None
 
         # Layer 3: Quality filters
         if not self._is_high_quality_alert(symbol, current_price):
-            return False
+            return None
 
         # Layer 4: Cooldown check
         if not self._meets_cooldown(symbol):
-            return False
+            return None
 
         # Layer 5: Cross-alert deduplication
         if not self._no_recent_5min_alert(symbol):
-            return False
+            return None
 
-        # Layer 6: Momentum confirmation (rise acceleration)
-        if price_5min_ago and not self._has_rise_momentum(current_price, price_1min_ago, price_5min_ago):
-            return False
+        # Layers 1-5 passed → At least NORMAL priority
+        priority = "NORMAL"
 
-        return True  # All checks passed
+        # Layer 6: Momentum confirmation (rise acceleration) → Upgrade to HIGH priority
+        if price_5min_ago and self._has_rise_momentum(current_price, price_1min_ago, price_5min_ago):
+            priority = "HIGH"
+            logger.debug(f"{symbol}: HIGH priority (momentum acceleration detected)")
+        else:
+            logger.debug(f"{symbol}: NORMAL priority (no momentum acceleration)")
+
+        return priority
 
     # ====================================
     # Layer 1: Price Threshold
@@ -145,7 +164,7 @@ class OneMinAlertDetector:
 
     def _has_volume_spike(self, symbol: str, current_volume: int) -> bool:
         """
-        Check for volume spike (3x average + min 50K).
+        Check for volume spike (3x average + min 50K - relaxed from 5x for better coverage).
         This is MANDATORY for all 1-min alerts.
 
         Args:
@@ -164,7 +183,7 @@ class OneMinAlertDetector:
             return False
 
         # Check both conditions:
-        # 1. Current volume >= 3x average
+        # 1. Current volume >= 3x average (relaxed from 5x)
         # 2. Current volume >= 50K minimum
         if current_volume < config.VOLUME_SPIKE_MULTIPLIER_1MIN * avg_volume:
             logger.debug(f"{symbol}: Volume {current_volume:,} < {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x avg {avg_volume:,}")
@@ -290,7 +309,7 @@ class OneMinAlertDetector:
 
         # Require acceleration: current 1-min drop must be > 4-min average
         # This ensures the drop is getting faster, not slowing down
-        if drop_1min_rate > drop_4min_rate * 1.2:  # 20% faster than recent average
+        if drop_1min_rate > drop_4min_rate * 1.3:  # 30% faster than recent average
             logger.debug(f"Drop accelerating: 1min={drop_1min_rate:.2f}%/min vs 4min_avg={drop_4min_rate:.2f}%/min")
             return True
 
@@ -322,7 +341,7 @@ class OneMinAlertDetector:
 
         # Require acceleration: current 1-min rise must be > 4-min average
         # This ensures the rise is getting faster, not slowing down
-        if rise_1min_rate > rise_4min_rate * 1.2:  # 20% faster than recent average
+        if rise_1min_rate > rise_4min_rate * 1.3:  # 30% faster than recent average
             logger.debug(f"Rise accelerating: 1min={rise_1min_rate:.2f}%/min vs 4min_avg={rise_4min_rate:.2f}%/min")
             return True
 

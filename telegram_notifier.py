@@ -79,7 +79,8 @@ class TelegramNotifier:
     def send_1min_alert(self, symbol: str, direction: str, current_price: float,
                         previous_price: float, change_percent: float,
                         volume_data: dict = None, market_cap_cr: float = None,
-                        rsi_analysis: dict = None, oi_analysis: dict = None) -> bool:
+                        rsi_analysis: dict = None, oi_analysis: dict = None,
+                        priority: str = "NORMAL") -> bool:
         """
         Send a 1-minute ultra-fast alert to Telegram channel.
 
@@ -93,13 +94,14 @@ class TelegramNotifier:
             market_cap_cr: Market cap in crores
             rsi_analysis: Optional RSI analysis dict
             oi_analysis: Optional OI analysis dict
+            priority: "HIGH" or "NORMAL"
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_1min_alert_message(
             symbol, direction, current_price, previous_price, change_percent,
-            volume_data, market_cap_cr, rsi_analysis, oi_analysis
+            volume_data, market_cap_cr, rsi_analysis, oi_analysis, priority
         )
         telegram_success = self._send_message(message)
 
@@ -112,7 +114,7 @@ class TelegramNotifier:
                                      current_price: float, previous_price: float,
                                      change_percent: float, volume_data: dict = None,
                                      market_cap_cr: float = None, rsi_analysis: dict = None,
-                                     oi_analysis: dict = None) -> str:
+                                     oi_analysis: dict = None, priority: str = "NORMAL") -> str:
         """
         Format 1-minute alert message with ultra-fast alert branding.
 
@@ -126,6 +128,7 @@ class TelegramNotifier:
             market_cap_cr: Market cap in crores
             rsi_analysis: Optional RSI analysis
             oi_analysis: Optional OI analysis
+            priority: "HIGH" or "NORMAL"
 
         Returns:
             Formatted message string
@@ -143,11 +146,21 @@ class TelegramNotifier:
             direction_text = "RISE"
             direction_color = "🟢"
 
+        # Priority badge
+        if priority == "HIGH":
+            priority_badge = "🔥🔥 <b>HIGH PRIORITY</b> 🔥🔥\n"
+            priority_note = "(Strong momentum acceleration detected)"
+        else:
+            priority_badge = "⚡ <b>NORMAL PRIORITY</b> ⚡\n"
+            priority_note = "(Fast move without acceleration)"
+
         # Ultra-fast alert header
         header = (
             "⚡⚡⚡ <b>1-MIN ULTRA-FAST ALERT</b> ⚡⚡⚡\n"
+            f"{priority_badge}"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{emoji} <b>{direction_color} {direction_text} DETECTED {direction_color}</b> {emoji}\n"
+            f"<i>{priority_note}</i>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
 
@@ -648,6 +661,151 @@ class TelegramNotifier:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
 
+    def send_premarket_pattern_alert(
+        self,
+        top_patterns: List[Dict],
+        market_regime: str = "NEUTRAL",
+        stocks_analyzed: int = 0,
+        total_patterns_found: int = 0
+    ) -> bool:
+        """
+        Send pre-market pattern alert with top 1-3 setups.
+
+        Args:
+            top_patterns: List of top ranked patterns (max 3)
+            market_regime: Current market regime
+            stocks_analyzed: Number of stocks analyzed
+            total_patterns_found: Total patterns detected
+
+        Returns:
+            True if message sent successfully, False otherwise
+        """
+        message = self._format_premarket_alert_message(
+            top_patterns, market_regime, stocks_analyzed, total_patterns_found
+        )
+        return self._send_message(message)
+
+    def _format_premarket_alert_message(
+        self,
+        top_patterns: List[Dict],
+        market_regime: str,
+        stocks_analyzed: int,
+        total_patterns_found: int
+    ) -> str:
+        """
+        Format pre-market pattern alert message.
+
+        Args:
+            top_patterns: Top ranked patterns
+            market_regime: Market regime
+            stocks_analyzed: Number of stocks analyzed
+            total_patterns_found: Total patterns found
+
+        Returns:
+            Formatted HTML message string
+        """
+        from datetime import datetime
+        import pattern_utils as pu
+
+        # Market opens in X minutes
+        now = datetime.now()
+        market_open_time = datetime.combine(now.date(), datetime.strptime('09:15', '%H:%M').time())
+        minutes_to_open = max(0, int((market_open_time - now).total_seconds() / 60))
+
+        # Market regime emoji
+        regime_emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "🟡"}.get(market_regime, "🟡")
+
+        # Header
+        message = f"📊📊📊 <b>PRE-MARKET PATTERN ALERT</b> 📊📊📊\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        message += f"🕘 <b>Analysis Time:</b> {now.strftime('%I:%M %p')}\n"
+        message += f"⏰ <b>Market Opens in:</b> {minutes_to_open} minutes\n"
+        message += f"{regime_emoji} <b>Market Regime:</b> {market_regime}\n"
+        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        if not top_patterns:
+            message += "❌ <b>No high-quality patterns found today</b>\n"
+            message += f"Analyzed {stocks_analyzed} stocks, found {total_patterns_found} patterns below threshold.\n"
+            return message
+
+        message += f"🏆 <b>TOP {len(top_patterns)} PATTERN{'S' if len(top_patterns) > 1 else ''} FOR TODAY</b> 🏆\n\n"
+
+        # Pattern details
+        for i, pattern in enumerate(top_patterns, 1):
+            details = pattern['details']
+            symbol = pattern['symbol']
+            pattern_name = pu.format_pattern_name(pattern['pattern_name'])
+            timeframe = pattern['timeframe'].upper()
+
+            # Calculate percentages
+            entry = details.get('buy_price', 0)
+            target = details.get('target_price', 0)
+            stop = details.get('stop_loss', 0)
+
+            target_pct = ((target - entry) / entry * 100) if entry > 0 else 0
+            stop_pct = ((entry - stop) / entry * 100) if entry > 0 else 0
+            rr_ratio = pu.calculate_risk_reward_ratio(entry, target, stop)
+
+            # Rank emoji
+            rank_emoji = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣"}.get(i, f"{i}️⃣")
+
+            # Pattern header
+            message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            message += f"{rank_emoji} <b>{symbol} - {pattern_name} ({timeframe})</b> 🟢\n"
+            message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            # Pattern details
+            message += "   📊 <b>Pattern Details:</b>\n"
+            message += f"   • Timeframe: {timeframe}\n"
+            message += f"   • Confidence: {details.get('confidence_score', 0):.1f}/10 🔥🔥\n"
+            message += f"   • Priority Score: {pattern.get('priority_score', 0):.2f}/10\n\n"
+
+            # Trade setup
+            message += "   💰 <b>TRADE SETUP:</b>\n"
+            message += f"   • Entry:  ₹{entry:.2f}\n"
+            message += f"   • Target: ₹{target:.2f} (+{target_pct:.1f}%)\n"
+            message += f"   • Stop:   ₹{stop:.2f} (-{stop_pct:.1f}%)\n"
+            message += f"   • R:R Ratio: 1:{rr_ratio:.1f}\n\n"
+
+            # Technical strength
+            message += "   📈 <b>Technical Strength:</b>\n"
+            message += f"   • Volume: {details.get('volume_ratio', 0):.1f}x average 🔥\n"
+
+            pattern_height_pct = 0
+            if 'DOUBLE_BOTTOM' in pattern['pattern_name'].upper():
+                first_low = details.get('first_low', 0)
+                second_low = details.get('second_low', 0)
+                peak = details.get('peak_between', 0)
+                pattern_height_pct = pu.calculate_pattern_height_pct(peak, second_low, second_low)
+                message += f"   • Pattern Height: {pattern_height_pct:.1f}%\n"
+            elif 'RESISTANCE_BREAKOUT' in pattern['pattern_name'].upper():
+                resistance = details.get('resistance_level', 0)
+                support = details.get('support_level', 0)
+                pattern_height_pct = pu.calculate_pattern_height_pct(resistance, support, resistance)
+                message += f"   • Pattern Range: {pattern_height_pct:.1f}%\n"
+
+            # Freshness
+            candles_ago = pattern.get('candles_ago', 0)
+            if candles_ago == 0:
+                message += "   • Formed: Just now (fresh!) ✨\n"
+            elif timeframe == 'DAILY':
+                message += f"   • Formed: {candles_ago} day(s) ago\n"
+            else:
+                message += f"   • Formed: {candles_ago} hour(s) ago\n"
+
+            message += "\n"
+
+        # Footer
+        message += "⚠️ <b>PREPARATION CHECKLIST:</b>\n"
+        message += "✅ Review charts before 9:15 AM\n"
+        message += "✅ Set entry orders at trigger prices\n"
+        message += "✅ Place stop losses immediately\n"
+        message += "✅ Monitor for first 15 minutes\n\n"
+
+        message += f"<i>Analyzed {stocks_analyzed} stocks | Found {total_patterns_found} total patterns</i>"
+
+        return message
+
     def send_test_message(self) -> bool:
         """Send a test message to verify Telegram setup"""
         message = "✅ NSE Stock Monitor is active and ready to send alerts!"
@@ -1064,6 +1222,178 @@ class TelegramNotifier:
             "💡 <b>Min Confidence:</b> 7.0/10\n\n"
             "⚠️ <b>Risk Disclaimer:</b>\n"
             "These are technical patterns only. Always use stop losses and manage position sizing appropriately."
+        )
+
+        return message
+
+    def send_price_action_alert(
+        self,
+        symbol: str,
+        pattern_name: str,
+        pattern_type: str,
+        confidence_score: float,
+        entry_price: float,
+        target: Optional[float],
+        stop_loss: Optional[float],
+        volume_ratio: float,
+        pattern_description: str,
+        candle_data: Dict,
+        market_regime: str,
+        confidence_breakdown: Optional[Dict] = None
+    ) -> bool:
+        """
+        Send price action pattern alert to Telegram
+
+        Args:
+            symbol: Stock symbol
+            pattern_name: Pattern name (e.g., "Bullish Engulfing")
+            pattern_type: 'bullish', 'bearish', or 'neutral'
+            confidence_score: 0-10 confidence score
+            entry_price: Suggested entry price
+            target: Target price (if applicable)
+            stop_loss: Stop loss price (if applicable)
+            volume_ratio: Current volume / average volume
+            pattern_description: Human-readable pattern description
+            candle_data: OHLCV data for relevant candles
+            market_regime: Current market regime
+            confidence_breakdown: Optional breakdown of confidence components
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        message = self._format_price_action_message(
+            symbol, pattern_name, pattern_type, confidence_score,
+            entry_price, target, stop_loss, volume_ratio,
+            pattern_description, candle_data, market_regime,
+            confidence_breakdown
+        )
+
+        return self._send_message(message)
+
+    def _format_price_action_message(
+        self,
+        symbol: str,
+        pattern_name: str,
+        pattern_type: str,
+        confidence_score: float,
+        entry_price: float,
+        target: Optional[float],
+        stop_loss: Optional[float],
+        volume_ratio: float,
+        pattern_description: str,
+        candle_data: Dict,
+        market_regime: str,
+        confidence_breakdown: Optional[Dict]
+    ) -> str:
+        """Format price action alert message"""
+
+        # Remove .NS suffix
+        display_symbol = symbol.replace('.NS', '')
+
+        # Determine emoji based on pattern type
+        if pattern_type == 'bullish':
+            type_emoji = "🟢"
+            type_label = "BULLISH PATTERN"
+            signal_emoji = "📈"
+        elif pattern_type == 'bearish':
+            type_emoji = "🔴"
+            type_label = "BEARISH PATTERN"
+            signal_emoji = "📉"
+        else:
+            type_emoji = "⚪"
+            type_label = "NEUTRAL PATTERN"
+            signal_emoji = "📊"
+
+        # Confidence emoji
+        if confidence_score >= 8.5:
+            conf_emoji = "🔥🔥🔥"
+        elif confidence_score >= 8.0:
+            conf_emoji = "🔥🔥"
+        elif confidence_score >= 7.5:
+            conf_emoji = "🔥"
+        else:
+            conf_emoji = "✓"
+
+        # Header
+        message = (
+            f"{type_emoji}{type_emoji}{type_emoji} <b>PRICE ACTION ALERT</b> {type_emoji}{type_emoji}{type_emoji}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{signal_emoji} <b>{type_label}</b> {signal_emoji}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+
+        # Time
+        from market_utils import get_current_ist_time
+        current_time = get_current_ist_time()
+        time_str = current_time.strftime("%I:%M %p")
+
+        # Stock info
+        message += (
+            f"📊 <b>Stock:</b> {display_symbol}\n"
+            f"⏰ <b>Time:</b> {time_str}\n"
+            f"🌐 <b>Market:</b> {market_regime}\n\n"
+        )
+
+        # Pattern details
+        message += (
+            f"🎯 <b>PATTERN DETECTED</b>\n"
+            f"   Pattern: <b>{pattern_name}</b>\n"
+            f"   Type: {type_emoji} {pattern_type.upper()}\n"
+            f"   Confidence: <b>{confidence_score:.1f}/10</b> {conf_emoji}\n"
+            f"   {pattern_description}\n\n"
+        )
+
+        # Current candle OHLCV
+        curr = candle_data.get('curr_candle', {})
+        if curr:
+            message += (
+                f"📊 <b>CURRENT 5-MIN CANDLE</b>\n"
+                f"   Open:   ₹{curr['open']:.2f}\n"
+                f"   High:   ₹{curr['high']:.2f}\n"
+                f"   Low:    ₹{curr['low']:.2f}\n"
+                f"   Close:  ₹{curr['close']:.2f}\n"
+                f"   Volume: {curr['volume']:,} ({volume_ratio:.1f}x avg)\n\n"
+            )
+
+        # Previous candle (if relevant)
+        prev = candle_data.get('prev_candle')
+        if prev:
+            message += (
+                f"📉 <b>PREVIOUS CANDLE</b>\n"
+                f"   O: ₹{prev['open']:.2f} | H: ₹{prev['high']:.2f} | "
+                f"L: ₹{prev['low']:.2f} | C: ₹{prev['close']:.2f}\n\n"
+            )
+
+        # Trade setup
+        if target and stop_loss:
+            risk = abs(entry_price - stop_loss)
+            reward = abs(target - entry_price)
+            rr_ratio = reward / risk if risk > 0 else 0
+
+            target_pct = ((target - entry_price) / entry_price * 100)
+            stop_pct = ((stop_loss - entry_price) / entry_price * 100)
+
+            message += (
+                f"💰 <b>TRADE SETUP</b>\n"
+                f"   Entry:  ₹{entry_price:.2f}\n"
+                f"   Target: ₹{target:.2f} ({target_pct:+.1f}%)\n"
+                f"   Stop:   ₹{stop_loss:.2f} ({stop_pct:+.1f}%)\n"
+                f"   R:R Ratio: 1:{rr_ratio:.1f}\n\n"
+            )
+
+        # Confidence breakdown (optional)
+        if confidence_breakdown:
+            message += "🔍 <b>CONFIDENCE BREAKDOWN</b>\n"
+            for component, score in confidence_breakdown.items():
+                component_name = component.replace('_', ' ').title()
+                message += f"   • {component_name}: {score:.1f}\n"
+            message += "\n"
+
+        # Footer
+        message += (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ <b>Disclaimer:</b> Technical pattern only. Use proper risk management.\n"
+            "💡 Always verify with price action and volume before entry."
         )
 
         return message

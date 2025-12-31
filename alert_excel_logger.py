@@ -40,7 +40,8 @@ class AlertExcelLogger:
         "30min_rise": "30min_alerts",
         "volume_spike": "Volume_Spike_alerts",
         "volume_spike_rise": "Volume_Spike_alerts",
-        "atr_breakout": "ATR_Breakout_alerts"
+        "atr_breakout": "ATR_Breakout_alerts",
+        "price_action": "Price_Action_alerts"
     }
 
     # Column headers for standard drop/rise alerts
@@ -69,6 +70,16 @@ class AlertExcelLogger:
         "RSI Recent Cross", "RSI Summary",
         "Price 2min", "Price 10min", "Price EOD",
         "Status", "Row ID", "Day of Week"
+    ]
+
+    # Column headers for price action pattern alerts
+    PRICE_ACTION_HEADERS = [
+        "Date", "Time", "Symbol", "Pattern", "Type",
+        "Confidence", "Alert Price", "Entry", "Target", "Stop Loss",
+        "Volume", "Volume Ratio", "Market Regime",
+        "Telegram Sent",
+        "Price 2min", "Price 10min", "Price EOD",
+        "P&L %", "Status", "Row ID"
     ]
 
     def __init__(self, excel_path: str):
@@ -1021,6 +1032,108 @@ class AlertExcelLogger:
 
         except Exception as e:
             logger.error(f"Failed to log ATR breakout for {symbol}: {e}", exc_info=True)
+            return False
+
+    def log_price_action_alert(
+        self,
+        symbol: str,
+        pattern_name: str,
+        pattern_type: str,
+        confidence_score: float,
+        entry_price: float,
+        target: Optional[float],
+        stop_loss: Optional[float],
+        volume_ratio: float,
+        market_regime: str,
+        telegram_sent: bool = False,
+        timestamp: Optional[datetime] = None
+    ) -> bool:
+        """
+        Log price action pattern alert to Price_Action_alerts sheet
+
+        Args:
+            symbol: Stock symbol
+            pattern_name: Pattern name
+            pattern_type: 'bullish', 'bearish', or 'neutral'
+            confidence_score: 0-10 confidence score
+            entry_price: Suggested entry price
+            target: Target price
+            stop_loss: Stop loss price
+            volume_ratio: Volume ratio vs average
+            market_regime: Market regime
+            telegram_sent: Whether Telegram alert was sent
+            timestamp: Alert timestamp
+
+        Returns:
+            True if logged successfully
+        """
+        try:
+            sheet_name = "Price_Action_alerts"
+            ws = self.workbook[sheet_name]
+
+            if timestamp is None:
+                timestamp = datetime.now()
+
+            date_str = timestamp.strftime("%Y-%m-%d")
+            time_str = timestamp.strftime("%H:%M:%S")
+
+            row_id = f"{symbol}_price_action_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+            next_row = ws.max_row + 1
+
+            # Prepare row data matching PRICE_ACTION_HEADERS
+            row_data = [
+                date_str,  # Date
+                time_str,  # Time
+                symbol,  # Symbol
+                pattern_name,  # Pattern
+                pattern_type.upper(),  # Type
+                round(confidence_score, 1),  # Confidence
+                round(entry_price, 2) if entry_price else "",  # Alert Price
+                round(entry_price, 2) if entry_price else "",  # Entry
+                round(target, 2) if target else "",  # Target
+                round(stop_loss, 2) if stop_loss else "",  # Stop Loss
+                "",  # Volume (to be filled later)
+                f"{volume_ratio:.2f}x" if volume_ratio else "",  # Volume Ratio
+                market_regime,  # Market Regime
+                "Yes" if telegram_sent else "No",  # Telegram Sent
+                "",  # Price 2min
+                "",  # Price 10min
+                "",  # Price EOD
+                "",  # P&L %
+                "Pending",  # Status
+                row_id  # Row ID
+            ]
+
+            # Write row data with formatting
+            for col_num, value in enumerate(row_data, start=1):
+                cell = ws.cell(row=next_row, column=col_num, value=value)
+
+                # Apply number formatting
+                if col_num in [6, 7, 8, 9, 10]:  # Confidence, prices
+                    if value != "":
+                        cell.number_format = '0.00'
+                elif col_num == 18:  # P&L %
+                    if value != "":
+                        cell.number_format = '0.00%'
+
+                # Center alignment
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+                # Apply borders
+                cell.border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+
+            self._save_workbook()
+
+            logger.info(f"Price action logged: {symbol} {pattern_name} (confidence: {confidence_score:.1f})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error logging price action alert for {symbol}: {e}", exc_info=True)
             return False
 
     def close(self):

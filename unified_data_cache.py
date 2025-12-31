@@ -10,6 +10,7 @@ Data types supported:
 - historical_50d: 50-day daily candles (for ATR calculation)
 - historical_3year: 3-year daily candles (for value screener)
 - intraday_5d: 5-day 15-minute candles (for EOD volume analysis)
+- hourly_10d: 10-day hourly candles (for pre-market pattern detection)
 
 Author: Sunil Kumar Durganaik
 """
@@ -37,7 +38,8 @@ class UnifiedDataCache:
         'historical_50d': 24,    # Daily candles - refresh daily
         'historical_3year': 24,  # 3-year daily candles - refresh daily (for value screener)
         'intraday_5d': 1,        # 15-min candles - refresh hourly
-        'intraday_1d': 0.25      # 15-min candles - refresh every 15 min
+        'intraday_1d': 0.25,     # 15-min candles - refresh every 15 min
+        'hourly_10d': 6          # Hourly candles - refresh every 6 hours (for pre-market patterns)
     }
 
     def __init__(self, cache_dir: str = "data/unified_cache"):
@@ -56,7 +58,8 @@ class UnifiedDataCache:
             'historical_50d': os.path.join(cache_dir, 'historical_50d.json'),
             'historical_3year': os.path.join(cache_dir, 'historical_3year.json'),
             'intraday_5d': os.path.join(cache_dir, 'intraday_5d.json'),
-            'intraday_1d': os.path.join(cache_dir, 'intraday_1d.json')
+            'intraday_1d': os.path.join(cache_dir, 'intraday_1d.json'),
+            'hourly_10d': os.path.join(cache_dir, 'hourly_10d.json')
         }
 
         # Load all caches
@@ -274,6 +277,14 @@ class UnifiedDataCache:
         """Cache intraday 15-minute data"""
         data_type = f'intraday_{days}d'
         self.set_data(symbol, data, data_type)
+
+    def get_hourly_data(self, symbol: str) -> Optional[List[Dict]]:
+        """Get 10-day hourly data for pre-market pattern detection"""
+        return self.get_data(symbol, 'hourly_10d')
+
+    def set_hourly_data(self, symbol: str, data: List[Dict]):
+        """Cache 10-day hourly data for pre-market pattern detection"""
+        self.set_data(symbol, data, 'hourly_10d')
 
 
 def main():

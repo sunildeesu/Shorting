@@ -176,9 +176,9 @@ class OneMinMonitor:
         # If no stocks have volume data yet, include all stocks
         # (volume filtering will happen during first few runs as data accumulates)
         if not eligible:
-            logger.warning("No stocks with volume data yet - monitoring all stocks")
-            logger.warning("Volume filtering will activate as data accumulates")
-            eligible = all_stocks[:100]  # Limit to first 100 for initial runs
+            logger.info("No volume data yet - monitoring ALL F&O stocks")
+            logger.info("Volume filtering will activate as data accumulates")
+            eligible = all_stocks  # Monitor ALL stocks (no limit)
 
         logger.info(f"Liquidity filter: {len(eligible)}/{len(all_stocks)} stocks qualify "
                    f"(>={config.MIN_AVG_DAILY_VOLUME_1MIN:,} avg daily volume)")
@@ -243,27 +243,31 @@ class OneMinMonitor:
                     _, price_5min_ago = self.price_cache.get_prices_5min(symbol)
 
                     # Check for 1-min drop
-                    if self.detector.check_for_drop_1min(symbol, current_price, price_1min_ago,
-                                                          current_volume, oi, price_5min_ago):
+                    drop_priority = self.detector.check_for_drop_1min(symbol, current_price, price_1min_ago,
+                                                          current_volume, oi, price_5min_ago)
+                    if drop_priority:
                         change_pct = self.detector.get_drop_percentage(current_price, price_1min_ago)
-                        logger.info(f"🔴 {symbol}: DROP detected - {change_pct:.2f}% in 1 minute")
+                        priority_icon = "🔥" if drop_priority == "HIGH" else "🔴"
+                        logger.info(f"{priority_icon} {symbol}: DROP detected - {change_pct:.2f}% in 1 minute [{drop_priority}]")
 
                         self._send_alert(symbol, "drop", current_price, price_1min_ago,
-                                        current_volume, oi)
+                                        current_volume, oi, priority=drop_priority)
                         stats['alerts_sent'] += 1
                         stats['drop_alerts'] += 1
 
                     # Check for 1-min rise (if enabled)
-                    elif config.ENABLE_RISE_ALERTS and \
-                         self.detector.check_for_rise_1min(symbol, current_price, price_1min_ago,
-                                                            current_volume, oi, price_5min_ago):
-                        change_pct = self.detector.get_rise_percentage(current_price, price_1min_ago)
-                        logger.info(f"🟢 {symbol}: RISE detected - {change_pct:.2f}% in 1 minute")
+                    elif config.ENABLE_RISE_ALERTS:
+                        rise_priority = self.detector.check_for_rise_1min(symbol, current_price, price_1min_ago,
+                                                            current_volume, oi, price_5min_ago)
+                        if rise_priority:
+                            change_pct = self.detector.get_rise_percentage(current_price, price_1min_ago)
+                            priority_icon = "🔥" if rise_priority == "HIGH" else "🟢"
+                            logger.info(f"{priority_icon} {symbol}: RISE detected - {change_pct:.2f}% in 1 minute [{rise_priority}]")
 
-                        self._send_alert(symbol, "rise", current_price, price_1min_ago,
-                                        current_volume, oi)
-                        stats['alerts_sent'] += 1
-                        stats['rise_alerts'] += 1
+                            self._send_alert(symbol, "rise", current_price, price_1min_ago,
+                                            current_volume, oi, priority=rise_priority)
+                            stats['alerts_sent'] += 1
+                            stats['rise_alerts'] += 1
 
                 except Exception as e:
                     logger.error(f"{symbol}: Error processing - {e}")
@@ -353,7 +357,7 @@ class OneMinMonitor:
         return price_data
 
     def _send_alert(self, symbol: str, direction: str, current_price: float,
-                    prev_price: float, current_volume: int, oi: float):
+                    prev_price: float, current_volume: int, oi: float, priority: str = "NORMAL"):
         """
         Send 1-min alert via Telegram and log to Excel.
 
@@ -364,6 +368,7 @@ class OneMinMonitor:
             prev_price: Price from 1 minute ago
             current_volume: Current trading volume
             oi: Open interest
+            priority: "HIGH" or "NORMAL"
         """
         change_pct = abs(((current_price - prev_price) / prev_price) * 100)
 
@@ -384,7 +389,8 @@ class OneMinMonitor:
                 volume_data=volume_data,
                 market_cap_cr=market_cap,
                 rsi_analysis=rsi_analysis,
-                oi_analysis=oi_analysis
+                oi_analysis=oi_analysis,
+                priority=priority
             )
         except Exception as e:
             logger.error(f"{symbol}: Failed to send Telegram alert - {e}")
@@ -394,7 +400,7 @@ class OneMinMonitor:
         try:
             self.excel_logger.log_alert(
                 symbol=symbol,
-                alert_type="1min",
+                alert_type=f"1min-{priority}",  # e.g., "1min-HIGH" or "1min-NORMAL"
                 drop_percent=change_pct if direction == "drop" else -change_pct,
                 current_price=current_price,
                 previous_price=prev_price,

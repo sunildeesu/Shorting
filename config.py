@@ -36,13 +36,18 @@ ENABLE_RISE_ALERTS = os.getenv('ENABLE_RISE_ALERTS', 'true').lower() == 'true'  
 # Monitors only high-liquidity stocks (500K+ avg daily volume)
 
 ENABLE_1MIN_ALERTS = os.getenv('ENABLE_1MIN_ALERTS', 'true').lower() == 'true'  # Toggle 1-min monitoring
-DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.85'))  # 0.85% drop in 1 minute
-RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.85'))  # 0.85% rise in 1 minute
+DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.75'))  # 0.75% drop in 1 minute (relaxed from 0.85%)
+RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.75'))  # 0.75% rise in 1 minute (relaxed from 0.85%)
 
-# Strict volume requirements to reduce noise
-VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '5.0'))  # 5x average (high quality signals only)
+# Volume requirements for quality signals (relaxed for better alert coverage)
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '3.0'))  # 3x average (relaxed from 5x for better coverage)
 MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '50000'))  # Minimum 50K shares in 1-min window
 MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks
+
+# Tiered Priority System (configured in onemin_alert_detector.py)
+# NORMAL Priority: Passes layers 1-5 (price, volume, quality, cooldown, deduplication)
+# HIGH Priority: Passes layers 1-5 AND has momentum acceleration (30% faster than 4-min average)
+# Note: Momentum threshold is hardcoded in onemin_alert_detector.py at 1.3x (30% acceleration)
 
 # Alert management
 COOLDOWN_1MIN_ALERTS = int(os.getenv('COOLDOWN_1MIN_ALERTS', '10'))  # 10-minute cooldown per stock
@@ -153,3 +158,22 @@ SECTOR_SNAPSHOT_TIMES = ["09:30", "12:30", "15:15"]  # 3x daily snapshots (marke
 MIN_SECTOR_STOCKS = int(os.getenv('MIN_SECTOR_STOCKS', '3'))  # Minimum stocks needed for valid sector analysis
 ENABLE_SECTOR_CONTEXT_IN_ALERTS = os.getenv('ENABLE_SECTOR_CONTEXT_IN_ALERTS', 'true').lower() == 'true'  # Add sector info to stock alerts
 ENABLE_SECTOR_EOD_REPORT = os.getenv('ENABLE_SECTOR_EOD_REPORT', 'true').lower() == 'true'  # Generate Excel report at EOD (3:25 PM)
+
+# ============================================
+# PRICE ACTION ALERT CONFIGURATION
+# ============================================
+# 5-minute candlestick pattern detection with confidence scoring
+
+ENABLE_PRICE_ACTION_ALERTS = os.getenv('ENABLE_PRICE_ACTION_ALERTS', 'true').lower() == 'true'
+PRICE_ACTION_TIMEFRAME = '5minute'  # Timeframe for pattern detection
+PRICE_ACTION_MIN_CONFIDENCE = float(os.getenv('PRICE_ACTION_MIN_CONFIDENCE', '7.0'))  # Minimum 7.0/10
+PRICE_ACTION_LOOKBACK_CANDLES = int(os.getenv('PRICE_ACTION_LOOKBACK_CANDLES', '50'))  # Candles to analyze
+PRICE_ACTION_COOLDOWN = int(os.getenv('PRICE_ACTION_COOLDOWN', '30'))  # 30-min cooldown per stock/pattern
+
+# Price and liquidity filters
+PRICE_ACTION_MIN_PRICE = float(os.getenv('PRICE_ACTION_MIN_PRICE', '50.0'))  # Min ₹50
+PRICE_ACTION_MIN_AVG_VOLUME = int(os.getenv('PRICE_ACTION_MIN_AVG_VOLUME', '500000'))  # Min 500K avg volume
+
+# Market regime parameters
+PRICE_ACTION_USE_MARKET_REGIME = os.getenv('PRICE_ACTION_USE_MARKET_REGIME', 'true').lower() == 'true'
+PRICE_ACTION_REGIME_SMA_PERIOD = int(os.getenv('PRICE_ACTION_REGIME_SMA_PERIOD', '50'))  # 50-day SMA for Nifty
