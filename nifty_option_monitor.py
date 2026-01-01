@@ -28,11 +28,12 @@ from telegram_notifier import TelegramNotifier
 from position_state_manager import PositionStateManager
 
 # Setup logging
+# Note: When run by launchd, stdout is redirected to log file
+# So we only need StreamHandler - launchd handles file writing
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/nifty_option_monitor.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -132,17 +133,15 @@ class NiftyOptionMonitor:
         return False
 
     def _should_run_exit_analysis(self) -> bool:
-        """Check if we should run exit analysis (15-minute intervals)"""
+        """Check if we should run intraday monitoring (15-minute intervals for exit/add checks)"""
         if not config.ENABLE_NIFTY_OPTION_ANALYSIS:
             return False
 
         if not self._is_trading_day():
             return False
 
-        # Only run if we have an active position
-        if not self.position_manager.has_position_today():
-            logger.debug("No active position to monitor")
-            return False
+        # Run intraday monitoring regardless of position status
+        # (supports both exit monitoring and late entry)
 
         now = datetime.now()
         current_time = now.time()
@@ -295,6 +294,8 @@ class NiftyOptionMonitor:
 
                         logger.info(f"✅ Position entered (late): {current_score:.1f}/100")
                         return True
+                    else:
+                        logger.info(f"No late entry - Score {current_score:.1f} < {config.NIFTY_OPTION_ADD_SCORE_THRESHOLD} (threshold)")
 
                 elif has_position:
                     # Check for adding to existing position
@@ -339,6 +340,23 @@ class NiftyOptionMonitor:
             if has_position:
                 self.position_manager.update_check(current_analysis)
 
+            # Send end-of-day summary at last check (3:25 PM)
+            now = datetime.now()
+            if now.time().hour == 15 and now.time().minute == 25:
+                logger.info("=" * 70)
+                logger.info("SENDING END-OF-DAY SUMMARY")
+                logger.info("=" * 70)
+
+                # Get current position state
+                position_state = self.position_manager.state if self.position_manager.state else {}
+
+                # Send EOD summary
+                try:
+                    self.telegram.send_nifty_eod_summary(position_state, current_analysis)
+                    logger.info("✅ End-of-day summary sent to Telegram")
+                except Exception as e:
+                    logger.error(f"Failed to send EOD summary: {e}")
+
             return True
 
         except Exception as e:
@@ -346,20 +364,20 @@ class NiftyOptionMonitor:
             return False
 
     def run_once(self) -> bool:
-        """Run analysis once (manual trigger)"""
-        logger.info("Running NIFTY option analysis (manual trigger)")
-
+        """Run analysis once (scheduled by launchd)"""
         now = datetime.now()
         current_time = now.time()
 
-        # If before or at entry time, run entry analysis
-        if current_time <= self.entry_time or not self.position_manager.has_position_today():
-            logger.info("Running entry analysis")
+        # Determine which analysis to run based on time
+        if self._should_run_entry_analysis():
+            logger.info("Running entry analysis (10:00 AM check)")
             return self.run_entry_analysis()
-        else:
-            # After entry time - run intraday monitoring
+        elif self._should_run_exit_analysis():
             logger.info("Running intraday monitoring (exit + add checks)")
             return self.run_intraday_monitoring()
+        else:
+            logger.info(f"No scheduled analysis at {current_time.strftime('%H:%M')} - skipping")
+            return True
 
     def run_daemon(self, check_interval_seconds: int = 60):
         """

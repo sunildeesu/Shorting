@@ -294,10 +294,10 @@ class NiftyOptionAnalyzer:
             }
 
             # Fetch option data for these strikes
-            straddle_call = self._get_option_data('CE', expiry_date, straddle_strikes['call'])
-            straddle_put = self._get_option_data('PE', expiry_date, straddle_strikes['put'])
-            strangle_call = self._get_option_data('CE', expiry_date, strangle_strikes['call'])
-            strangle_put = self._get_option_data('PE', expiry_date, strangle_strikes['put'])
+            straddle_call = self._get_option_data('CE', expiry_date, straddle_strikes['call'], nifty_spot)
+            straddle_put = self._get_option_data('PE', expiry_date, straddle_strikes['put'], nifty_spot)
+            strangle_call = self._get_option_data('CE', expiry_date, strangle_strikes['call'], nifty_spot)
+            strangle_put = self._get_option_data('PE', expiry_date, strangle_strikes['put'], nifty_spot)
 
             # Calculate days to expiry
             days_to_expiry = (expiry_date.date() - datetime.now().date()).days
@@ -371,7 +371,8 @@ class NiftyOptionAnalyzer:
         self,
         option_type: str,
         expiry: datetime,
-        strike: int
+        strike: int,
+        nifty_spot: float = None
     ) -> Dict:
         """
         Get option data including premium and Greeks
@@ -380,15 +381,18 @@ class NiftyOptionAnalyzer:
             option_type: 'CE' for call, 'PE' for put
             expiry: Expiry date
             strike: Strike price
+            nifty_spot: NIFTY spot price (for Greeks calculation)
 
         Returns:
             Dict with option data
         """
         try:
-            # Build symbol: NIFTY25JAN24000CE
+            # Build symbol using date format: NIFTY2610626150CE
+            # Format: NIFTY + YYMMDD + STRIKE + CE/PE (month and day without leading zeros)
             year_short = str(expiry.year)[-2:]
-            month_abbr = expiry.strftime("%b").upper()
-            symbol = f"NFO:NIFTY{year_short}{month_abbr}{strike}{option_type}"
+            month = str(expiry.month)  # No leading zero
+            day = str(expiry.day).zfill(2)  # Day needs leading zero
+            symbol = f"NFO:NIFTY{year_short}{month}{day}{strike}{option_type}"
 
             # Fetch quote
             quote = self.kite.quote([symbol])
@@ -407,9 +411,11 @@ class NiftyOptionAnalyzer:
             else:
                 # Fallback: Calculate approximate Greeks using Black-Scholes
                 logger.warning(f"Greeks not available in API for {symbol}, using approximation")
+                # Use NIFTY spot price if provided, otherwise use strike as fallback
+                spot_for_greeks = nifty_spot if nifty_spot else strike
                 greeks = self._approximate_greeks(
                     option_type=option_type,
-                    spot=option_data.get('last_price', strike),  # Use option price as proxy
+                    spot=spot_for_greeks,  # NIFTY spot price (underlying)
                     strike=strike,
                     expiry=expiry,
                     iv=option_data.get('implied_volatility', 20) / 100  # Convert to decimal

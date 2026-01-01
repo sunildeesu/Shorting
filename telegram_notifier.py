@@ -1564,3 +1564,312 @@ class TelegramNotifier:
             return "⚠️"
         else:
             return "❌"
+
+    def send_nifty_add_position_alert(self, analysis_data: dict, layer_number: int, is_late_entry: bool = False) -> bool:
+        """
+        Send add position alert to Telegram
+
+        Args:
+            analysis_data: Current analysis data
+            layer_number: Layer number being added
+            is_late_entry: True if this is a late entry (first position after 10 AM)
+
+        Returns:
+            True if message sent successfully
+        """
+        from datetime import datetime
+
+        score = analysis_data.get('total_score', 0)
+        nifty_spot = analysis_data.get('nifty_spot', 0)
+
+        # Get expiry info
+        expiry_analyses = analysis_data.get('expiry_analyses', [])
+        first_expiry = expiry_analyses[0] if expiry_analyses else {}
+        best_strategy = analysis_data.get('best_strategy', 'straddle')
+
+        if best_strategy.lower() == 'straddle':
+            strategy_data = first_expiry.get('straddle', {})
+        else:
+            strategy_data = first_expiry.get('strangle', {})
+
+        strikes = strategy_data.get('strikes', {})
+        total_premium = strategy_data.get('total_premium', 0)
+        call_premium = strategy_data.get('call_premium', 0)
+        put_premium = strategy_data.get('put_premium', 0)
+
+        # Parse timestamp
+        try:
+            dt = datetime.fromisoformat(analysis_data.get('timestamp', datetime.now().isoformat()))
+            date_str = dt.strftime("%d %b %Y")
+            time_str = dt.strftime("%I:%M %p")
+        except:
+            date_str = datetime.now().strftime("%d %b %Y")
+            time_str = datetime.now().strftime("%I:%M %p")
+
+        if is_late_entry:
+            message = (
+                "📈 <b>LATE ENTRY OPPORTUNITY</b> 📈\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {date_str} | {time_str}\n\n"
+                "✅ Entry signal after 10:00 AM\n"
+                f"Current Score: <b>{score:.1f}/100</b> ✅\n\n"
+                "💡 Conditions improved significantly\n"
+                f"Entering Layer 1 now...\n\n"
+            )
+        else:
+            message = (
+                f"📈 <b>ADD TO POSITION - Layer {layer_number}</b> 📈\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {date_str} | {time_str}\n\n"
+                f"💰 Current Score: <b>{score:.1f}/100</b>\n\n"
+            )
+
+        # Add strikes info
+        message += (
+            f"📋 <b>Recommended Layer {layer_number} Trade:</b>\n"
+            f"   • NIFTY Spot: ₹{nifty_spot:,.2f}\n"
+            f"   • Call: {strikes.get('call')} CE (₹{call_premium})\n"
+            f"   • Put: {strikes.get('put')} PE (₹{put_premium})\n"
+            f"   • Total Premium: <b>₹{total_premium}</b>\n"
+            f"   • (Credit received if you execute this trade)\n\n"
+            "🔔 #NIFTYOptions #AddPosition"
+        )
+
+        return self._send_message(message)
+
+    def send_nifty_exit_alert(self, exit_data: dict) -> bool:
+        """
+        Send exit signal alert to Telegram
+
+        Args:
+            exit_data: Exit analysis data
+
+        Returns:
+            True if message sent successfully
+        """
+        from datetime import datetime
+
+        signal = exit_data.get('signal', 'HOLD_POSITION')
+        urgency = exit_data.get('urgency', 'NONE')
+        exit_score = exit_data.get('exit_score', 0)
+        exit_reasons = exit_data.get('exit_reasons', [])
+
+        # Parse timestamp
+        try:
+            dt = datetime.fromisoformat(exit_data.get('timestamp', datetime.now().isoformat()))
+            date_str = dt.strftime("%d %b %Y")
+            time_str = dt.strftime("%I:%M %p")
+        except:
+            date_str = datetime.now().strftime("%d %b %Y")
+            time_str = datetime.now().strftime("%I:%M %p")
+
+        if signal == 'EXIT_NOW':
+            urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️"
+            message = (
+                f"{urgency_emoji} <b>EXIT POSITION NOW</b> {urgency_emoji}\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {date_str} | {time_str}\n\n"
+                f"❌ EXIT SIGNAL (Urgency: <b>{urgency}</b>)\n"
+                f"Exit Score: {exit_score}/100\n\n"
+            )
+
+            if exit_reasons:
+                message += "⚠️ <b>Exit Triggers:</b>\n"
+                for reason in exit_reasons:
+                    message += f"   • {reason}\n"
+                message += "\n"
+
+            message += (
+                "💡 <b>Recommendation:</b>\n"
+                "Exit position immediately - Market conditions deteriorated\n\n"
+                "🔔 #NIFTYOptions #ExitSignal"
+            )
+        elif signal == 'CONSIDER_EXIT':
+            message = (
+                "⚠️ <b>CONSIDER EXIT</b> ⚠️\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ {date_str} | {time_str}\n\n"
+                f"Exit Score: {exit_score}/100 (Low urgency)\n\n"
+            )
+
+            if exit_reasons:
+                message += "⚠️ <b>Warning Signs:</b>\n"
+                for reason in exit_reasons:
+                    message += f"   • {reason}\n"
+                message += "\n"
+
+            message += (
+                "💡 <b>Recommendation:</b>\n"
+                "Monitor closely - Consider exiting if conditions worsen\n\n"
+                "🔔 #NIFTYOptions #ExitWarning"
+            )
+        else:
+            return True  # Don't send alert for HOLD_POSITION
+
+        return self._send_message(message)
+
+    def send_nifty_eod_summary(self, position_state: dict, current_analysis: dict) -> bool:
+        """
+        Send end-of-day position summary to Telegram
+
+        Args:
+            position_state: Current position state from PositionStateManager
+            current_analysis: Latest analysis data
+
+        Returns:
+            True if message sent successfully
+        """
+        from datetime import datetime
+
+        status = position_state.get('status', 'NO_POSITION')
+
+        if status == 'NO_POSITION' or not position_state:
+            # No position today - send brief summary
+            message = (
+                "📊 <b>END OF DAY SUMMARY</b> 📊\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+                "❌ <b>No Position Today</b>\n"
+                "No entry signal met criteria.\n\n"
+                "🔔 #NIFTYOptions #DailySummary"
+            )
+            return self._send_message(message)
+
+        # Extract position details
+        layers = position_state.get('layers', [])
+        entry_timestamp = position_state.get('entry_timestamp', '')
+        entry_score = position_state.get('entry_score', 0)
+        entry_nifty = position_state.get('entry_nifty_spot', 0)
+        entry_premium = position_state.get('entry_premium', 0)
+        entry_strikes = position_state.get('entry_strikes', {})
+
+        current_score = current_analysis.get('total_score', 0)
+        current_nifty = current_analysis.get('nifty_spot', 0)
+
+        # Calculate duration
+        try:
+            entry_dt = datetime.fromisoformat(entry_timestamp)
+            now = datetime.now()
+            duration_minutes = int((now - entry_dt).total_seconds() / 60)
+            duration_hours = duration_minutes // 60
+            duration_mins = duration_minutes % 60
+            duration_str = f"{duration_hours}h {duration_mins}m" if duration_hours > 0 else f"{duration_mins}m"
+            entry_time_str = entry_dt.strftime("%I:%M %p")
+        except:
+            duration_str = "Unknown"
+            entry_time_str = "Unknown"
+
+        # Calculate score change
+        score_change = current_score - entry_score
+        score_emoji = "📈" if score_change >= 0 else "📉"
+
+        # Calculate NIFTY move
+        nifty_move = current_nifty - entry_nifty
+        nifty_move_pct = (nifty_move / entry_nifty) * 100 if entry_nifty > 0 else 0
+        nifty_emoji = "🟢" if nifty_move >= 0 else "🔴"
+
+        if status == 'ENTERED':
+            # Active position
+            message = (
+                "📊 <b>END OF DAY SUMMARY - POSITION ACTIVE</b> 📊\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+            )
+
+            # Entry info
+            message += (
+                f"✅ <b>Position Entered: {entry_time_str}</b>\n"
+                f"   • Layers: {len(layers)}/3\n"
+                f"   • Entry Score: {entry_score:.1f}/100\n"
+                f"   • Duration: {duration_str}\n\n"
+            )
+
+            # Strike details
+            message += (
+                f"📋 <b>Recommended Trade (ATM {entry_strikes.get('call')}):</b>\n"
+                f"   • Straddle Premium: ₹{entry_premium:.0f}\n"
+                f"   • (Credit received if trade executed)\n\n"
+            )
+
+            # Current status
+            message += (
+                f"📊 <b>Current Status:</b>\n"
+                f"   • Score: {current_score:.1f}/100 ({score_emoji} {score_change:+.1f})\n"
+                f"   • NIFTY: ₹{current_nifty:,.2f} ({nifty_emoji} {nifty_move:+.2f} / {nifty_move_pct:+.2f}%)\n\n"
+            )
+
+            # Layer breakdown if multiple
+            if len(layers) > 1:
+                message += "📌 <b>Layer Breakdown:</b>\n"
+                for layer in layers:
+                    layer_num = layer.get('layer_number', 0)
+                    layer_score = layer.get('score', 0)
+                    layer_time = layer.get('timestamp', '')
+                    try:
+                        layer_dt = datetime.fromisoformat(layer_time)
+                        layer_time_str = layer_dt.strftime("%I:%M %p")
+                    except:
+                        layer_time_str = "Unknown"
+                    message += f"   • Layer {layer_num}: {layer_score:.1f}/100 at {layer_time_str}\n"
+                message += "\n"
+
+            # Status
+            if score_change >= 10:
+                status_msg = "✅ Excellent - Score improved significantly"
+            elif score_change >= 0:
+                status_msg = "✅ Good - Score holding steady"
+            elif score_change >= -10:
+                status_msg = "⚠️ Caution - Minor score decline"
+            else:
+                status_msg = "🚨 Alert - Significant score decline"
+
+            message += f"💡 <b>Status:</b> {status_msg}\n\n"
+
+        elif status == 'EXITED':
+            # Position exited during the day
+            exit_timestamp = position_state.get('exit_timestamp', '')
+            exit_score = position_state.get('exit_score', 0)
+            exit_reason = position_state.get('exit_reason', 'Unknown')
+
+            try:
+                exit_dt = datetime.fromisoformat(exit_timestamp)
+                exit_time_str = exit_dt.strftime("%I:%M %p")
+            except:
+                exit_time_str = "Unknown"
+
+            message = (
+                "📊 <b>END OF DAY SUMMARY - POSITION EXITED</b> 📊\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+            )
+
+            # Entry info
+            message += (
+                f"✅ <b>Entered: {entry_time_str}</b>\n"
+                f"   • Entry Score: {entry_score:.1f}/100\n"
+                f"   • Recommended Premium: ₹{entry_premium:.0f}\n\n"
+            )
+
+            # Exit info
+            message += (
+                f"❌ <b>Exited: {exit_time_str}</b>\n"
+                f"   • Exit Score: {exit_score:.1f}/100\n"
+                f"   • Duration: {duration_str}\n"
+                f"   • Reason: {exit_reason}\n\n"
+            )
+
+            # Score change
+            score_change = exit_score - entry_score
+            message += f"📊 <b>Score Change:</b> {score_change:+.1f} points\n\n"
+
+            # Status
+            if score_change >= 0:
+                status_msg = "✅ Good exit - Score improved or held"
+            else:
+                status_msg = "⚠️ Exit on deterioration - Correct decision"
+
+            message += f"💡 <b>Status:</b> {status_msg}\n\n"
+
+        message += "🔔 #NIFTYOptions #DailySummary"
+
+        return self._send_message(message)
