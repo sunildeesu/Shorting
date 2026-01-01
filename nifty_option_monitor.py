@@ -26,6 +26,7 @@ from nifty_option_analyzer import NiftyOptionAnalyzer
 from nifty_option_logger import NiftyOptionLogger
 from telegram_notifier import TelegramNotifier
 from position_state_manager import PositionStateManager
+from market_utils import is_trading_day, is_nse_holiday, check_holiday_list_status
 
 # Setup logging
 # Note: When run by launchd, stdout is redirected to log file
@@ -100,15 +101,20 @@ class NiftyOptionMonitor:
             return False
 
     def _is_trading_day(self) -> bool:
-        """Check if today is a trading day"""
-        now = datetime.now()
+        """Check if today is a trading day (excludes weekends and NSE holidays)"""
+        trading_day = is_trading_day()
 
-        # Check if weekend (Saturday=5, Sunday=6)
-        if now.weekday() >= 5:
-            logger.debug("Weekend - Market closed")
-            return False
+        if not trading_day:
+            now = datetime.now()
+            current_date = now.date()
 
-        return True
+            # Check reason for non-trading day
+            if now.weekday() >= 5:
+                logger.info(f"Weekend - Market closed ({now.strftime('%A, %B %d, %Y')})")
+            elif is_nse_holiday(current_date):
+                logger.info(f"NSE Holiday - Market closed ({now.strftime('%A, %B %d, %Y')})")
+
+        return trading_day
 
     def _should_run_entry_analysis(self) -> bool:
         """Check if we should run entry analysis (10:00 AM check)"""
@@ -365,6 +371,11 @@ class NiftyOptionMonitor:
 
     def run_once(self) -> bool:
         """Run analysis once (scheduled by launchd)"""
+        # Check if holiday list is up-to-date (warn if missing for current/next year)
+        holiday_status = check_holiday_list_status()
+        if holiday_status['needs_update'] and holiday_status['warning_message']:
+            logger.warning(holiday_status['warning_message'])
+
         now = datetime.now()
         current_time = now.time()
 
@@ -390,6 +401,11 @@ class NiftyOptionMonitor:
         logger.info(f"Entry analysis: {self.entry_time}")
         logger.info(f"Exit monitoring: Every {self.check_interval} minutes until {self.end_time}")
         logger.info(f"Daemon check interval: {check_interval_seconds} seconds")
+
+        # Check if holiday list is up-to-date
+        holiday_status = check_holiday_list_status()
+        if holiday_status['needs_update'] and holiday_status['warning_message']:
+            logger.warning(holiday_status['warning_message'])
 
         # Check if it's a new day and reset state
         last_date = None
