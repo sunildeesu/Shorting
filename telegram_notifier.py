@@ -1397,3 +1397,170 @@ class TelegramNotifier:
         )
 
         return message
+
+    def send_nifty_option_analysis(self, analysis_data: dict) -> bool:
+        """
+        Send NIFTY option selling analysis to Telegram channel
+
+        Args:
+            analysis_data: Analysis result dict from NiftyOptionAnalyzer
+
+        Returns:
+            True if message sent successfully, False otherwise
+        """
+        message = self._format_nifty_option_message(analysis_data)
+        return self._send_message(message)
+
+    def _format_nifty_option_message(self, data: dict) -> str:
+        """
+        Format NIFTY option selling analysis message
+
+        Args:
+            data: Analysis result dict with signal, scores, and recommendations
+
+        Returns:
+            Formatted Telegram message with HTML formatting
+        """
+        from datetime import datetime
+
+        # Handle error response
+        if 'error' in data:
+            return (
+                "❌ <b>NIFTY OPTION ANALYSIS - ERROR</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Error: {data['error']}\n"
+                "Please check logs for details."
+            )
+
+        # Extract data
+        signal = data.get('signal', 'HOLD')
+        total_score = data.get('total_score', 0)
+        nifty_spot = data.get('nifty_spot', 0)
+        vix = data.get('vix', 0)
+        market_regime = data.get('market_regime', 'UNKNOWN')
+        best_strategy = data.get('best_strategy', 'straddle').upper()
+        recommendation = data.get('recommendation', '')
+        risk_factors = data.get('risk_factors', [])
+        breakdown = data.get('breakdown', {})
+        expiry_analyses = data.get('expiry_analyses', [])
+
+        # Parse timestamp
+        try:
+            dt = datetime.fromisoformat(data.get('timestamp', datetime.now().isoformat()))
+            date_str = dt.strftime("%d %b %Y")
+            time_str = dt.strftime("%I:%M %p")
+        except:
+            date_str = datetime.now().strftime("%d %b %Y")
+            time_str = datetime.now().strftime("%I:%M %p")
+
+        # Signal emoji and styling
+        if signal == 'SELL':
+            signal_emoji = "✅"
+            signal_style = "🟢"
+        elif signal == 'HOLD':
+            signal_emoji = "⏸️"
+            signal_style = "🟡"
+        else:  # AVOID
+            signal_emoji = "🛑"
+            signal_style = "🔴"
+
+        # Header
+        message = (
+            f"{signal_style} <b>NIFTY OPTION SELLING SIGNAL</b> {signal_style}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📅 <b>{date_str}</b> | ⏰ {time_str}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+
+        # Signal and Score
+        message += (
+            f"📊 <b>SIGNAL: {signal} {signal_emoji}</b>\n"
+            f"   Score: <b>{total_score:.1f}/100</b>\n"
+            f"💰 NIFTY Spot: <b>₹{nifty_spot:,.2f}</b>\n\n"
+        )
+
+        # Expiry Information
+        if expiry_analyses:
+            message += "📅 <b>EXPIRIES:</b>\n"
+            for i, exp_data in enumerate(expiry_analyses[:2], 1):
+                expiry = exp_data.get('expiry_date')
+                days = exp_data.get('days_to_expiry', 0)
+                if expiry:
+                    exp_str = expiry.strftime("%d %b %Y")
+                    label = "Next Week" if i == 1 else "Next-to-Next"
+                    message += f"   • {label}: {exp_str} ({days} days)\n"
+            message += "\n"
+
+        # Analysis Breakdown
+        message += "📈 <b>ANALYSIS BREAKDOWN:</b>\n"
+        theta_score = breakdown.get('theta_score', 0)
+        gamma_score = breakdown.get('gamma_score', 0)
+        vix_score = breakdown.get('vix_score', 0)
+        regime_score = breakdown.get('regime_score', 0)
+        oi_score = breakdown.get('oi_score', 0)
+
+        message += f"   ⏰ Theta Score: <b>{theta_score:.1f}/100</b> {self._score_emoji(theta_score)}\n"
+        message += f"   📉 Gamma Score: <b>{gamma_score:.1f}/100</b> {self._score_emoji(gamma_score)}\n"
+        message += f"   🌊 VIX Score: <b>{vix_score:.1f}/100</b> {self._score_emoji(vix_score)} (VIX at {vix:.1f})\n"
+        message += f"   📊 Market Regime: <b>{regime_score:.1f}/100</b> ({market_regime})\n"
+        message += f"   🔄 OI Pattern: <b>{oi_score:.1f}/100</b>\n\n"
+
+        # Recommendation
+        message += (
+            "💡 <b>RECOMMENDATION:</b>\n"
+            f"   {recommendation}\n\n"
+        )
+
+        # Risk Factors
+        message += "⚠️ <b>RISK FACTORS:</b>\n"
+        for risk in risk_factors:
+            message += f"   • {risk}\n"
+        message += "\n"
+
+        # Strike Suggestions (if available)
+        if expiry_analyses and len(expiry_analyses) > 0:
+            primary_exp = expiry_analyses[0]
+            exp_date = primary_exp.get('expiry_date')
+
+            if exp_date:
+                exp_str = exp_date.strftime("%d %b")
+
+                # Get the best strategy data
+                if best_strategy == 'STRADDLE':
+                    strategy_data = primary_exp.get('straddle', {})
+                else:
+                    strategy_data = primary_exp.get('strangle', {})
+
+                strikes = strategy_data.get('strikes', {})
+                call_premium = strategy_data.get('call_premium', 0)
+                put_premium = strategy_data.get('put_premium', 0)
+                total_premium = strategy_data.get('total_premium', 0)
+                greeks = strategy_data.get('greeks', {})
+                theta = abs(greeks.get('theta', 0))
+
+                if strikes:
+                    message += f"📋 <b>SUGGESTED {best_strategy} ({exp_str}):</b>\n"
+                    message += f"   • Call Strike: <b>{strikes.get('call', 0)}</b> CE (₹{call_premium:.0f})\n"
+                    message += f"   • Put Strike: <b>{strikes.get('put', 0)}</b> PE (₹{put_premium:.0f})\n"
+                    message += f"   • Total Premium: <b>₹{total_premium:.0f}</b>\n"
+                    message += f"   • Daily Theta Decay: <b>₹{theta:.0f}/day</b>\n\n"
+
+        # Footer
+        message += (
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⚠️ <b>Disclaimer:</b> For informational purposes only.\n"
+            "Options trading involves substantial risk. Trade at your own risk.\n"
+            "🔔 #NIFTYOptions #OptionSelling #Greeks"
+        )
+
+        return message
+
+    @staticmethod
+    def _score_emoji(score: float) -> str:
+        """Get emoji based on score value"""
+        if score >= 70:
+            return "✅"
+        elif score >= 40:
+            return "⚠️"
+        else:
+            return "❌"

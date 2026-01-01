@@ -184,3 +184,42 @@ PRICE_ACTION_MIN_AVG_VOLUME = int(os.getenv('PRICE_ACTION_MIN_AVG_VOLUME', '5000
 # Market regime parameters
 PRICE_ACTION_USE_MARKET_REGIME = os.getenv('PRICE_ACTION_USE_MARKET_REGIME', 'true').lower() == 'true'
 PRICE_ACTION_REGIME_SMA_PERIOD = int(os.getenv('PRICE_ACTION_REGIME_SMA_PERIOD', '50'))  # 50-day SMA for Nifty
+
+# ============================================
+# NIFTY OPTIONS SELLING INDICATOR
+# ============================================
+# Daily indicator analyzing Greeks (Delta, Theta, Gamma), VIX, market regime, and OI
+# Recommends whether it's a good day for NIFTY straddle/strangle selling
+# Runs daily at 10:00 AM for next week and next-to-next week expiries
+
+ENABLE_NIFTY_OPTION_ANALYSIS = os.getenv('ENABLE_NIFTY_OPTION_ANALYSIS', 'true').lower() == 'true'
+NIFTY_OPTION_ANALYSIS_TIME = "10:00"  # Daily analysis time
+NIFTY_OPTION_REPORT_PATH = 'data/nifty_options/nifty_option_analysis.xlsx'
+
+# NIFTY instrument tokens
+NIFTY_50_TOKEN = 256265  # NIFTY 50 Index
+INDIA_VIX_TOKEN = 264969  # India VIX
+
+# Scoring thresholds
+NIFTY_OPTION_SELL_THRESHOLD = 70    # Score >= 70 = SELL signal
+NIFTY_OPTION_HOLD_THRESHOLD = 40    # Score 40-69 = HOLD
+# Score < 40 = AVOID
+
+# VIX thresholds for scoring
+VIX_EXCELLENT = 12.0    # VIX < 12 = 100 score (very low volatility)
+VIX_GOOD = 15.0         # VIX 12-15 = 75 score (normal range)
+VIX_MODERATE = 20.0     # VIX 15-20 = 40 score (caution)
+# VIX > 20 = 10 score (avoid option selling)
+
+# Greeks analysis parameters
+STRADDLE_DELTA_IDEAL = 0.5      # ATM options (delta ~±0.5)
+STRANGLE_DELTA_IDEAL = 0.35     # OTM options (delta ~±0.3 to ±0.4)
+MIN_THETA_THRESHOLD = 20        # Minimum daily theta decay
+MAX_GAMMA_THRESHOLD = 0.01      # Maximum acceptable gamma
+
+# Scoring weights (must sum to 1.0)
+THETA_WEIGHT = 0.25     # 25% weight for theta decay
+GAMMA_WEIGHT = 0.25     # 25% weight for gamma stability
+VIX_WEIGHT = 0.30       # 30% weight for VIX level
+REGIME_WEIGHT = 0.10    # 10% weight for market regime
+OI_WEIGHT = 0.10        # 10% weight for OI analysis
