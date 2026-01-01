@@ -188,13 +188,17 @@ PRICE_ACTION_REGIME_SMA_PERIOD = int(os.getenv('PRICE_ACTION_REGIME_SMA_PERIOD',
 # ============================================
 # NIFTY OPTIONS SELLING INDICATOR
 # ============================================
-# Daily indicator analyzing Greeks (Delta, Theta, Gamma), VIX, market regime, and OI
-# Recommends whether it's a good day for NIFTY straddle/strangle selling
-# Runs daily at 10:00 AM for next week and next-to-next week expiries
+# Intraday indicator analyzing Greeks (Delta, Theta, Gamma), VIX, market regime, and OI
+# Entry signal: 10:00 AM (SELL/HOLD/AVOID)
+# Exit monitoring: Every 15 minutes from 10:00 AM to 3:30 PM
+# Provides exit signals if market conditions deteriorate after entry
 
 ENABLE_NIFTY_OPTION_ANALYSIS = os.getenv('ENABLE_NIFTY_OPTION_ANALYSIS', 'true').lower() == 'true'
-NIFTY_OPTION_ANALYSIS_TIME = "10:00"  # Daily analysis time
+NIFTY_OPTION_ANALYSIS_TIME = "10:00"  # Initial entry analysis time
+NIFTY_OPTION_MONITOR_INTERVAL = 15  # Check every 15 minutes for exit signals
+NIFTY_OPTION_MONITOR_END_TIME = "15:25"  # Stop monitoring 5 min before market close
 NIFTY_OPTION_REPORT_PATH = 'data/nifty_options/nifty_option_analysis.xlsx'
+NIFTY_OPTION_POSITION_STATE_FILE = 'data/nifty_options/position_state.json'  # Track current position
 
 # NIFTY instrument tokens
 NIFTY_50_TOKEN = 256265  # NIFTY 50 Index
@@ -223,3 +227,17 @@ GAMMA_WEIGHT = 0.25     # 25% weight for gamma stability
 VIX_WEIGHT = 0.30       # 30% weight for VIX level
 REGIME_WEIGHT = 0.10    # 10% weight for market regime
 OI_WEIGHT = 0.10        # 10% weight for OI analysis
+
+# Exit signal thresholds (for intraday monitoring)
+NIFTY_OPTION_EXIT_SCORE_DROP = 20      # Exit if score drops >20 points from entry
+NIFTY_OPTION_EXIT_VIX_SPIKE = 20.0     # Exit if VIX increases >20% from entry
+NIFTY_OPTION_EXIT_SCORE_THRESHOLD = 40  # Exit if score falls below 40 (AVOID zone)
+NIFTY_OPTION_EXIT_ON_REGIME_CHANGE = True  # Exit if regime changes from NEUTRAL
+NIFTY_OPTION_EXIT_ON_STRONG_OI_BUILDUP = True  # Exit on LONG_BUILDUP/SHORT_BUILDUP
+
+# Position sizing and layering (add positions intraday)
+NIFTY_OPTION_MAX_LAYERS = 3            # Maximum number of position layers (1 = no adds, 3 = initial + 2 adds)
+NIFTY_OPTION_ADD_SCORE_THRESHOLD = 70  # Add position if score >= 70 (SELL zone)
+NIFTY_OPTION_ADD_SCORE_IMPROVEMENT = 10  # Add if score improves by 10+ points from last layer
+NIFTY_OPTION_ADD_MIN_INTERVAL = 30     # Minimum 30 minutes between position adds
+NIFTY_OPTION_ADD_AFTER_NO_ENTRY = True  # Allow first entry after 10:00 if initial signal was HOLD

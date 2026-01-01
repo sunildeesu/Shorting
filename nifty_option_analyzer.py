@@ -727,6 +727,211 @@ class NiftyOptionAnalyzer:
             'recommendation': f'Analysis failed: {error_msg}'
         }
 
+    def analyze_add_position_signal(self, current_score: float, last_layer_score: float, layer_count: int) -> Dict:
+        """
+        Analyze if conditions support adding to position
+
+        Args:
+            current_score: Current option selling score
+            last_layer_score: Score from last layer entry
+            layer_count: Current number of layers
+
+        Returns:
+            Dict with ADD_POSITION or NO_ADD signal
+        """
+        try:
+            add_reasons = []
+            confidence = 0
+
+            # 1. Score in SELL zone
+            if current_score >= config.NIFTY_OPTION_ADD_SCORE_THRESHOLD:
+                add_reasons.append(f"Score in SELL zone ({current_score:.1f} >= {config.NIFTY_OPTION_ADD_SCORE_THRESHOLD})")
+                confidence += 40
+                logger.info(f"ADD SIGNAL: Score in SELL zone {current_score:.1f}")
+
+            # 2. Score improvement from last layer
+            score_improvement = current_score - last_layer_score
+            if score_improvement >= config.NIFTY_OPTION_ADD_SCORE_IMPROVEMENT:
+                add_reasons.append(f"Score improved {score_improvement:.1f} points (last: {last_layer_score:.1f} → current: {current_score:.1f})")
+                confidence += 30
+                logger.info(f"ADD SIGNAL: Score improved {score_improvement:.1f} points")
+
+            # 3. Early layers get preference (add more aggressively early)
+            if layer_count <= 1:  # First or second layer
+                add_reasons.append(f"Early opportunity (layer {layer_count + 1})")
+                confidence += 20
+
+            # 4. Very high score (exceptional conditions)
+            if current_score >= 80:
+                add_reasons.append(f"Exceptional score ({current_score:.1f}/100)")
+                confidence += 10
+                logger.info(f"ADD SIGNAL: Exceptional score {current_score:.1f}")
+
+            # Determine signal
+            if confidence >= 50:
+                signal = 'ADD_POSITION'
+                recommendation = f'Add to position - Favorable conditions (confidence: {confidence}%)'
+            elif confidence >= 30:
+                signal = 'CONSIDER_ADD'
+                recommendation = f'Consider adding - Moderate signal (confidence: {confidence}%)'
+            else:
+                signal = 'NO_ADD'
+                recommendation = 'Conditions not favorable for adding'
+
+            return {
+                'signal': signal,
+                'confidence': confidence,
+                'recommendation': recommendation,
+                'add_reasons': add_reasons,
+                'current_score': current_score,
+                'last_layer_score': last_layer_score,
+                'score_improvement': score_improvement,
+                'layer_count': layer_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error in add position analysis: {e}")
+            return {
+                'signal': 'NO_ADD',
+                'error': str(e)
+            }
+
+    def analyze_exit_signal(self, entry_data: Dict) -> Dict:
+        """
+        Analyze if current conditions warrant exiting the position
+
+        Args:
+            entry_data: Entry data from PositionStateManager
+
+        Returns:
+            Dict with exit signal (EXIT_NOW or HOLD_POSITION) and reasons
+        """
+        try:
+            logger.info("=" * 70)
+            logger.info("NIFTY OPTION EXIT SIGNAL ANALYSIS - Starting")
+            logger.info("=" * 70)
+
+            # Get current market data
+            logger.info("Fetching current market data...")
+            nifty_spot = self._get_nifty_spot_price()
+            vix = self._get_india_vix()
+            market_regime = self.regime_detector.get_market_regime()
+            oi_analysis = self._get_nifty_oi_analysis()
+
+            if not nifty_spot or not vix:
+                raise ValueError("Unable to fetch current market data")
+
+            logger.info(f"Current: NIFTY={nifty_spot:.2f}, VIX={vix:.2f}, Regime={market_regime}")
+
+            # Get entry conditions
+            entry_score = entry_data.get('entry_score', 0)
+            entry_vix = entry_data.get('entry_vix', 0)
+            entry_regime = entry_data.get('entry_regime', '')
+            entry_nifty = entry_data.get('entry_nifty_spot', 0)
+
+            logger.info(f"Entry: Score={entry_score:.1f}, VIX={entry_vix:.2f}, Regime={entry_regime}")
+
+            # Get current score (simplified - use same analysis)
+            current_analysis = self.analyze_option_selling_opportunity()
+            current_score = current_analysis.get('total_score', 0)
+
+            logger.info(f"Current Score: {current_score:.1f}")
+
+            # Check exit conditions
+            exit_reasons = []
+            exit_score = 0  # Lower = more urgent to exit
+
+            # 1. Score deterioration
+            score_drop = entry_score - current_score
+            if score_drop >= config.NIFTY_OPTION_EXIT_SCORE_DROP:
+                exit_reasons.append(f"Score dropped {score_drop:.1f} points (entry: {entry_score:.1f} → current: {current_score:.1f})")
+                exit_score += 30
+                logger.warning(f"EXIT TRIGGER: Score drop {score_drop:.1f} points")
+
+            # 2. Score in AVOID zone
+            if current_score < config.NIFTY_OPTION_EXIT_SCORE_THRESHOLD:
+                exit_reasons.append(f"Score below exit threshold ({current_score:.1f} < {config.NIFTY_OPTION_EXIT_SCORE_THRESHOLD})")
+                exit_score += 40
+                logger.warning(f"EXIT TRIGGER: Score in AVOID zone {current_score:.1f}")
+
+            # 3. VIX spike
+            if entry_vix > 0:
+                vix_increase_pct = ((vix - entry_vix) / entry_vix) * 100
+                if vix_increase_pct >= config.NIFTY_OPTION_EXIT_VIX_SPIKE:
+                    exit_reasons.append(f"VIX spiked {vix_increase_pct:.1f}% (entry: {entry_vix:.2f} → current: {vix:.2f})")
+                    exit_score += 35
+                    logger.warning(f"EXIT TRIGGER: VIX spike {vix_increase_pct:.1f}%")
+
+            # 4. Market regime change
+            if config.NIFTY_OPTION_EXIT_ON_REGIME_CHANGE:
+                if entry_regime == 'NEUTRAL' and market_regime != 'NEUTRAL':
+                    exit_reasons.append(f"Market regime changed from {entry_regime} to {market_regime}")
+                    exit_score += 25
+                    logger.warning(f"EXIT TRIGGER: Regime change {entry_regime} → {market_regime}")
+
+            # 5. Strong OI buildup
+            if config.NIFTY_OPTION_EXIT_ON_STRONG_OI_BUILDUP:
+                oi_pattern = oi_analysis.get('pattern', 'UNKNOWN')
+                if oi_pattern in ['LONG_BUILDUP', 'SHORT_BUILDUP']:
+                    exit_reasons.append(f"Strong directional OI buildup detected ({oi_pattern})")
+                    exit_score += 20
+                    logger.warning(f"EXIT TRIGGER: OI buildup {oi_pattern}")
+
+            # 6. Large NIFTY move
+            if entry_nifty > 0:
+                nifty_move_pct = abs((nifty_spot - entry_nifty) / entry_nifty) * 100
+                if nifty_move_pct > 2.0:  # > 2% move
+                    exit_reasons.append(f"Large NIFTY move ({nifty_move_pct:.1f}% from entry)")
+                    exit_score += 15
+                    logger.warning(f"EXIT TRIGGER: Large move {nifty_move_pct:.1f}%")
+
+            # Determine exit signal
+            if exit_score >= 30:  # At least one strong exit reason
+                signal = 'EXIT_NOW'
+                recommendation = 'Exit position immediately - Market conditions have deteriorated'
+                urgency = 'HIGH' if exit_score >= 50 else 'MEDIUM'
+            elif exit_score >= 15:  # Minor concerns
+                signal = 'CONSIDER_EXIT'
+                recommendation = 'Monitor closely - Some deterioration in conditions'
+                urgency = 'LOW'
+            else:
+                signal = 'HOLD_POSITION'
+                recommendation = 'Continue holding - Conditions remain favorable'
+                urgency = 'NONE'
+
+            logger.info("=" * 70)
+            logger.info(f"EXIT ANALYSIS COMPLETE - Signal: {signal} (Urgency: {urgency})")
+            logger.info("=" * 70)
+
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'signal': signal,
+                'exit_score': exit_score,
+                'urgency': urgency,
+                'recommendation': recommendation,
+                'exit_reasons': exit_reasons,
+                'current_data': {
+                    'score': current_score,
+                    'nifty_spot': nifty_spot,
+                    'vix': vix,
+                    'market_regime': market_regime,
+                    'oi_pattern': oi_analysis.get('pattern', 'UNKNOWN')
+                },
+                'entry_data': entry_data,
+                'score_change': entry_score - current_score,
+                'vix_change_pct': ((vix - entry_vix) / entry_vix * 100) if entry_vix > 0 else 0,
+                'nifty_move_pct': ((nifty_spot - entry_nifty) / entry_nifty * 100) if entry_nifty > 0 else 0
+            }
+
+        except Exception as e:
+            logger.error(f"Error in exit signal analysis: {e}", exc_info=True)
+            return {
+                'timestamp': datetime.now().isoformat(),
+                'signal': 'ERROR',
+                'error': str(e),
+                'recommendation': f'Exit analysis failed: {e}'
+            }
+
 
 if __name__ == "__main__":
     # Test the analyzer

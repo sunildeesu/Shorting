@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-NIFTY Option Monitor - Daily Scheduler
+NIFTY Option Monitor - Intraday Scheduler
 
-Runs NIFTY option selling analysis daily at 10:00 AM (configurable).
-Sends Telegram alerts and logs results to Excel.
+Entry Analysis: 10:00 AM (SELL/HOLD/AVOID signal)
+Exit Monitoring: Every 15 minutes from 10:15 AM to 3:25 PM
+Provides exit signals if market conditions deteriorate after entry
 
 Usage:
     python3 nifty_option_monitor.py          # Run once now
-    python3 nifty_option_monitor.py --daemon  # Run as daemon (checks every minute)
+    python3 nifty_option_monitor.py --daemon  # Run as daemon (intraday monitoring)
 
 Author: Sunil Kumar Durganaik
 """
@@ -24,6 +25,7 @@ from token_manager import TokenManager
 from nifty_option_analyzer import NiftyOptionAnalyzer
 from nifty_option_logger import NiftyOptionLogger
 from telegram_notifier import TelegramNotifier
+from position_state_manager import PositionStateManager
 
 # Setup logging
 logging.basicConfig(
@@ -39,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 
 class NiftyOptionMonitor:
-    """Monitor and schedule NIFTY option analysis"""
+    """Monitor and schedule NIFTY option analysis with intraday exit signals"""
 
     def __init__(self):
         """Initialize monitor with Kite connection"""
@@ -48,10 +50,13 @@ class NiftyOptionMonitor:
         self.analyzer = None
         self.excel_logger = NiftyOptionLogger()
         self.telegram = TelegramNotifier()
-        self.last_run_date = None  # Track last run to prevent duplicates
+        self.position_manager = PositionStateManager(config.NIFTY_OPTION_POSITION_STATE_FILE)
+        self.last_check_minute = None  # Track last check to prevent duplicates
 
-        # Parse analysis time from config
-        self.analysis_time = self._parse_time(config.NIFTY_OPTION_ANALYSIS_TIME)
+        # Parse times from config
+        self.entry_time = self._parse_time(config.NIFTY_OPTION_ANALYSIS_TIME)
+        self.end_time = self._parse_time(config.NIFTY_OPTION_MONITOR_END_TIME)
+        self.check_interval = config.NIFTY_OPTION_MONITOR_INTERVAL  # minutes
 
     def _parse_time(self, time_str: str) -> dtime:
         """Parse time string (HH:MM format) to time object"""
@@ -94,183 +99,338 @@ class NiftyOptionMonitor:
             return False
 
     def _is_trading_day(self) -> bool:
-        """
-        Check if today is a trading day
-
-        Returns:
-            True if market is open today
-        """
+        """Check if today is a trading day"""
         now = datetime.now()
 
         # Check if weekend (Saturday=5, Sunday=6)
         if now.weekday() >= 5:
-            logger.info("Weekend - Market closed")
+            logger.debug("Weekend - Market closed")
             return False
-
-        # TODO: Add holiday calendar check if needed
-        # For now, assume weekdays are trading days
 
         return True
 
-    def _should_run_analysis(self) -> bool:
-        """
-        Check if analysis should run now
-
-        Conditions:
-        - Trading day (not weekend)
-        - Current time >= analysis time
-        - Haven't run today yet
-
-        Returns:
-            True if should run analysis
-        """
+    def _should_run_entry_analysis(self) -> bool:
+        """Check if we should run entry analysis (10:00 AM check)"""
         if not config.ENABLE_NIFTY_OPTION_ANALYSIS:
-            logger.debug("NIFTY option analysis is disabled in config")
             return False
 
         if not self._is_trading_day():
             return False
 
+        # Check if already have position today
+        if self.position_manager.has_position_today():
+            logger.debug("Position already entered today")
+            return False
+
         now = datetime.now()
         current_time = now.time()
-        today_str = now.strftime("%Y-%m-%d")
 
-        # Check if already ran today
-        if self.last_run_date == today_str:
-            logger.debug("Analysis already completed today")
+        # Check if current time is entry time (with 1-minute tolerance)
+        if current_time.hour == self.entry_time.hour and current_time.minute == self.entry_time.minute:
+            return True
+
+        return False
+
+    def _should_run_exit_analysis(self) -> bool:
+        """Check if we should run exit analysis (15-minute intervals)"""
+        if not config.ENABLE_NIFTY_OPTION_ANALYSIS:
             return False
 
-        # Check if current time >= analysis time
-        if current_time < self.analysis_time:
-            logger.debug(f"Not yet time for analysis (scheduled: {self.analysis_time})")
+        if not self._is_trading_day():
             return False
 
-        return True
+        # Only run if we have an active position
+        if not self.position_manager.has_position_today():
+            logger.debug("No active position to monitor")
+            return False
 
-    def run_analysis(self) -> bool:
-        """
-        Run NIFTY option analysis
+        now = datetime.now()
+        current_time = now.time()
 
-        Returns:
-            True if analysis completed successfully
-        """
+        # Check if within monitoring window (after entry time, before end time)
+        if current_time < self.entry_time or current_time > self.end_time:
+            return False
+
+        # Check if it's a 15-minute interval
+        # Run at :15, :30, :45, :00 minute marks
+        if current_time.minute % self.check_interval == 0:
+            # Prevent duplicate runs in same minute
+            current_minute_key = f"{current_time.hour}:{current_time.minute}"
+            if self.last_check_minute == current_minute_key:
+                return False
+
+            self.last_check_minute = current_minute_key
+            return True
+
+        return False
+
+    def run_entry_analysis(self) -> bool:
+        """Run entry analysis at 10:00 AM"""
         try:
             logger.info("=" * 70)
-            logger.info("STARTING NIFTY OPTION ANALYSIS")
+            logger.info("ENTRY ANALYSIS - 10:00 AM")
             logger.info("=" * 70)
 
-            # Initialize Kite if not already done
+            # Initialize Kite if needed
             if not self.kite or not self.analyzer:
                 if not self._initialize_kite():
                     logger.error("Cannot run analysis - Kite initialization failed")
                     return False
 
-            # Run analysis
+            # Run entry analysis
             result = self.analyzer.analyze_option_selling_opportunity()
 
             # Check for errors
             if 'error' in result:
                 logger.error(f"Analysis failed: {result['error']}")
-                # Still send Telegram alert about the error
                 self.telegram.send_nifty_option_analysis(result)
                 return False
 
-            # Log to Excel
-            telegram_sent = False
-            try:
-                excel_success = self.excel_logger.log_analysis(
-                    analysis_data=result,
-                    telegram_sent=False  # Will update after Telegram send
-                )
-                if excel_success:
-                    logger.info("Analysis logged to Excel successfully")
-                else:
-                    logger.warning("Failed to log analysis to Excel")
-            except Exception as e:
-                logger.error(f"Excel logging failed: {e}")
+            signal = result.get('signal', 'HOLD')
+            score = result.get('total_score', 0)
 
-            # Send Telegram alert
-            try:
-                telegram_sent = self.telegram.send_nifty_option_analysis(result)
-                if telegram_sent:
-                    logger.info("Telegram alert sent successfully")
-                else:
-                    logger.warning("Failed to send Telegram alert")
+            logger.info(f"Entry Signal: {signal} (Score: {score:.1f}/100)")
 
-                # Update Excel with telegram_sent status
-                if excel_success and telegram_sent:
-                    self.excel_logger.log_analysis(
-                        analysis_data=result,
-                        telegram_sent=True
-                    )
-            except Exception as e:
-                logger.error(f"Telegram notification failed: {e}")
+            # Record entry if SELL signal
+            if signal == 'SELL':
+                logger.info("SELL signal - Recording position entry")
+                self.position_manager.record_entry(result)
 
-            # Mark as completed for today
-            self.last_run_date = datetime.now().strftime("%Y-%m-%d")
+                # Send Telegram alert
+                self.telegram.send_nifty_option_analysis(result)
 
-            logger.info("=" * 70)
-            logger.info(f"ANALYSIS COMPLETE - Signal: {result.get('signal')} ({result.get('total_score', 0):.1f}/100)")
-            logger.info("=" * 70)
+                # Log to Excel
+                self.excel_logger.log_analysis(result, telegram_sent=True)
+
+                logger.info(f"✅ Position entered: {score:.1f}/100")
+            else:
+                logger.info(f"No entry - Signal is {signal}")
+
+                # Still send Telegram alert for transparency
+                self.telegram.send_nifty_option_analysis(result)
+
+                # Log to Excel
+                self.excel_logger.log_analysis(result, telegram_sent=True)
 
             return True
 
         except Exception as e:
-            logger.error(f"Error in run_analysis: {e}", exc_info=True)
+            logger.error(f"Error in entry analysis: {e}", exc_info=True)
+            return False
+
+    def run_intraday_monitoring(self) -> bool:
+        """Run intraday monitoring (exit analysis + add position check)"""
+        try:
+            logger.info("=" * 70)
+            logger.info(f"INTRADAY MONITORING - {datetime.now().strftime('%H:%M')}")
+            logger.info("=" * 70)
+
+            # Initialize Kite if needed
+            if not self.kite or not self.analyzer:
+                if not self._initialize_kite():
+                    logger.error("Cannot run monitoring - Kite initialization failed")
+                    return False
+
+            has_position = self.position_manager.has_position_today()
+            layer_count = self.position_manager.get_layer_count()
+
+            # Run fresh analysis for current score
+            current_analysis = self.analyzer.analyze_option_selling_opportunity()
+            current_score = current_analysis.get('total_score', 0)
+
+            logger.info(f"Current Score: {current_score:.1f}/100 | Layers: {layer_count}/{config.NIFTY_OPTION_MAX_LAYERS}")
+
+            # 1. CHECK FOR EXIT (if position exists)
+            if has_position:
+                entry_data = self.position_manager.get_entry_data()
+                exit_result = self.analyzer.analyze_exit_signal(entry_data)
+
+                exit_signal = exit_result.get('signal', 'HOLD_POSITION')
+                urgency = exit_result.get('urgency', 'NONE')
+
+                logger.info(f"Exit Signal: {exit_signal} (Urgency: {urgency})")
+
+                if exit_signal == 'EXIT_NOW':
+                    exit_reasons = "; ".join(exit_result.get('exit_reasons', []))
+                    logger.warning(f"🚨 EXIT SIGNAL: {exit_reasons}")
+
+                    # Record exit
+                    self.position_manager.record_exit(exit_result, exit_reasons)
+
+                    # Send Telegram alert
+                    self.telegram.send_nifty_exit_alert(exit_result)
+
+                    # Log to Excel
+                    self.excel_logger.log_exit(exit_result, telegram_sent=True)
+
+                    logger.info("Position exited - Monitoring will resume for new entries")
+                    return True
+
+                elif exit_signal == 'CONSIDER_EXIT':
+                    logger.info(f"⚠️  Consider exit: {exit_result.get('recommendation', '')}")
+                    # Send warning alert
+                    self.telegram.send_nifty_exit_alert(exit_result)
+                else:
+                    logger.info("✅ Position secure - Checking for add opportunity")
+
+            # 2. CHECK FOR ADD POSITION (if not at max layers)
+            can_add = self.position_manager.can_add_layer(
+                max_layers=config.NIFTY_OPTION_MAX_LAYERS,
+                min_interval_minutes=config.NIFTY_OPTION_ADD_MIN_INTERVAL
+            )
+
+            if can_add:
+                if not has_position and config.NIFTY_OPTION_ADD_AFTER_NO_ENTRY:
+                    # No position yet - treat as first entry if conditions good
+                    if current_score >= config.NIFTY_OPTION_ADD_SCORE_THRESHOLD:
+                        logger.info(f"📈 Late entry opportunity: Score {current_score:.1f} >= {config.NIFTY_OPTION_ADD_SCORE_THRESHOLD}")
+                        logger.info("SELL signal - Recording position entry (late entry)")
+                        self.position_manager.record_entry(current_analysis, layer_number=1)
+
+                        # Send Telegram alert
+                        self.telegram.send_nifty_add_position_alert(current_analysis, layer_number=1, is_late_entry=True)
+
+                        # Log to Excel
+                        self.excel_logger.log_analysis(current_analysis, telegram_sent=True)
+
+                        logger.info(f"✅ Position entered (late): {current_score:.1f}/100")
+                        return True
+
+                elif has_position:
+                    # Check for adding to existing position
+                    last_layer_score = self.position_manager.get_last_layer_score()
+
+                    add_result = self.analyzer.analyze_add_position_signal(
+                        current_score=current_score,
+                        last_layer_score=last_layer_score,
+                        layer_count=layer_count
+                    )
+
+                    add_signal = add_result.get('signal', 'NO_ADD')
+                    confidence = add_result.get('confidence', 0)
+
+                    logger.info(f"Add Signal: {add_signal} (Confidence: {confidence}%)")
+
+                    if add_signal == 'ADD_POSITION':
+                        add_reasons = "; ".join(add_result.get('add_reasons', []))
+                        logger.info(f"📈 ADD POSITION: {add_reasons}")
+
+                        # Record additional layer
+                        next_layer = layer_count + 1
+                        self.position_manager.record_entry(current_analysis, layer_number=next_layer)
+
+                        # Send Telegram alert
+                        self.telegram.send_nifty_add_position_alert(current_analysis, layer_number=next_layer)
+
+                        # Log to Excel
+                        self.excel_logger.log_add_position(current_analysis, next_layer, telegram_sent=True)
+
+                        logger.info(f"✅ Layer {next_layer} added: {current_score:.1f}/100")
+                        return True
+
+                    elif add_signal == 'CONSIDER_ADD':
+                        logger.info(f"💡 Consider add: {add_result.get('recommendation', '')}")
+                    else:
+                        logger.info("No add signal - Conditions not favorable")
+            else:
+                logger.info(f"Cannot add layer: {layer_count}/{config.NIFTY_OPTION_MAX_LAYERS} layers")
+
+            # Update last check
+            if has_position:
+                self.position_manager.update_check(current_analysis)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in intraday monitoring: {e}", exc_info=True)
             return False
 
     def run_once(self) -> bool:
-        """
-        Run analysis once (regardless of schedule)
-
-        Returns:
-            True if successful
-        """
+        """Run analysis once (manual trigger)"""
         logger.info("Running NIFTY option analysis (manual trigger)")
-        return self.run_analysis()
 
-    def run_daemon(self, check_interval: int = 60):
+        now = datetime.now()
+        current_time = now.time()
+
+        # If before or at entry time, run entry analysis
+        if current_time <= self.entry_time or not self.position_manager.has_position_today():
+            logger.info("Running entry analysis")
+            return self.run_entry_analysis()
+        else:
+            # After entry time - run intraday monitoring
+            logger.info("Running intraday monitoring (exit + add checks)")
+            return self.run_intraday_monitoring()
+
+    def run_daemon(self, check_interval_seconds: int = 60):
         """
-        Run as daemon - check every interval and run analysis at scheduled time
+        Run as daemon - intraday monitoring with 15-minute exit checks
 
         Args:
-            check_interval: Seconds between checks (default: 60)
+            check_interval_seconds: Seconds between daemon checks (default: 60)
         """
         logger.info(f"Starting NIFTY Option Monitor daemon")
-        logger.info(f"Analysis scheduled daily at {self.analysis_time}")
-        logger.info(f"Check interval: {check_interval} seconds")
+        logger.info(f"Entry analysis: {self.entry_time}")
+        logger.info(f"Exit monitoring: Every {self.check_interval} minutes until {self.end_time}")
+        logger.info(f"Daemon check interval: {check_interval_seconds} seconds")
+
+        # Check if it's a new day and reset state
+        last_date = None
 
         while True:
             try:
-                if self._should_run_analysis():
-                    logger.info("Scheduled time reached - running analysis")
-                    self.run_analysis()
-                else:
-                    now = datetime.now()
-                    logger.debug(f"[{now.strftime('%H:%M:%S')}] Waiting for scheduled time...")
+                now = datetime.now()
+                current_date = now.date()
 
-                time.sleep(check_interval)
+                # Reset state at start of new trading day
+                if last_date != current_date and now.time().hour >= 9:
+                    logger.info(f"New trading day: {current_date}")
+                    if last_date is not None:
+                        self.position_manager.reset_for_new_day()
+                    last_date = current_date
+
+                # Check for entry analysis (10:00 AM)
+                if self._should_run_entry_analysis():
+                    logger.info("Entry time reached - Running entry analysis")
+                    self.run_entry_analysis()
+
+                # Check for intraday monitoring (every 15 minutes - exit + add checks)
+                elif self._should_run_exit_analysis():
+                    logger.info("Monitoring time - Running intraday checks")
+                    self.run_intraday_monitoring()
+
+                else:
+                    # Log status periodically (every 5 minutes)
+                    if now.minute % 5 == 0 and now.second < check_interval_seconds:
+                        status = self.position_manager.get_status_summary()
+                        logger.debug(f"[{now.strftime('%H:%M')}] {status}")
+
+                time.sleep(check_interval_seconds)
 
             except KeyboardInterrupt:
                 logger.info("Daemon stopped by user")
                 break
             except Exception as e:
                 logger.error(f"Error in daemon loop: {e}", exc_info=True)
-                time.sleep(check_interval)
+                time.sleep(check_interval_seconds)
 
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description='NIFTY Option Monitor')
+    parser = argparse.ArgumentParser(description='NIFTY Option Monitor (Intraday)')
     parser.add_argument(
         '--daemon',
         action='store_true',
-        help='Run as daemon (continuous monitoring)'
+        help='Run as daemon (intraday monitoring)'
     )
     parser.add_argument(
         '--test',
         action='store_true',
         help='Run test analysis (ignore schedule)'
+    )
+    parser.add_argument(
+        '--reset',
+        action='store_true',
+        help='Reset position state for new day'
     )
 
     args = parser.parse_args()
@@ -278,8 +438,15 @@ def main():
     # Create monitor
     monitor = NiftyOptionMonitor()
 
+    if args.reset:
+        # Reset position state
+        logger.info("Resetting position state...")
+        monitor.position_manager.reset_for_new_day()
+        logger.info("Position state reset complete")
+        sys.exit(0)
+
     if args.daemon:
-        # Run as daemon
+        # Run as daemon (intraday monitoring)
         monitor.run_daemon()
     elif args.test:
         # Test run (ignore schedule)
@@ -288,12 +455,8 @@ def main():
         sys.exit(0 if success else 1)
     else:
         # Single run (check schedule)
-        if monitor._should_run_analysis():
-            success = monitor.run_analysis()
-            sys.exit(0 if success else 1)
-        else:
-            logger.info("Not time for analysis yet (or already completed today)")
-            sys.exit(0)
+        success = monitor.run_once()
+        sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
