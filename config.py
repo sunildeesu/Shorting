@@ -36,12 +36,12 @@ ENABLE_RISE_ALERTS = os.getenv('ENABLE_RISE_ALERTS', 'true').lower() == 'true'  
 # Monitors only high-liquidity stocks (500K+ avg daily volume)
 
 ENABLE_1MIN_ALERTS = os.getenv('ENABLE_1MIN_ALERTS', 'true').lower() == 'true'  # Toggle 1-min monitoring
-DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.75'))  # 0.75% drop in 1 minute (relaxed from 0.85%)
-RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.75'))  # 0.75% rise in 1 minute (relaxed from 0.85%)
+DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.50'))  # 0.50% drop in 1 minute (tuned from 0.75% - was too strict)
+RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.50'))  # 0.50% rise in 1 minute (tuned from 0.75% - was too strict)
 
 # Volume requirements for quality signals (relaxed for better alert coverage)
-VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '3.0'))  # 3x average (relaxed from 5x for better coverage)
-MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '50000'))  # Minimum 50K shares in 1-min window
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '2.5'))  # 2.5x average (tuned from 3.0x - was too strict)
+MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '40000'))  # Minimum 40K shares in 1-min window (tuned from 50K)
 MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks
 
 # Tiered Priority System (configured in onemin_alert_detector.py)
