@@ -275,6 +275,10 @@ class NiftyOptionMonitor:
                     logger.info(f"⚠️  Consider exit: {exit_result.get('recommendation', '')}")
                     # Send warning alert
                     self.telegram.send_nifty_exit_alert(exit_result)
+                    # IMPORTANT: Return here to prevent checking for add position
+                    # It makes no sense to warn about exit while suggesting to add layers
+                    logger.info("⚠️  Exit warning sent - skipping add position check")
+                    return True
                 else:
                     logger.info("✅ Position secure - Checking for add opportunity")
 
