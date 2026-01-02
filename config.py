@@ -206,6 +206,10 @@ NIFTY_OPTION_POSITION_STATE_FILE = 'data/nifty_options/position_state.json'  # T
 NIFTY_50_TOKEN = 256265  # NIFTY 50 Index
 INDIA_VIX_TOKEN = 264969  # India VIX
 
+# Expiry selection
+NIFTY_OPTION_MIN_DAYS_TO_EXPIRY = 7  # Skip expiries < 7 days away (skip current week, trade next week+)
+# This ensures we NEVER trade current week expiry, only next week and next-to-next week
+
 # Scoring thresholds
 NIFTY_OPTION_SELL_THRESHOLD = 70    # Score >= 70 = SELL signal
 NIFTY_OPTION_HOLD_THRESHOLD = 40    # Score 40-69 = HOLD

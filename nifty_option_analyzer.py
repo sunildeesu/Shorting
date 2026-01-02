@@ -230,7 +230,11 @@ class NiftyOptionAnalyzer:
 
     def _get_next_expiries(self, count: int = 2) -> List[datetime]:
         """
-        Get next N NIFTY expiry dates
+        Get next N NIFTY expiry dates (excluding current week expiry)
+
+        IMPORTANT: Skips expiries less than MIN_DAYS_TO_EXPIRY days away.
+        This ensures we ONLY trade next week and next-to-next week expiries,
+        NEVER the current week expiry.
 
         Args:
             count: Number of expiries to return
@@ -249,13 +253,25 @@ class NiftyOptionAnalyzer:
 
             # Extract unique expiry dates
             expiries = set()
+            today = datetime.now().date()
+            min_days = config.NIFTY_OPTION_MIN_DAYS_TO_EXPIRY
+
             for option in nifty_options:
                 expiry = option['expiry']
-                if expiry >= datetime.now().date():
+                days_to_expiry = (expiry - today).days
+
+                # Skip expiries that are too close (current week)
+                # Only include expiries >= MIN_DAYS_TO_EXPIRY days away
+                if days_to_expiry >= min_days:
                     expiries.add(expiry)
 
             # Sort and return next N
             sorted_expiries = sorted(list(expiries))[:count]
+
+            if sorted_expiries:
+                logger.info(f"Selected expiries (>{min_days} days away): {[exp.strftime('%Y-%m-%d') for exp in sorted_expiries]}")
+            else:
+                logger.warning(f"No expiries found with >={min_days} days to expiry")
 
             # Convert to datetime
             return [datetime.combine(exp, datetime.min.time()) for exp in sorted_expiries]
