@@ -883,12 +883,23 @@ class NiftyOptionAnalyzer:
                     exit_score += 20
                     logger.warning(f"EXIT TRIGGER: OI buildup {oi_pattern}")
 
-            # 6. Large NIFTY move
+            # 6. Large NIFTY move (CRITICAL FOR OPTION SELLING)
+            # For ATM option sellers, even 50-100 point moves are significant
+            # Check BOTH points-based and percentage-based thresholds
             if entry_nifty > 0:
-                nifty_move_pct = abs((nifty_spot - entry_nifty) / entry_nifty) * 100
-                if nifty_move_pct > 2.0:  # > 2% move
-                    exit_reasons.append(f"Large NIFTY move ({nifty_move_pct:.1f}% from entry)")
-                    exit_score += 15
+                nifty_move_points = abs(nifty_spot - entry_nifty)
+                nifty_move_pct = (nifty_move_points / entry_nifty) * 100
+
+                # Points-based threshold (primary for option selling)
+                if nifty_move_points >= config.NIFTY_OPTION_EXIT_POINTS_MOVE:
+                    exit_reasons.append(f"NIFTY moved {nifty_move_points:.0f} points from entry ({nifty_move_pct:.1f}%)")
+                    exit_score += 25  # Higher weight than percentage
+                    logger.warning(f"EXIT TRIGGER: NIFTY move {nifty_move_points:.0f} points")
+
+                # Percentage-based threshold (secondary, for very large moves)
+                elif nifty_move_pct >= config.NIFTY_OPTION_EXIT_PCT_MOVE:
+                    exit_reasons.append(f"Large NIFTY move ({nifty_move_pct:.1f}% from entry, {nifty_move_points:.0f} points)")
+                    exit_score += 20
                     logger.warning(f"EXIT TRIGGER: Large move {nifty_move_pct:.1f}%")
 
             # Determine exit signal

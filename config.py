@@ -237,6 +237,12 @@ NIFTY_OPTION_EXIT_SCORE_THRESHOLD = 40  # Exit if score falls below 40 (AVOID zo
 NIFTY_OPTION_EXIT_ON_REGIME_CHANGE = True  # Exit if regime changes from NEUTRAL
 NIFTY_OPTION_EXIT_ON_STRONG_OI_BUILDUP = True  # Exit on LONG_BUILDUP/SHORT_BUILDUP
 
+# CRITICAL: Points-based exit for option selling (50-100 point moves are significant!)
+NIFTY_OPTION_EXIT_POINTS_MOVE = 100    # Exit if NIFTY moves >100 points from entry (for ATM option sellers)
+NIFTY_OPTION_EXIT_PCT_MOVE = 1.0       # OR exit if >1.0% move (reduced from hardcoded 2.0%)
+# Note: For ATM straddle/strangle, even 50-100 point moves are significant
+# The 2% threshold was too lenient (524 points = disaster for option sellers)
+
 # Position sizing and layering (add positions intraday)
 NIFTY_OPTION_MAX_LAYERS = 3            # Maximum number of position layers (1 = no adds, 3 = initial + 2 adds)
 NIFTY_OPTION_ADD_SCORE_THRESHOLD = 70  # Add position if score >= 70 (SELL zone)
