@@ -4,15 +4,22 @@
 Multi-layer filtering with TIERED PRIORITY system
 
 NORMAL Priority (Layers 1-5):
-1. Price threshold (0.75% change in 1 minute)
-2. Volume spike requirement (3x average + minimum 50K shares)
+1. Price threshold (0.50% change in 1 minute)
+2. Volume spike requirement (2.5x average - percentage-based only, no absolute minimum)
 3. Quality filters (price >=50, no ban list stocks)
 4. Cooldown (10 minutes per stock)
 5. Cross-alert deduplication (no 5-min alert in last 3 minutes)
 
 HIGH Priority (All 6 Layers):
-6. Momentum confirmation (price acceleration - 10% faster than 4-min avg)
+6. Momentum confirmation (price acceleration - 30% faster than 4-min avg)
    → Only HIGH priority alerts show strong momentum acceleration
+
+Note: Volume filter uses ONLY percentage-based multiplier (2.5x average).
+No absolute minimum because different stocks have vastly different normal volumes:
+- Large-cap stocks: 500K shares/min normal
+- Mid-cap stocks: 50K shares/min normal
+- Small-cap stocks: 5K shares/min normal
+A 2.5x spike is significant regardless of absolute volume.
 """
 
 from typing import Optional
@@ -164,8 +171,16 @@ class OneMinAlertDetector:
 
     def _has_volume_spike(self, symbol: str, current_volume: int) -> bool:
         """
-        Check for volume spike (3x average + min 50K - relaxed from 5x for better coverage).
+        Check for volume spike using percentage-based multiplier (2.5x average).
         This is MANDATORY for all 1-min alerts.
+
+        Uses ONLY percentage-based logic (no absolute minimum) because different stocks
+        have vastly different normal trading volumes. For example:
+        - Large-cap: 500K shares/min normal
+        - Mid-cap: 50K shares/min normal
+        - Small-cap: 5K shares/min normal
+
+        A 2.5x spike is significant regardless of absolute volume.
 
         Args:
             symbol: Stock symbol
@@ -182,17 +197,13 @@ class OneMinAlertDetector:
             logger.debug(f"{symbol}: No previous volume data for comparison")
             return False
 
-        # Check both conditions:
-        # 1. Current volume >= 3x average (relaxed from 5x)
-        # 2. Current volume >= 50K minimum
+        # Check percentage-based condition only:
+        # Current volume >= 2.5x average (percentage-based, fair for all stock sizes)
         if current_volume < config.VOLUME_SPIKE_MULTIPLIER_1MIN * avg_volume:
             logger.debug(f"{symbol}: Volume {current_volume:,} < {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x avg {avg_volume:,}")
             return False
 
-        if current_volume < config.MIN_VOLUME_1MIN:
-            logger.debug(f"{symbol}: Volume {current_volume:,} < min {config.MIN_VOLUME_1MIN:,}")
-            return False
-
+        logger.debug(f"{symbol}: Volume spike detected: {current_volume:,} = {current_volume/avg_volume:.1f}x avg {avg_volume:,}")
         return True
 
     # ====================================

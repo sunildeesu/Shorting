@@ -10,48 +10,54 @@
 - Logs show "Checked: 100 stocks" every cycle but no triggers
 - All 6 filter layers must pass simultaneously - very strict
 
-## Current Configuration (Too Strict)
+## Current Configuration (After Tuning)
 
 ```python
-DROP_THRESHOLD_1MIN = 0.75%        # Price must drop 0.75% in 1 minute
-RISE_THRESHOLD_1MIN = 0.75%        # Price must rise 0.75% in 1 minute
-VOLUME_SPIKE_MULTIPLIER_1MIN = 3.0x  # Volume must be 3x average
-MIN_VOLUME_1MIN = 50,000           # Minimum 50K shares in 1-min window
+DROP_THRESHOLD_1MIN = 0.50%        # Price must drop 0.50% in 1 minute
+RISE_THRESHOLD_1MIN = 0.50%        # Price must rise 0.50% in 1 minute
+VOLUME_SPIKE_MULTIPLIER_1MIN = 2.5x  # Volume must be 2.5x average (percentage-based)
+# NO MIN_VOLUME_1MIN - removed absolute minimum (was 40K-50K)
+# Rationale: Different stocks have different volumes (large-cap: 500K/min, small-cap: 5K/min)
 COOLDOWN_1MIN_ALERTS = 10 minutes  # 10-minute cooldown per stock
 ```
 
-**6-Layer Filtering System**:
-1. Price threshold (0.75% change) ← **TOO HIGH**
-2. Volume spike (3x average + 50K min) ← **TOO STRICT**
-3. Quality filters (price >=50)
+**6-Layer Filtering System** (After Tuning):
+1. Price threshold (0.50% change) ✅ **TUNED**
+2. Volume spike (2.5x average, percentage-based only) ✅ **TUNED - NO ABSOLUTE MINIMUM**
+3. Quality filters (price >=50, liquidity >=500K daily avg)
 4. Cooldown (10 minutes)
 5. Cross-alert deduplication
 6. Momentum confirmation (optional, for HIGH priority)
 
-**Why This Fails**:
-- 0.75% move in 1 minute is RARE (only happens during major news/events)
-- 3x volume spike is VERY strict
-- Both conditions together = almost impossible to meet
-- Average intraday volatility is 0.3-0.5% per minute
+**Key Improvement - Percentage-Based Volume Filter**:
+- **Removed** absolute minimum (was 40K-50K shares)
+- **Using ONLY** 2.5x multiplier (percentage-based)
+- **Rationale**: Different stocks have vastly different normal volumes:
+  - RELIANCE: 500,000 shares/min normal (2.5x = 1.25M spike)
+  - TCS: 50,000 shares/min normal (2.5x = 125K spike)
+  - Small-cap: 5,000 shares/min normal (2.5x = 12.5K spike)
+- A 2.5x spike is equally significant for all stock sizes
+- Absolute minimums unfairly penalize smaller stocks
 
 ## Recommended Tuning Strategies
 
-### Strategy 1: MODERATE Relaxation (Recommended - Start Here)
+### Strategy 1: MODERATE Relaxation (✅ APPLIED - Current Config)
 
 **Goal**: Get 5-10 quality alerts per day
 
 ```python
-# Phase 1 Tuning (Apply First)
+# Phase 1 Tuning (APPLIED)
 DROP_THRESHOLD_1MIN = 0.50%        # Reduced from 0.75%
 RISE_THRESHOLD_1MIN = 0.50%        # Reduced from 0.75%
 VOLUME_SPIKE_MULTIPLIER_1MIN = 2.5x  # Reduced from 3.0x
-MIN_VOLUME_1MIN = 40,000           # Reduced from 50,000
+# MIN_VOLUME_1MIN = REMOVED        # No absolute minimum (was 40K-50K)
 ```
 
 **Rationale**:
 - 0.50% in 1 minute is still significant (30% drop in 1 hour if sustained)
-- 2.5x volume spike still indicates unusual activity
-- 40K volume ensures liquidity for actual trading
+- 2.5x volume spike indicates unusual activity regardless of stock size
+- Percentage-based volume filter is fair for all stocks (large-cap, mid-cap, small-cap)
+- Removed absolute minimum volume - was unfairly filtering smaller stocks
 - Other 4 layers still provide quality filtering
 
 **Expected Impact**:
@@ -67,14 +73,15 @@ MIN_VOLUME_1MIN = 40,000           # Reduced from 50,000
 # Phase 2 Tuning (Apply if Phase 1 insufficient)
 DROP_THRESHOLD_1MIN = 0.40%        # More relaxed
 RISE_THRESHOLD_1MIN = 0.40%        # More relaxed
-VOLUME_SPIKE_MULTIPLIER_1MIN = 2.0x  # More relaxed
-MIN_VOLUME_1MIN = 30,000           # More relaxed
+VOLUME_SPIKE_MULTIPLIER_1MIN = 2.0x  # More relaxed (minimum for "spike")
+# MIN_VOLUME_1MIN = REMOVED        # Already removed - using percentage-based only
 COOLDOWN_1MIN_ALERTS = 15 minutes  # Longer cooldown to reduce spam
 ```
 
 **Rationale**:
 - 0.40% is borderline but with 5 other filters, quality should be OK
 - 2.0x volume spike is minimum for "unusual activity"
+- Percentage-based volume is fair for all stock sizes
 - 15-min cooldown prevents spam from same stock
 - Can tighten later based on alert quality
 

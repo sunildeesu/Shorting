@@ -39,10 +39,12 @@ ENABLE_1MIN_ALERTS = os.getenv('ENABLE_1MIN_ALERTS', 'true').lower() == 'true'  
 DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.50'))  # 0.50% drop in 1 minute (tuned from 0.75% - was too strict)
 RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.50'))  # 0.50% rise in 1 minute (tuned from 0.75% - was too strict)
 
-# Volume requirements for quality signals (relaxed for better alert coverage)
-VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '2.5'))  # 2.5x average (tuned from 3.0x - was too strict)
-MIN_VOLUME_1MIN = int(os.getenv('MIN_VOLUME_1MIN', '40000'))  # Minimum 40K shares in 1-min window (tuned from 50K)
-MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks
+# Volume requirements for quality signals (percentage-based only)
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '2.5'))  # 2.5x average (percentage-based - fair for all stock sizes)
+# NOTE: No MIN_VOLUME_1MIN absolute threshold - using only percentage-based multiplier
+# Rationale: Different stocks have vastly different normal volumes (large-cap: 500K/min, small-cap: 5K/min)
+# A 2.5x spike is significant regardless of absolute volume
+MIN_AVG_DAILY_VOLUME_1MIN = int(os.getenv('MIN_AVG_DAILY_VOLUME_1MIN', '500000'))  # Only liquid stocks (daily avg filter)
 
 # Tiered Priority System (configured in onemin_alert_detector.py)
 # NORMAL Priority: Passes layers 1-5 (price, volume, quality, cooldown, deduplication)

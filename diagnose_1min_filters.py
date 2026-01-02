@@ -30,9 +30,12 @@ def main():
     # Show current thresholds
     print("Current Configuration:")
     print(f"  Price threshold: {config.DROP_THRESHOLD_1MIN}% / {config.RISE_THRESHOLD_1MIN}%")
-    print(f"  Volume multiplier: {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x average")
-    print(f"  Minimum volume: {config.MIN_VOLUME_1MIN:,} shares")
+    print(f"  Volume multiplier: {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x average (percentage-based)")
+    print(f"  Minimum volume: REMOVED (using percentage-based multiplier only)")
     print(f"  Cooldown: {config.COOLDOWN_1MIN_ALERTS} minutes")
+    print()
+    print("Note: Volume filter uses ONLY percentage-based multiplier (no absolute minimum)")
+    print("      This is fair for all stock sizes (large-cap, mid-cap, small-cap)")
     print()
 
     # Initialize Kite
@@ -117,9 +120,8 @@ def main():
             failed_at = 'PRICE_THRESHOLD'
             stats['failed_price_threshold'] += 1
 
-        # Layer 2: Volume spike
-        elif not (current_volume >= config.VOLUME_SPIKE_MULTIPLIER_1MIN * avg_volume and
-                  current_volume >= config.MIN_VOLUME_1MIN):
+        # Layer 2: Volume spike (percentage-based only, no absolute minimum)
+        elif not (avg_volume > 0 and current_volume >= config.VOLUME_SPIKE_MULTIPLIER_1MIN * avg_volume):
             failed_at = 'VOLUME_SPIKE'
             stats['failed_volume_spike'] += 1
 
@@ -193,8 +195,9 @@ def main():
 
     if stats['failed_volume_spike'] > stats['total_checked'] * 0.5:
         print("⚠️  50%+ stocks failing VOLUME SPIKE")
-        print(f"   Current: {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x average")
-        print(f"   Suggested: Reduce to 2.0x or 2.5x for more alerts")
+        print(f"   Current: {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x average (percentage-based)")
+        print(f"   Suggested: Reduce to 2.0x for more alerts")
+        print(f"   Note: Using percentage-based multiplier only (no absolute minimum)")
         print()
 
     if stats['passed_normal'] == 0:
@@ -202,9 +205,9 @@ def main():
         print("   This explains why you're getting no alerts.")
         print()
         print("   Quick Fix Options:")
-        print("   1. Reduce DROP_THRESHOLD_1MIN from 0.75% to 0.5%")
-        print("   2. Reduce VOLUME_SPIKE_MULTIPLIER_1MIN from 3.0x to 2.0x")
-        print("   3. Reduce MIN_VOLUME_1MIN from 50,000 to 30,000")
+        print(f"   1. Reduce DROP_THRESHOLD_1MIN from {config.DROP_THRESHOLD_1MIN}% to 0.40%")
+        print(f"   2. Reduce VOLUME_SPIKE_MULTIPLIER_1MIN from {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x to 2.0x")
+        print("   Note: Already using percentage-based volume filter (no absolute minimum)")
         print()
 
     print("=" * 80)
