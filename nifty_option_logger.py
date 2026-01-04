@@ -23,11 +23,15 @@ class NiftyOptionLogger:
 
     # Column headers for the Excel report
     HEADERS = [
-        "Date", "Time", "Signal", "Total_Score",
-        "NIFTY_Spot", "VIX", "VIX_Score",
+        "Date", "Time", "Signal",
+        # NEW COLUMNS (Tiered Signal System - Jan 3, 2026)
+        "Signal_Tier", "Position_Size", "Premium_Quality",
+        # END NEW COLUMNS
+        "Total_Score",
+        "NIFTY_Spot", "VIX", "VIX_Trend", "VIX_Score", "IV_Rank",
         "Market_Regime", "Regime_Score",
         "OI_Pattern", "OI_Score",
-        "Theta_Score", "Gamma_Score",
+        "Theta_Score", "Gamma_Score", "Vega_Score",
         "Best_Strategy", "Expiry_1", "Days_To_Expiry_1",
         "Straddle_Premium", "Straddle_Theta", "Straddle_Gamma",
         "Strangle_Premium", "Strangle_Theta", "Strangle_Gamma",
@@ -87,17 +91,39 @@ class NiftyOptionLogger:
                 bottom=Side(style='thin')
             )
 
-        # Set column widths
+        # Set column widths (updated for tiered signals - 3 new columns after C)
         column_widths = {
-            'A': 12, 'B': 10, 'C': 8, 'D': 12,
-            'E': 12, 'F': 8, 'G': 10,
-            'H': 14, 'I': 12,
-            'J': 16, 'K': 10,
-            'L': 12, 'M': 12,
-            'N': 14, 'O': 12, 'P': 16,
-            'Q': 16, 'R': 14, 'S': 14,
-            'T': 16, 'U': 14, 'V': 14,
-            'W': 40, 'X': 40, 'Y': 12
+            'A': 12,  # Date
+            'B': 10,  # Time
+            'C': 8,   # Signal
+            'D': 14,  # Signal_Tier (NEW)
+            'E': 12,  # Position_Size (NEW)
+            'F': 22,  # Premium_Quality (NEW)
+            'G': 12,  # Total_Score (was D)
+            'H': 12,  # NIFTY_Spot (was E)
+            'I': 8,   # VIX (was F)
+            'J': 10,  # VIX_Trend (was G)
+            'K': 10,  # VIX_Score (was H)
+            'L': 10,  # IV_Rank (was I)
+            'M': 14,  # Market_Regime (was J)
+            'N': 12,  # Regime_Score (was K)
+            'O': 16,  # OI_Pattern (was L)
+            'P': 10,  # OI_Score (was M)
+            'Q': 12,  # Theta_Score (was N)
+            'R': 12,  # Gamma_Score (was O)
+            'S': 12,  # Vega_Score (was P)
+            'T': 14,  # Best_Strategy (was Q)
+            'U': 12,  # Expiry_1 (was R)
+            'V': 16,  # Days_To_Expiry_1 (was S)
+            'W': 16,  # Straddle_Premium (was T)
+            'X': 14,  # Straddle_Theta (was U)
+            'Y': 14,  # Straddle_Gamma (was V)
+            'Z': 16,  # Strangle_Premium (was W)
+            'AA': 14,  # Strangle_Theta (was X)
+            'AB': 14,  # Strangle_Gamma (was Y)
+            'AC': 40,  # Recommendation (was Z)
+            'AD': 40,  # Risk_Factors (was AA)
+            'AE': 12   # Telegram_Sent (was AB)
         }
 
         for col, width in column_widths.items():
@@ -138,9 +164,16 @@ class NiftyOptionLogger:
 
             # Extract data
             signal = analysis_data.get('signal', 'HOLD')
+            # NEW: Tiered signal fields
+            signal_tier = analysis_data.get('signal_tier', signal)
+            position_size = analysis_data.get('position_size', 1.0)
+            premium_quality = analysis_data.get('premium_quality', 'TRADEABLE')
+            # END NEW
             total_score = analysis_data.get('total_score', 0)
             nifty_spot = analysis_data.get('nifty_spot', 0)
             vix = analysis_data.get('vix', 0)
+            vix_trend = analysis_data.get('vix_trend', 0)
+            iv_rank = analysis_data.get('iv_rank', 50.0)
             market_regime = analysis_data.get('market_regime', 'UNKNOWN')
             best_strategy = analysis_data.get('best_strategy', 'straddle')
             recommendation = analysis_data.get('recommendation', '')
@@ -161,21 +194,33 @@ class NiftyOptionLogger:
             time_str = timestamp.strftime("%H:%M:%S")
             expiry_str = expiry_date.strftime("%Y-%m-%d") if expiry_date else ""
             risk_factors_str = "; ".join(risk_factors)
+            # Format position size as percentage string
+            position_size_str = f"{int(position_size * 100)}%"
+            # Extract premium quality label (remove explanation in parentheses)
+            premium_quality_label = premium_quality.split(' (')[0]
 
             row_data = [
                 date_str,
                 time_str,
                 signal,
+                # NEW: Tiered signal columns
+                signal_tier,
+                position_size_str,
+                premium_quality_label,
+                # END NEW
                 round(total_score, 1),
                 round(nifty_spot, 2),
                 round(vix, 2),
+                round(vix_trend, 2),
                 round(breakdown.get('vix_score', 0), 1),
+                round(iv_rank, 1),
                 market_regime,
                 round(breakdown.get('regime_score', 0), 1),
                 oi_analysis.get('pattern', 'UNKNOWN'),
                 round(breakdown.get('oi_score', 0), 1),
                 round(breakdown.get('theta_score', 0), 1),
                 round(breakdown.get('gamma_score', 0), 1),
+                round(breakdown.get('vega_score', 0), 1),
                 best_strategy.upper(),
                 expiry_str,
                 days_to_expiry,
@@ -195,14 +240,16 @@ class NiftyOptionLogger:
             for col_num, value in enumerate(row_data, start=1):
                 cell = ws.cell(row=next_row, column=col_num, value=value)
 
-                # Apply number formatting
-                if col_num in [4, 5, 6, 7, 9, 11, 12, 13]:  # Score columns
+                # Apply number formatting (updated for new columns - shifted by 3)
+                if col_num in [7, 11, 12, 14, 16, 17, 18, 19]:  # Score columns (was 4,8,9,11,13,14,15,16)
                     cell.number_format = '0.0'
-                elif col_num == 5:  # NIFTY Spot
+                elif col_num == 8:  # NIFTY Spot (was 5)
                     cell.number_format = '0.00'
-                elif col_num in [17, 18, 20, 21]:  # Premium, Theta
+                elif col_num in [9, 10]:  # VIX, VIX_Trend (was 6, 7)
                     cell.number_format = '0.00'
-                elif col_num in [19, 22]:  # Gamma
+                elif col_num in [23, 24, 26, 27]:  # Premium, Theta (was 20, 21, 23, 24)
+                    cell.number_format = '0.00'
+                elif col_num in [25, 28]:  # Gamma (was 22, 25)
                     cell.number_format = '0.000000'
 
                 # Center alignment
@@ -227,6 +274,26 @@ class NiftyOptionLogger:
                     else:  # AVOID
                         cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
                         cell.font = Font(bold=True, color="9C0006")
+
+                # NEW: Color code Signal_Tier column (tiered signal system)
+                if col_num == 4:  # Signal_Tier column
+                    if signal_tier == 'SELL_STRONG':
+                        # Dark green - excellent premium quality
+                        cell.fill = PatternFill(start_color="00B050", end_color="00B050", fill_type="solid")
+                        cell.font = Font(bold=True, color="FFFFFF")
+                    elif signal_tier == 'SELL_MODERATE':
+                        # Light green - good premium quality
+                        cell.fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+                        cell.font = Font(bold=True, color="375623")
+                    elif signal_tier == 'SELL_WEAK':
+                        # Orange - marginal premium quality
+                        cell.fill = PatternFill(start_color="FFC000", end_color="FFC000", fill_type="solid")
+                        cell.font = Font(bold=True, color="974806")
+                    elif signal_tier == 'AVOID':
+                        # Red - poor premium quality
+                        cell.fill = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+                        cell.font = Font(bold=True, color="FFFFFF")
+                    # END NEW
 
             # Save workbook
             wb.save(filepath)
@@ -304,15 +371,22 @@ if __name__ == "__main__":
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
 
-    logger = NiftyOptionLogger()
+    option_logger = NiftyOptionLogger()
 
     # Test data
     test_data = {
         'timestamp': datetime.now().isoformat(),
         'signal': 'SELL',
+        # NEW: Tiered signal test data
+        'signal_tier': 'SELL_STRONG',
+        'position_size': 1.0,
+        'premium_quality': 'EXCELLENT (100% of fair value or better)',
+        # END NEW
         'total_score': 75.5,
         'nifty_spot': 21850.50,
         'vix': 14.2,
+        'vix_trend': -0.5,
+        'iv_rank': 32.5,
         'market_regime': 'NEUTRAL',
         'best_strategy': 'straddle',
         'recommendation': 'Good conditions for option selling',
@@ -320,6 +394,7 @@ if __name__ == "__main__":
         'breakdown': {
             'theta_score': 80.0,
             'gamma_score': 85.0,
+            'vega_score': 75.0,
             'vix_score': 60.0,
             'regime_score': 100.0,
             'oi_score': 70.0
@@ -342,11 +417,11 @@ if __name__ == "__main__":
     }
 
     # Log test data
-    result = logger.log_analysis(test_data, telegram_sent=True)
+    result = option_logger.log_analysis(test_data, telegram_sent=True)
     print(f"Test logging: {'Success' if result else 'Failed'}")
 
     # Get recent analyses
-    recent = logger.get_recent_analyses(days=7)
+    recent = option_logger.get_recent_analyses(days=7)
     print(f"\nRecent analyses: {len(recent)} records found")
     for record in recent[:3]:
         print(f"  {record['date']} {record['time']}: {record['signal']} ({record['score']:.1f})")

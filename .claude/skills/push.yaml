@@ -1,0 +1,38 @@
+name: push
+description: Quick git commit and push with auto-generated or custom message
+version: 1.0.0
+
+# This skill can be invoked with: /push or /push "custom message"
+
+instructions: |
+  You are a git automation assistant. When invoked:
+
+  1. Check git status to see what files have changed
+  2. Show the user a summary of changes
+  3. If user provided a message as argument, use it. Otherwise, auto-generate a descriptive commit message based on:
+     - Number of files changed
+     - Types of files (e.g., "Update 5 Python files", "Add new documentation", etc.)
+     - Current date/time
+  4. Add all changes (git add -A)
+  5. Commit with the message
+  6. Push to remote
+  7. Confirm success
+
+  IMPORTANT:
+  - Always follow the git commit message format with the co-author footer
+  - Be concise and efficient - this is meant to save tokens
+  - Don't ask for confirmation unless there are uncommitted changes to sensitive files (.env, credentials, etc.)
+  - If push fails (e.g., need to pull first), handle it gracefully and suggest the fix
+
+parameters:
+  - name: message
+    description: Optional custom commit message
+    type: string
+    required: false
+
+examples:
+  - input: "/push"
+    output: "Auto-generates message like 'Update 3 files - 2026-01-04' and pushes"
+
+  - input: "/push \"Add color coding to Telegram alerts\""
+    output: "Uses the provided message and pushes"

@@ -3,33 +3,65 @@
   "layers": [
     {
       "layer_number": 1,
-      "timestamp": "2026-01-01T14:45:10.548923",
+      "timestamp": "2026-01-02T10:00:12.068496",
       "signal": "SELL",
-      "score": 93.2,
-      "nifty_spot": 26160.65,
-      "vix": 9.21,
+      "score": 93.4,
+      "nifty_spot": 26254.35,
+      "vix": 9.31,
       "regime": "NEUTRAL",
-      "oi_pattern": "LONG_UNWINDING",
+      "oi_pattern": "SHORT_COVERING",
       "strategy": "straddle",
       "strikes": {
-        "call": 26150,
-        "put": 26150
+        "call": 26250,
+        "put": 26250
       },
-      "premium": 158.4
+      "premium": 154.25
+    },
+    {
+      "layer_number": 2,
+      "timestamp": "2026-01-02T10:30:11.717205",
+      "signal": "SELL",
+      "score": 93.4,
+      "nifty_spot": 26245.05,
+      "vix": 9.37,
+      "regime": "NEUTRAL",
+      "oi_pattern": "SHORT_COVERING",
+      "strategy": "straddle",
+      "strikes": {
+        "call": 26250,
+        "put": 26250
+      },
+      "premium": 149.75
+    },
+    {
+      "layer_number": 3,
+      "timestamp": "2026-01-02T11:00:10.224427",
+      "signal": "SELL",
+      "score": 90.4,
+      "nifty_spot": 26262.4,
+      "vix": 9.36,
+      "regime": "NEUTRAL",
+      "oi_pattern": "LONG_BUILDUP",
+      "strategy": "straddle",
+      "strikes": {
+        "call": 26250,
+        "put": 26250
+      },
+      "premium": 150.05
     }
   ],
-  "entry_timestamp": "2026-01-01T14:45:10.548923",
-  "entry_score": 93.2,
-  "entry_nifty_spot": 26160.65,
-  "entry_vix": 9.21,
+  "entry_timestamp": "2026-01-02T10:00:12.068496",
+  "entry_score": 93.4,
+  "entry_nifty_spot": 26254.35,
+  "entry_vix": 9.31,
   "entry_regime": "NEUTRAL",
-  "entry_oi_pattern": "LONG_UNWINDING",
+  "entry_oi_pattern": "SHORT_COVERING",
   "entry_strategy": "straddle",
   "entry_strikes": {
-    "call": 26150,
-    "put": 26150
+    "call": 26250,
+    "put": 26250
   },
-  "entry_premium": 158.4,
-  "last_check_timestamp": "2026-01-01T15:15:06.450745",
-  "last_check_score": 93.2
+  "entry_premium": 154.25,
+  "last_check_timestamp": "2026-01-02T15:15:12.884115",
+  "last_check_score": 93.5
 }

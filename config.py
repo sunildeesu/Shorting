@@ -221,22 +221,90 @@ VIX_GOOD = 15.0         # VIX 12-15 = 75 score (normal range)
 VIX_MODERATE = 20.0     # VIX 15-20 = 40 score (caution)
 # VIX > 20 = 10 score (avoid option selling)
 
+# VIX trend analysis (CRITICAL: VIX direction matters as much as level!)
+VIX_TREND_LOOKBACK_DAYS = 3        # Compare current VIX to 3 days ago
+VIX_TREND_RISING_THRESHOLD = 1.5   # VIX rising if +1.5 points from lookback
+VIX_TREND_FALLING_THRESHOLD = -1.5 # VIX falling if -1.5 points from lookback
+VIX_TREND_MAX_BONUS = 15           # Max bonus for falling VIX (good for sellers)
+VIX_TREND_MAX_PENALTY = 20         # Max penalty for rising VIX (bad for sellers)
+
+# IV Rank analysis (Historical volatility percentile)
+IV_RANK_LOOKBACK_DAYS = 365        # Calculate IV Rank over 1 year of VIX history
+IV_RANK_HIGH_THRESHOLD = 75        # IV Rank > 75% = High IV (excellent for selling)
+IV_RANK_MODERATE_HIGH = 50         # IV Rank > 50% = Above average (good for selling)
+IV_RANK_MODERATE_LOW = 25          # IV Rank > 25% = Below average (marginal for selling)
+# IV Rank < 25% = Low IV (poor for selling - cheap premiums)
+
+# CRITICAL: Hard veto thresholds (override all other signals)
+IV_RANK_HARD_VETO_THRESHOLD = 15   # If IV Rank < 15%, force signal to AVOID (premiums too cheap)
+# Rationale: IV Rank < 15% means VIX in bottom 15% of past year = extremely cheap premiums
+# Even if all other conditions look good, risk/reward is poor when selling cheap options
+
+# Realized vs Implied Volatility Filter
+REALIZED_VOL_LOOKBACK_DAYS = 5     # Calculate realized volatility over last 5 days
+REALIZED_VOL_MAX_MULTIPLIER = 1.2  # Realized vol should not exceed 1.2x implied vol
+# If realized > 1.2x implied = market moving more than VIX suggests = dangerous for sellers
+
+# Price Action Filter (Trending vs Range-bound)
+PRICE_ACTION_LOOKBACK_DAYS = 5     # Analyze price action over last 5 days
+TRENDING_THRESHOLD = 1.5           # If daily ranges avg > 1.5% = trending market (avoid)
+CONSOLIDATION_THRESHOLD = 0.8      # If daily ranges avg < 0.8% = consolidation (ideal)
+
+# Intraday Volatility Filter
+INTRADAY_VOL_LOOKBACK_DAYS = 3     # Check recent intraday volatility (last 3 days)
+INTRADAY_VOL_HIGH_THRESHOLD = 1.2  # If avg intraday range > 1.2% = too volatile (avoid)
+
+# ============================================
+# TIERED SIGNAL SYSTEM (Added: Jan 3, 2026)
+# ============================================
+# Replaces binary SELL/AVOID with quality-based tiers for more trading opportunities
+# while maintaining risk discipline through position sizing
+
+# Enable/disable tiered signals (set to False to revert to binary SELL/AVOID)
+ENABLE_TIERED_SIGNALS = os.getenv('ENABLE_TIERED_SIGNALS', 'true').lower() == 'true'
+
+# IV Rank Thresholds (percentage of 1-year range)
+# Based on 6-month backtest: 27 days → 45 days tradeable (+67% increase)
+IV_RANK_EXCELLENT = float(os.getenv('IV_RANK_EXCELLENT', '25'))    # >= 25% = SELL_STRONG
+IV_RANK_GOOD = float(os.getenv('IV_RANK_GOOD', '15'))              # >= 15% = SELL_MODERATE
+IV_RANK_MARGINAL = float(os.getenv('IV_RANK_MARGINAL', '10'))      # >= 10% = SELL_WEAK
+# < 10% = AVOID (too cheap)
+
+# Position Sizing by Tier (0.0 to 1.0)
+# Smaller positions compensate for lower premium quality
+POSITION_SIZE_STRONG = float(os.getenv('POSITION_SIZE_STRONG', '1.0'))      # 100% full position
+POSITION_SIZE_MODERATE = float(os.getenv('POSITION_SIZE_MODERATE', '0.75')) # 75% reduced
+POSITION_SIZE_WEAK = float(os.getenv('POSITION_SIZE_WEAK', '0.5'))          # 50% half position
+
+# Premium Quality Labels (for display/reporting)
+PREMIUM_QUALITY_EXCELLENT = "EXCELLENT (100% of fair value or better)"
+PREMIUM_QUALITY_GOOD = "GOOD (85-90% of fair value)"
+PREMIUM_QUALITY_MARGINAL = "BELOW AVERAGE (75-80% of fair value)"
+PREMIUM_QUALITY_POOR = "CHEAP (< 70% of fair value)"
+
+# Note: IV_RANK_HARD_VETO_THRESHOLD (line 239) is superseded by IV_RANK_MARGINAL
+# when ENABLE_TIERED_SIGNALS=True. Kept for backwards compatibility.
+
 # Greeks analysis parameters
 STRADDLE_DELTA_IDEAL = 0.5      # ATM options (delta ~±0.5)
 STRANGLE_DELTA_IDEAL = 0.35     # OTM options (delta ~±0.3 to ±0.4)
 MIN_THETA_THRESHOLD = 20        # Minimum daily theta decay
 MAX_GAMMA_THRESHOLD = 0.01      # Maximum acceptable gamma
+MAX_VEGA_THRESHOLD = 150        # Maximum acceptable vega (VIX sensitivity)
 
-# Scoring weights (must sum to 1.0)
-THETA_WEIGHT = 0.25     # 25% weight for theta decay
-GAMMA_WEIGHT = 0.25     # 25% weight for gamma stability
-VIX_WEIGHT = 0.30       # 30% weight for VIX level
+# Scoring weights (must sum to 1.0) - Updated to include Vega
+THETA_WEIGHT = 0.20     # 20% weight for theta decay (reduced from 25%)
+GAMMA_WEIGHT = 0.20     # 20% weight for gamma stability (reduced from 25%)
+VEGA_WEIGHT = 0.15      # 15% weight for vega exposure (NEW - VIX sensitivity)
+VIX_WEIGHT = 0.25       # 25% weight for VIX level (reduced from 30%)
 REGIME_WEIGHT = 0.10    # 10% weight for market regime
 OI_WEIGHT = 0.10        # 10% weight for OI analysis
+# Total = 1.00 (Theta + Gamma + Vega + VIX + Regime + OI)
 
 # Exit signal thresholds (for intraday monitoring)
 NIFTY_OPTION_EXIT_SCORE_DROP = 20      # Exit if score drops >20 points from entry
-NIFTY_OPTION_EXIT_VIX_SPIKE = 20.0     # Exit if VIX increases >20% from entry
+NIFTY_OPTION_EXIT_VIX_SPIKE_PCT = 10.0 # Exit if VIX increases >10% from entry (reduced from 20%)
+NIFTY_OPTION_EXIT_VIX_SPIKE_POINTS = 2.0  # OR exit if VIX increases >2 points (for low VIX environments)
 NIFTY_OPTION_EXIT_SCORE_THRESHOLD = 40  # Exit if score falls below 40 (AVOID zone)
 NIFTY_OPTION_EXIT_ON_REGIME_CHANGE = True  # Exit if regime changes from NEUTRAL
 NIFTY_OPTION_EXIT_ON_STRONG_OI_BUILDUP = True  # Exit on LONG_BUILDUP/SHORT_BUILDUP

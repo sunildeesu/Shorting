@@ -141,10 +141,13 @@ class TelegramNotifier:
             emoji = "📉"
             direction_text = "DROP"
             direction_color = "🔴"
+            # Color badge for 1-min alerts (red for drops, green for rises)
+            color_badge = "🔴🔴🔴"
         else:
             emoji = "📈"
             direction_text = "RISE"
             direction_color = "🟢"
+            color_badge = "🟢🟢🟢"
 
         # Priority badge
         if priority == "HIGH":
@@ -154,14 +157,14 @@ class TelegramNotifier:
             priority_badge = "⚡ <b>NORMAL PRIORITY</b> ⚡\n"
             priority_note = "(Fast move without acceleration)"
 
-        # Ultra-fast alert header
+        # Ultra-fast alert header with color badge and UNIQUE STYLE for 1-min alerts
         header = (
-            "⚡⚡⚡ <b>1-MIN ULTRA-FAST ALERT</b> ⚡⚡⚡\n"
+            f"{color_badge} <b><i>⚡ 1-MIN ULTRA-FAST ALERT ⚡</i></b> {color_badge}\n"
             f"{priority_badge}"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n"
             f"{emoji} <b>{direction_color} {direction_text} DETECTED {direction_color}</b> {emoji}\n"
             f"<i>{priority_note}</i>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
         )
 
         # Add timestamp in IST
@@ -244,35 +247,35 @@ class TelegramNotifier:
         # Determine if this is a rise or drop alert
         is_rise = alert_type.endswith('_rise')
 
-        # Alert header based on type (with priority emphasis for volume spikes)
+        # Alert header based on type (with priority emphasis and color coding)
         if is_rise:
             if alert_type == "volume_spike_rise":
                 header = (
-                    "🚨🚨🚨 <b>PRIORITY ALERT</b> 🚨🚨🚨\n"
+                    "🟢🟢🟢 <b>PRIORITY ALERT</b> 🟢🟢🟢\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     "⚡ <b>URGENT</b> ⚡ VOLUME SPIKE RISE ⚡ <b>URGENT</b> ⚡\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 )
             elif alert_type == "5min_rise":
-                header = "⚡ ALERT: Rapid 5-Min Rise!"
+                header = "🟢🟢 <b>ALERT:</b> Rapid 5-Min Rise!"
             elif alert_type == "30min_rise":
-                header = "📈 ALERT: Gradual 30-Min Rise!"
+                header = "🟢 <b>ALERT:</b> Gradual 30-Min Rise!"
             else:
-                header = "🟢 ALERT: Stock Rise Detected"
+                header = "🟢 <b>ALERT:</b> Stock Rise Detected"
         else:
             if alert_type == "volume_spike":
                 header = (
-                    "🚨🚨🚨 <b>PRIORITY ALERT</b> 🚨🚨🚨\n"
+                    "🔴🔴🔴 <b>PRIORITY ALERT</b> 🔴🔴🔴\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                     "⚡ <b>URGENT</b> ⚡ VOLUME SPIKE DROP ⚡ <b>URGENT</b> ⚡\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━━"
                 )
             elif alert_type == "5min":
-                header = "⚡ ALERT: Rapid 5-Min Drop!"
+                header = "🔴🔴 <b>ALERT:</b> Rapid 5-Min Drop!"
             elif alert_type == "30min":
-                header = "⚠️ ALERT: Gradual 30-Min Drop!"
+                header = "🔴 <b>ALERT:</b> Gradual 30-Min Drop!"
             else:
-                header = "🔴 ALERT: Stock Drop Detected"
+                header = "🔴 <b>ALERT:</b> Stock Drop Detected"
 
         # Base message - use bold for priority alerts
         is_priority = alert_type in ["volume_spike", "volume_spike_rise"]
@@ -715,13 +718,13 @@ class TelegramNotifier:
         # Market regime emoji
         regime_emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "🟡"}.get(market_regime, "🟡")
 
-        # Header
-        message = f"📊📊📊 <b>PRE-MARKET PATTERN ALERT</b> 📊📊📊\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        # Header with PURPLE color badge and UNIQUE STYLE for pre-market alerts
+        message = f"🟣🟣🟣 <b><u>PRE-MARKET PATTERN ALERT</u></b> 🟣🟣🟣\n"
+        message += "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n"
         message += f"🕘 <b>Analysis Time:</b> {now.strftime('%I:%M %p')}\n"
         message += f"⏰ <b>Market Opens in:</b> {minutes_to_open} minutes\n"
         message += f"{regime_emoji} <b>Market Regime:</b> {market_regime}\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        message += "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n\n"
 
         if not top_patterns:
             message += "❌ <b>No high-quality patterns found today</b>\n"
@@ -865,13 +868,13 @@ class TelegramNotifier:
             date_str = "Today"
             time_str = ""
 
-        # Header
+        # Header with BLUE color badge and UNIQUE STYLE for EOD Sector Summary
         message = (
-            "📊📊📊 <b>EOD SECTOR SUMMARY</b> 📊📊📊\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔵🔵🔵 <b><code>EOD SECTOR SUMMARY</code></b> 🔵🔵🔵\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
             f"📅 Date: <b>{date_str}</b>\n"
             f"⏰ Time: {time_str}\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
         )
 
         # Sort sectors by 10-min performance
@@ -976,12 +979,12 @@ class TelegramNotifier:
         top_gainers = rotation_data.get('top_gainers', [])
         top_losers = rotation_data.get('top_losers', [])
 
-        # Header with priority emphasis
+        # Header with PURPLE color badge and UNIQUE STYLE for Sector Rotation
         message = (
-            "🔄🔄🔄 <b>SECTOR ROTATION DETECTED</b> 🔄🔄🔄\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🟣🟣🟣 <b><u>SECTOR ROTATION DETECTED</u></b> 🟣🟣🟣\n"
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n"
             "💰 <b>FUND FLOW ALERT</b> 💰\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔\n\n"
         )
 
         # Divergence info
@@ -1115,13 +1118,13 @@ class TelegramNotifier:
     def _format_eod_pattern_summary(self, filtered_patterns: Dict, analysis_date: datetime, total_count: int) -> str:
         """Format consolidated EOD pattern message"""
 
-        # Header
+        # Header with BLUE color badge and UNIQUE STYLE for EOD Pattern Detection
         message = (
-            "📊📊📊 <b>EOD PATTERN DETECTION</b> 📊📊📊\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔵🔵🔵 <b><code>EOD PATTERN DETECTION</code></b> 🔵🔵🔵\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
             f"📅 Date: {analysis_date.strftime('%d %B %Y')}\n"
             f"⏰ Analysis Time: 3:30 PM\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
         )
 
         bullish_count = 0
@@ -1437,12 +1440,19 @@ class TelegramNotifier:
         total_score = data.get('total_score', 0)
         nifty_spot = data.get('nifty_spot', 0)
         vix = data.get('vix', 0)
+        vix_trend = data.get('vix_trend', 0)
+        iv_rank = data.get('iv_rank', 50.0)
         market_regime = data.get('market_regime', 'UNKNOWN')
         best_strategy = data.get('best_strategy', 'straddle').upper()
         recommendation = data.get('recommendation', '')
         risk_factors = data.get('risk_factors', [])
         breakdown = data.get('breakdown', {})
         expiry_analyses = data.get('expiry_analyses', [])
+
+        # NEW: Tier system fields
+        signal_tier = data.get('signal_tier', signal)
+        position_size = data.get('position_size', 1.0)
+        premium_quality = data.get('premium_quality', 'TRADEABLE')
 
         # Parse timestamp
         try:
@@ -1453,31 +1463,70 @@ class TelegramNotifier:
             date_str = datetime.now().strftime("%d %b %Y")
             time_str = datetime.now().strftime("%I:%M %p")
 
-        # Signal emoji and styling
+        # Signal emoji and styling with COLOR BADGES
+        # NEW: Tier-specific emojis and colors
+        tier_emoji_map = {
+            'SELL_STRONG': '🔥',
+            'SELL_MODERATE': '⚠️',
+            'SELL_WEAK': '⚡',
+            'AVOID': '🛑'
+        }
+        tier_display_map = {
+            'SELL_STRONG': 'SELL - EXCELLENT',
+            'SELL_MODERATE': 'SELL - GOOD',
+            'SELL_WEAK': 'SELL - WEAK',
+            'AVOID': 'AVOID'
+        }
+        # Color badges for header
+        tier_color_badge_map = {
+            'SELL_STRONG': '🟢🟢🟢',
+            'SELL_MODERATE': '🟢🟢',
+            'SELL_WEAK': '🟠🟠',
+            'AVOID': '🔴🔴🔴'
+        }
+
         if signal == 'SELL':
             signal_emoji = "✅"
-            signal_style = "🟢"
+            signal_style = "🟢🟢"
         elif signal == 'HOLD':
             signal_emoji = "⏸️"
-            signal_style = "🟡"
+            signal_style = "🟡🟡"
         else:  # AVOID
             signal_emoji = "🛑"
-            signal_style = "🔴"
+            signal_style = "🔴🔴🔴"
 
-        # Header
+        # Get tier-specific emoji, display, and color badge
+        tier_emoji = tier_emoji_map.get(signal_tier, signal_emoji)
+        tier_display = tier_display_map.get(signal_tier, signal)
+        tier_color_badge = tier_color_badge_map.get(signal_tier, signal_style)
+
+        # Header with tier-specific color badge and UNIQUE STYLE for Options
         message = (
-            f"{signal_style} <b>NIFTY OPTION SELLING SIGNAL</b> {signal_style}\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{tier_color_badge} <b><i>NIFTY OPTION SELLING SIGNAL</i></b> {tier_color_badge}\n"
+            "═══════════════════════════════════════\n"
             f"📅 <b>{date_str}</b> | ⏰ {time_str}\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "═══════════════════════════════════════\n\n"
         )
 
         # Signal and Score
-        message += (
-            f"📊 <b>SIGNAL: {signal} {signal_emoji}</b>\n"
-            f"   Score: <b>{total_score:.1f}/100</b>\n"
-            f"💰 NIFTY Spot: <b>₹{nifty_spot:,.2f}</b>\n\n"
-        )
+        # Check if tiered signals are enabled
+        import config as cfg
+        if cfg.ENABLE_TIERED_SIGNALS and signal_tier != 'AVOID':
+            message += (
+                f"📊 <b>SIGNAL: {tier_display} {tier_emoji}</b>\n"
+                f"   Score: <b>{total_score:.1f}/100</b>\n"
+                f"   Position Size: <b>{int(position_size * 100)}%</b>\n"
+                f"💰 NIFTY Spot: <b>₹{nifty_spot:,.2f}</b>\n\n"
+                f"💎 <b>PREMIUM QUALITY: {premium_quality.split(' (')[0]}</b>\n"
+                f"   {premium_quality.split(' (')[1] if '(' in premium_quality else ''}\n\n"
+            )
+        else:
+            # Original format for AVOID or when tiered signals disabled
+            message += (
+                f"📊 <b>SIGNAL: {signal} {signal_emoji}</b>\n"
+                f"   Score: <b>{total_score:.1f}/100</b>\n"
+                f"💰 NIFTY Spot: <b>₹{nifty_spot:,.2f}</b>\n\n"
+            )
 
         # Expiry Information
         if expiry_analyses:
@@ -1495,14 +1544,39 @@ class TelegramNotifier:
         message += "📈 <b>ANALYSIS BREAKDOWN:</b>\n"
         theta_score = breakdown.get('theta_score', 0)
         gamma_score = breakdown.get('gamma_score', 0)
+        vega_score = breakdown.get('vega_score', 0)
         vix_score = breakdown.get('vix_score', 0)
         regime_score = breakdown.get('regime_score', 0)
         oi_score = breakdown.get('oi_score', 0)
 
-        message += f"   ⏰ Theta Score: <b>{theta_score:.1f}/100</b> {self._score_emoji(theta_score)}\n"
-        message += f"   📉 Gamma Score: <b>{gamma_score:.1f}/100</b> {self._score_emoji(gamma_score)}\n"
-        message += f"   🌊 VIX Score: <b>{vix_score:.1f}/100</b> {self._score_emoji(vix_score)} (VIX at {vix:.1f})\n"
-        message += f"   📊 Market Regime: <b>{regime_score:.1f}/100</b> ({market_regime})\n"
+        message += f"   ⏰ Theta Score: <b>{theta_score:.1f}/100</b> {self._score_emoji(theta_score)} (Time decay)\n"
+        message += f"   📉 Gamma Score: <b>{gamma_score:.1f}/100</b> {self._score_emoji(gamma_score)} (Stability)\n"
+        message += f"   📊 Vega Score: <b>{vega_score:.1f}/100</b> {self._score_emoji(vega_score)} (VIX sensitivity)\n"
+
+        # VIX score with trend and IV Rank indicators
+        vix_trend_emoji = ""
+        vix_trend_text = ""
+        if vix_trend > 1.5:
+            vix_trend_emoji = "⬆️"
+            vix_trend_text = f" <b>(Rising {vix_trend:+.1f})</b> ⚠️"
+        elif vix_trend < -1.5:
+            vix_trend_emoji = "⬇️"
+            vix_trend_text = f" <b>(Falling {vix_trend:+.1f})</b> ✅"
+        else:
+            vix_trend_emoji = "➡️"
+            vix_trend_text = f" (Stable {vix_trend:+.1f})"
+
+        # IV Rank indicator
+        iv_rank_text = ""
+        if iv_rank > 75:
+            iv_rank_text = f", <b>IV Rank {iv_rank:.0f}%</b> (HIGH - rich premiums) ✅"
+        elif iv_rank < 25:
+            iv_rank_text = f", <b>IV Rank {iv_rank:.0f}%</b> (LOW - cheap premiums) ⚠️"
+        else:
+            iv_rank_text = f", IV Rank {iv_rank:.0f}%"
+
+        message += f"   🌊 VIX Score: <b>{vix_score:.1f}/100</b> {self._score_emoji(vix_score)} (VIX {vix:.1f}{vix_trend_text}{iv_rank_text})\n"
+        message += f"   📈 Market Regime: <b>{regime_score:.1f}/100</b> ({market_regime})\n"
         message += f"   🔄 OI Pattern: <b>{oi_score:.1f}/100</b>\n\n"
 
         # Recommendation
@@ -1516,6 +1590,24 @@ class TelegramNotifier:
         for risk in risk_factors:
             message += f"   • {risk}\n"
         message += "\n"
+
+        # SELL_WEAK specific guidance
+        if cfg.ENABLE_TIERED_SIGNALS and signal_tier == 'SELL_WEAK':
+            message += (
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "⚠️ <b>WEAK SIGNAL - USER DECISION REQUIRED</b> ⚠️\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "<b>Why Weak Signal?</b>\n"
+                f"   • IV Rank in bottom 10-15% of past year ({iv_rank:.1f}%)\n"
+                "   • Premiums below average (75-80% of fair value)\n"
+                "   • Lower profit potential vs SELL_STRONG\n\n"
+                "<b>⚖️ Trade Decision:</b>\n"
+                "   ✅ <b>If YES:</b> Trade 50% of normal size\n"
+                "   ❌ <b>If NO:</b> Wait for SELL_MODERATE (IV>15%) or SELL_STRONG (IV>25%)\n\n"
+                "<b>💡 Recommendation:</b>\n"
+                "   Only trade if you understand the trade-offs.\n"
+                "   Consider waiting for higher IV Rank days.\n\n"
+            )
 
         # Strike Suggestions (if available)
         if expiry_analyses and len(expiry_analyses) > 0:
@@ -1608,9 +1700,10 @@ class TelegramNotifier:
 
         if is_late_entry:
             message = (
-                "📈 <b>LATE ENTRY OPPORTUNITY</b> 📈\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {date_str} | {time_str}\n\n"
+                "🟢🟢 <b><i>LATE ENTRY OPPORTUNITY</i></b> 🟢🟢\n"
+                "═══════════════════════════════════════\n"
+                f"⏰ {date_str} | {time_str}\n"
+                "═══════════════════════════════════════\n\n"
                 "✅ Entry signal after 10:00 AM\n"
                 f"Current Score: <b>{score:.1f}/100</b> ✅\n\n"
                 "💡 Conditions improved significantly\n"
@@ -1618,9 +1711,10 @@ class TelegramNotifier:
             )
         else:
             message = (
-                f"📈 <b>ADD TO POSITION - Layer {layer_number}</b> 📈\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {date_str} | {time_str}\n\n"
+                f"🟢🟢 <b><i>ADD TO POSITION - Layer {layer_number}</i></b> 🟢🟢\n"
+                "═══════════════════════════════════════\n"
+                f"⏰ {date_str} | {time_str}\n"
+                "═══════════════════════════════════════\n\n"
                 f"💰 Current Score: <b>{score:.1f}/100</b>\n\n"
             )
 
@@ -1665,10 +1759,13 @@ class TelegramNotifier:
 
         if signal == 'EXIT_NOW':
             urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️"
+            # RED for critical exit with UNIQUE STYLE
+            color_badge = "🔴🔴🔴" if urgency == "HIGH" else "🔴🔴"
             message = (
-                f"{urgency_emoji} <b>EXIT POSITION NOW</b> {urgency_emoji}\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {date_str} | {time_str}\n\n"
+                f"{color_badge} <b><i>EXIT POSITION NOW</i></b> {color_badge}\n"
+                "═══════════════════════════════════════\n"
+                f"⏰ {date_str} | {time_str}\n"
+                "═══════════════════════════════════════\n\n"
                 f"❌ EXIT SIGNAL (Urgency: <b>{urgency}</b>)\n"
                 f"Exit Score: {exit_score}/100\n\n"
             )
@@ -1685,10 +1782,12 @@ class TelegramNotifier:
                 "🔔 #NIFTYOptions #ExitSignal"
             )
         elif signal == 'CONSIDER_EXIT':
+            # ORANGE for warning/caution with UNIQUE STYLE
             message = (
-                "⚠️ <b>CONSIDER EXIT</b> ⚠️\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {date_str} | {time_str}\n\n"
+                "🟠🟠 <b><i>CONSIDER EXIT</i></b> 🟠🟠\n"
+                "═══════════════════════════════════════\n"
+                f"⏰ {date_str} | {time_str}\n"
+                "═══════════════════════════════════════\n\n"
                 f"Exit Score: {exit_score}/100 (Low urgency)\n\n"
             )
 
@@ -1724,11 +1823,12 @@ class TelegramNotifier:
         status = position_state.get('status', 'NO_POSITION')
 
         if status == 'NO_POSITION' or not position_state:
-            # No position today - send brief summary
+            # No position today - send brief summary with BLUE color badge and UNIQUE STYLE
             message = (
-                "📊 <b>END OF DAY SUMMARY</b> 📊\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+                "🔵🔵 <b><code>END OF DAY SUMMARY</code></b> 🔵🔵\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
                 "❌ <b>No Position Today</b>\n"
                 "No entry signal met criteria.\n\n"
                 "🔔 #NIFTYOptions #DailySummary"
@@ -1769,11 +1869,12 @@ class TelegramNotifier:
         nifty_emoji = "🟢" if nifty_move >= 0 else "🔴"
 
         if status == 'ENTERED':
-            # Active position
+            # Active position with BLUE color badge and UNIQUE STYLE
             message = (
-                "📊 <b>END OF DAY SUMMARY - POSITION ACTIVE</b> 📊\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+                "🔵🔵 <b><code>END OF DAY SUMMARY - POSITION ACTIVE</code></b> 🔵🔵\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
             )
 
             # Entry info
@@ -1837,10 +1938,12 @@ class TelegramNotifier:
             except:
                 exit_time_str = "Unknown"
 
+            # BLUE color badge and UNIQUE STYLE for informational EOD summary
             message = (
-                "📊 <b>END OF DAY SUMMARY - POSITION EXITED</b> 📊\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"📅 {datetime.now().strftime('%d %b %Y')}\n\n"
+                "🔵🔵 <b><code>END OF DAY SUMMARY - POSITION EXITED</code></b> 🔵🔵\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+                f"📅 {datetime.now().strftime('%d %b %Y')}\n"
+                "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
             )
 
             # Entry info
