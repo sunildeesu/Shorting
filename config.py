@@ -40,7 +40,7 @@ DROP_THRESHOLD_1MIN = float(os.getenv('DROP_THRESHOLD_1MIN', '0.50'))  # 0.50% d
 RISE_THRESHOLD_1MIN = float(os.getenv('RISE_THRESHOLD_1MIN', '0.50'))  # 0.50% rise in 1 minute (tuned from 0.75% - was too strict)
 
 # Volume requirements for quality signals (percentage-based only)
-VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '2.5'))  # 2.5x average (percentage-based - fair for all stock sizes)
+VOLUME_SPIKE_MULTIPLIER_1MIN = float(os.getenv('VOLUME_SPIKE_MULTIPLIER_1MIN', '1.8'))  # 1.8x average (tuned from 2.5x - was too strict, missed real moves)
 # NOTE: No MIN_VOLUME_1MIN absolute threshold - using only percentage-based multiplier
 # Rationale: Different stocks have vastly different normal volumes (large-cap: 500K/min, small-cap: 5K/min)
 # A 2.5x spike is significant regardless of absolute volume
