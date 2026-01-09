@@ -62,3 +62,7 @@ data/screener_results/
 # Runtime process files
 data/caffeinate.pid
 *.pid
+
+# Credentials and sensitive files
+credentials/
+*.json.secret

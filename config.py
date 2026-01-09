@@ -321,3 +321,52 @@ NIFTY_OPTION_ADD_SCORE_THRESHOLD = 70  # Add position if score >= 70 (SELL zone)
 NIFTY_OPTION_ADD_SCORE_IMPROVEMENT = 10  # Add if score improves by 10+ points from last layer
 NIFTY_OPTION_ADD_MIN_INTERVAL = 30     # Minimum 30 minutes between position adds
 NIFTY_OPTION_ADD_AFTER_NO_ENTRY = True  # Allow first entry after 10:00 if initial signal was HOLD
+
+# ============================================
+# VOLUME PROFILE ANALYZER CONFIGURATION
+# ============================================
+# End-of-day volume profile analysis (3:00 PM and 3:15 PM)
+# Detects P-shaped (distribution) and B-shaped (accumulation) profiles
+
+ENABLE_VOLUME_PROFILE = os.getenv('ENABLE_VOLUME_PROFILE', 'true').lower() == 'true'
+VOLUME_PROFILE_POC_TOP_THRESHOLD = float(os.getenv('VOLUME_PROFILE_POC_TOP_THRESHOLD', '0.70'))  # P-shape threshold (POC >= 70%)
+VOLUME_PROFILE_POC_BOTTOM_THRESHOLD = float(os.getenv('VOLUME_PROFILE_POC_BOTTOM_THRESHOLD', '0.30'))  # B-shape threshold (POC <= 30%)
+VOLUME_PROFILE_MIN_CONFIDENCE = float(os.getenv('VOLUME_PROFILE_MIN_CONFIDENCE', '7.5'))  # Minimum confidence for Telegram alerts
+VOLUME_PROFILE_MIN_CANDLES = int(os.getenv('VOLUME_PROFILE_MIN_CANDLES', '30'))  # Minimum 1-min candles required (30 min of data)
+VOLUME_PROFILE_TICK_SIZE_AUTO = os.getenv('VOLUME_PROFILE_TICK_SIZE_AUTO', 'true').lower() == 'true'  # Use adaptive tick size
+VOLUME_PROFILE_REPORT_DIR = 'data/volume_profile_reports'  # Report output directory
+
+# ============================================
+# GREEKS DIFFERENCE TRACKER CONFIGURATION
+# ============================================
+# Intraday Greeks change analysis: tracks Delta, Theta, Vega changes
+# from 9:15 AM baseline throughout the day (every 15 minutes)
+
+ENABLE_GREEKS_DIFF_TRACKER = os.getenv('ENABLE_GREEKS_DIFF_TRACKER', 'true').lower() == 'true'
+
+# Timing
+GREEKS_BASELINE_TIME = "09:15"  # Market open - capture baseline Greeks
+GREEKS_UPDATE_INTERVAL_MINUTES = 15  # Update frequency (9:15 AM to 3:30 PM)
+GREEKS_MARKET_START = "09:15"
+GREEKS_MARKET_END = "15:30"
+
+# Strike configuration (ATM ± offsets)
+GREEKS_DIFF_STRIKE_OFFSETS = [0, 50, 100, 150]  # ATM, ATM+50, ATM+100, ATM+150
+
+# Expiry (use next week only - consistent with NIFTY options config)
+GREEKS_DIFF_EXPIRY_TYPE = "next_week"  # Always use next week expiry
+GREEKS_DIFF_MIN_VALID_STRIKES = 6  # Minimum valid strikes required (3 CE + 3 PE)
+
+# Output
+GREEKS_DIFF_REPORT_DIR = 'data/greeks_difference_reports'
+GREEKS_DIFF_ENABLE_TELEGRAM = os.getenv('GREEKS_DIFF_ENABLE_TELEGRAM', 'true').lower() == 'true'
+GREEKS_DIFF_TELEGRAM_ONCE_ONLY = True  # Send only 1 Telegram message at first update (9:30 AM)
+
+# Cloud Storage (Google Drive / Dropbox)
+GREEKS_DIFF_CLOUD_PROVIDER = os.getenv('GREEKS_DIFF_CLOUD_PROVIDER', 'google_drive')  # 'google_drive' or 'dropbox'
+GREEKS_DIFF_GOOGLE_DRIVE_FOLDER_ID = os.getenv('GREEKS_DIFF_GOOGLE_DRIVE_FOLDER_ID', '')  # Google Drive folder ID
+GREEKS_DIFF_GOOGLE_CREDENTIALS_PATH = os.getenv('GREEKS_DIFF_GOOGLE_CREDENTIALS_PATH', 'credentials/google_drive_credentials.json')
+GREEKS_DIFF_DROPBOX_TOKEN = os.getenv('GREEKS_DIFF_DROPBOX_TOKEN', '')  # Dropbox access token
+
+# Storage
+GREEKS_BASELINE_CACHE_KEY = 'greeks_baseline_{date}'  # Persists for the day

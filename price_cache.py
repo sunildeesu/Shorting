@@ -555,13 +555,24 @@ class PriceCache:
     def get_volume_data_1min(self, symbol: str) -> Dict:
         """
         Get volume data for 1-minute comparison.
-        Compares current volume with volume from 1 minute ago.
-        Only compares volumes from the same day (prevents cross-day comparisons).
+
+        FIXED LOGIC: Compares per-minute volume DELTA (not cumulative volumes).
+
+        Example:
+        - Current cumulative: 9,509,403
+        - Previous cumulative: 9,465,775
+        - Per-minute delta: 43,628 shares traded in last minute
+        - Average delta (last 5 minutes): ~40,000 shares/min
+        - Spike if: 43,628 > (40,000 * 2.5) = False (normal)
+
+        Old (WRONG) logic compared cumulative volumes:
+        - Would need 9,509,403 > (9,465,775 * 2.5) = impossible!
 
         Returns:
             Dict with current_volume, previous_volume, avg_volume, volume_change, and volume_spike flag
         """
         if symbol not in self.cache:
+            logger.debug(f"[DEBUG] {symbol}: Not in cache - no volume data available")
             return {
                 "current_volume": 0,
                 "previous_volume": 0,
@@ -573,8 +584,13 @@ class PriceCache:
         current = self.cache[symbol].get("current")
         previous_1min = self.cache[symbol].get("previous_1min")
 
-        current_volume = current.get("volume", 0) if current else 0
-        previous_volume = 0
+        # DEBUG: Log snapshot availability
+        has_current = current is not None
+        has_previous = previous_1min is not None
+        logger.debug(f"[DEBUG] {symbol}: Snapshots - current={has_current}, previous_1min={has_previous}")
+
+        current_cumulative = current.get("volume", 0) if current else 0
+        previous_cumulative = 0
 
         # Validate same-day timestamps
         if current and previous_1min:
@@ -583,25 +599,113 @@ class PriceCache:
 
             if current_timestamp and previous_timestamp:
                 if self._is_same_day(current_timestamp, previous_timestamp):
-                    previous_volume = previous_1min.get("volume", 0)
+                    previous_cumulative = previous_1min.get("volume", 0)
+                    logger.debug(f"[DEBUG] {symbol}: Cumulative volumes - current={current_cumulative:,}, previous={previous_cumulative:,}")
                 else:
                     logger.debug(f"{symbol}: Skipping 1-min volume comparison - timestamps from different days")
+        elif not previous_1min:
+            logger.debug(f"[DEBUG] {symbol}: No previous_1min snapshot - insufficient history for delta calculation")
 
-        # Calculate volume change
-        volume_change = current_volume - previous_volume if previous_volume > 0 else 0
+        # FIXED: Calculate per-minute delta (actual volume traded in last minute)
+        per_minute_delta = current_cumulative - previous_cumulative if previous_cumulative > 0 else 0
+        logger.debug(f"[DEBUG] {symbol}: Per-minute delta = {per_minute_delta:,} shares")
 
-        # Volume spike if current > 3.0x previous (1-min uses stricter multiplier)
+        # Calculate average per-minute delta from recent history
+        avg_per_minute_delta = self._calculate_avg_volume_delta(symbol, interval_minutes=1)
+        logger.debug(f"[DEBUG] {symbol}: Average per-minute delta = {avg_per_minute_delta:,.0f} shares")
+
+        # Volume spike if current delta > 2.5x average delta
         volume_spike = False
-        if previous_volume > 0:
-            volume_spike = current_volume > (previous_volume * config.VOLUME_SPIKE_MULTIPLIER_1MIN)
+        if avg_per_minute_delta > 0 and per_minute_delta > 0:
+            multiplier = per_minute_delta / avg_per_minute_delta
+            threshold = avg_per_minute_delta * config.VOLUME_SPIKE_MULTIPLIER_1MIN
+            volume_spike = per_minute_delta > threshold
+            logger.debug(f"[DEBUG] {symbol}: Volume comparison - {per_minute_delta:,} vs {threshold:,.0f} ({multiplier:.2f}x) = {'SPIKE' if volume_spike else 'NORMAL'}")
+            if volume_spike:
+                logger.info(f"{symbol}: VOLUME SPIKE DETECTED! {per_minute_delta:,} > {threshold:,.0f} ({multiplier:.1f}x avg)")
+        elif avg_per_minute_delta == 0:
+            logger.debug(f"[DEBUG] {symbol}: Cannot calculate spike - avg_delta is 0 (insufficient history)")
+        elif per_minute_delta == 0:
+            logger.debug(f"[DEBUG] {symbol}: Cannot calculate spike - current delta is 0")
 
         return {
-            "current_volume": current_volume,
-            "previous_volume": previous_volume,
-            "avg_volume": previous_volume,  # For compatibility with alert formatting
-            "volume_change": volume_change,
+            "current_volume": per_minute_delta,  # FIXED: Return per-minute delta
+            "previous_volume": previous_cumulative,  # For reference
+            "avg_volume": avg_per_minute_delta,  # FIXED: Average per-minute delta
+            "volume_change": per_minute_delta,
             "volume_spike": volume_spike
         }
+
+    def _calculate_avg_volume_delta(self, symbol: str, interval_minutes: int = 1) -> float:
+        """
+        Calculate average per-interval volume delta from recent history.
+
+        This calculates the rolling average of volume deltas (volume traded per interval).
+
+        Args:
+            symbol: Stock symbol
+            interval_minutes: Interval size (1 for 1-min, 5 for 5-min, etc.)
+
+        Returns:
+            Average volume delta per interval
+        """
+        if symbol not in self.cache:
+            return 0
+
+        # Collect volume deltas from recent snapshots
+        deltas = []
+
+        if interval_minutes == 1:
+            # For 1-minute: calculate deltas between consecutive snapshots
+            # Use: current, previous_1min, previous (5min ago)
+            snapshots = []
+            for key in ['current', 'previous_1min', 'previous']:
+                snapshot = self.cache[symbol].get(key)
+                if snapshot and snapshot.get('volume', 0) > 0:
+                    snapshots.append(snapshot.get('volume', 0))
+
+            logger.debug(f"[DEBUG] {symbol}: Collected {len(snapshots)} snapshots for avg delta calculation")
+
+            # Calculate deltas between consecutive snapshots
+            for i in range(len(snapshots) - 1):
+                delta = snapshots[i] - snapshots[i+1]
+                if delta > 0:  # Valid increasing delta
+                    deltas.append(delta)
+
+            logger.debug(f"[DEBUG] {symbol}: Calculated {len(deltas)} valid deltas from snapshots")
+
+        elif interval_minutes == 5:
+            # For 5-minute: use snapshots 5 minutes apart
+            # current vs previous (5 min), previous vs previous2 (10 min), etc.
+            snapshot_pairs = [
+                ('current', 'previous'),
+                ('previous', 'previous2'),
+                ('previous2', 'previous3')
+            ]
+
+            for curr_key, prev_key in snapshot_pairs:
+                curr = self.cache[symbol].get(curr_key)
+                prev = self.cache[symbol].get(prev_key)
+
+                if curr and prev:
+                    curr_vol = curr.get('volume', 0)
+                    prev_vol = prev.get('volume', 0)
+
+                    # Validate same-day timestamps
+                    if curr.get('timestamp') and prev.get('timestamp'):
+                        if self._is_same_day(curr.get('timestamp'), prev.get('timestamp')):
+                            delta = curr_vol - prev_vol
+                            if delta > 0:
+                                deltas.append(delta)
+
+        # Calculate average
+        if deltas:
+            avg_delta = sum(deltas) / len(deltas)
+            logger.debug(f"[DEBUG] {symbol}: Avg delta = {avg_delta:,.0f} (from {len(deltas)} deltas: {[f'{d:,}' for d in deltas]})")
+            return avg_delta
+
+        logger.debug(f"[DEBUG] {symbol}: No valid deltas - returning 0")
+        return 0
 
     def set_avg_daily_volume(self, symbol: str, avg_daily_volume: int):
         """
@@ -835,9 +939,12 @@ class PriceCache:
 
     def get_volume_data_5min(self, symbol: str) -> Dict:
         """
-        Get volume data for 5-minute comparison
-        Compares current volume with volume from 5 minutes ago (previous)
-        Only compares volumes from the same day (prevents cross-day comparisons)
+        Get volume data for 5-minute comparison.
+        Compares current volume with volume from 5 minutes ago (previous).
+        Only compares volumes from the same day (prevents cross-day comparisons).
+
+        NOTE: Uses CUMULATIVE volume comparison (not delta-based like 1-min alerts).
+        This is intentional - 5/10/30 min comparisons use cumulative volumes.
 
         Returns:
             Dict with current_volume, previous_volume, volume_change, and volume_spike flag
@@ -868,10 +975,10 @@ class PriceCache:
                 else:
                     logger.debug(f"{symbol}: Skipping 5-min volume comparison - timestamps from different days")
 
-        # Calculate volume change
+        # Calculate volume change (cumulative delta over 5 minutes)
         volume_change = current_volume - previous_volume if previous_volume > 0 else 0
 
-        # Volume spike if current > 2.5x previous (5-min comparison uses lower multiplier)
+        # Volume spike if current > 2.5x previous (cumulative comparison)
         volume_spike = False
         if previous_volume > 0:
             volume_spike = current_volume > (previous_volume * 2.5)

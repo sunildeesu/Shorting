@@ -197,6 +197,9 @@ class OneMinMonitor:
         logger.info(f"1-MIN MONITOR - Starting cycle at {datetime.now().strftime('%H:%M:%S')}")
         logger.info("=" * 80)
 
+        # DEBUG: Log cache statistics
+        self._log_cache_stats()
+
         stats = {
             'total_checked': 0,
             'alerts_sent': 0,
@@ -210,6 +213,9 @@ class OneMinMonitor:
             logger.info(f"Fetching fresh prices for {len(self.stocks)} stocks...")
             price_data = self._fetch_fresh_prices()
             logger.info(f"Received price data for {len(price_data)} stocks")
+
+            # DEBUG: Track stocks with price movements for sample analysis
+            stocks_with_movements = []
 
             # Check each stock
             for symbol in self.stocks:
@@ -238,6 +244,11 @@ class OneMinMonitor:
                     if not price_1min_ago:
                         logger.debug(f"{symbol}: No previous 1-min price for comparison")
                         continue  # Need at least 1 previous snapshot
+
+                    # DEBUG: Track price movements for sample analysis
+                    change_pct = abs(((current_price - price_1min_ago) / price_1min_ago) * 100)
+                    if change_pct >= 0.3:  # Track movements >= 0.3% (lower than alert threshold)
+                        stocks_with_movements.append((symbol, change_pct, current_price, price_1min_ago))
 
                     # Get price from 5 minutes ago (for momentum confirmation)
                     _, price_5min_ago = self.price_cache.get_prices_5min(symbol)
@@ -272,6 +283,16 @@ class OneMinMonitor:
                 except Exception as e:
                     logger.error(f"{symbol}: Error processing - {e}")
                     stats['errors'] += 1
+
+            # DEBUG: Log sample price movements (even if they didn't trigger alerts)
+            if stocks_with_movements:
+                stocks_with_movements.sort(key=lambda x: x[1], reverse=True)  # Sort by change %
+                logger.info(f"[MOVEMENTS] Found {len(stocks_with_movements)} stocks with >=0.3% price change")
+                for symbol, change_pct, curr_price, prev_price in stocks_with_movements[:3]:
+                    direction = "UP" if curr_price > prev_price else "DOWN"
+                    logger.info(f"[MOVEMENTS] {symbol}: {change_pct:.2f}% {direction} (₹{prev_price:.2f} → ₹{curr_price:.2f})")
+            else:
+                logger.info(f"[MOVEMENTS] No stocks with >=0.3% price change this minute")
 
         except Exception as e:
             logger.error(f"Fatal error in monitor cycle: {e}", exc_info=True)
@@ -461,6 +482,45 @@ class OneMinMonitor:
         """Get market cap (placeholder - implement if needed)"""
         # TODO: Implement market cap calculation
         return 0.0
+
+    def _log_cache_stats(self):
+        """Log cache statistics to diagnose alert detection issues"""
+        try:
+            # Count stocks with various snapshot levels
+            stocks_with_current = 0
+            stocks_with_1min_history = 0
+            stocks_with_5min_history = 0
+
+            for symbol in self.stocks:
+                if symbol in self.price_cache.cache:
+                    cache_data = self.price_cache.cache[symbol]
+                    if cache_data.get('current'):
+                        stocks_with_current += 1
+                    if cache_data.get('previous_1min'):
+                        stocks_with_1min_history += 1
+                    if cache_data.get('previous'):  # 5-min snapshot
+                        stocks_with_5min_history += 1
+
+            logger.info(f"[CACHE STATS] Stocks in cache: {len(self.price_cache.cache)}")
+            logger.info(f"[CACHE STATS] With current snapshot: {stocks_with_current}/{len(self.stocks)}")
+            logger.info(f"[CACHE STATS] With 1-min history: {stocks_with_1min_history}/{len(self.stocks)}")
+            logger.info(f"[CACHE STATS] With 5-min history: {stocks_with_5min_history}/{len(self.stocks)}")
+
+            # Show sample stocks with full data (for detailed debugging)
+            sample_stocks = []
+            for symbol in self.stocks[:5]:  # First 5 stocks
+                if symbol in self.price_cache.cache:
+                    cache_data = self.price_cache.cache[symbol]
+                    has_current = cache_data.get('current') is not None
+                    has_1min = cache_data.get('previous_1min') is not None
+                    has_5min = cache_data.get('previous') is not None
+                    sample_stocks.append(f"{symbol}(C:{has_current},1m:{has_1min},5m:{has_5min})")
+
+            if sample_stocks:
+                logger.info(f"[CACHE SAMPLE] First 5 stocks: {', '.join(sample_stocks)}")
+
+        except Exception as e:
+            logger.error(f"Error logging cache stats: {e}")
 
 
 def main():

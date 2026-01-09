@@ -39,6 +39,7 @@ class UnifiedDataCache:
         'historical_3year': 24,  # 3-year daily candles - refresh daily (for value screener)
         'intraday_5d': 1,        # 15-min candles - refresh hourly
         'intraday_1d': 0.25,     # 15-min candles - refresh every 15 min
+        'intraday_1min': 0.25,   # 1-min candles - refresh every 15 min (for volume profile)
         'hourly_10d': 6          # Hourly candles - refresh every 6 hours (for pre-market patterns)
     }
 
@@ -59,6 +60,7 @@ class UnifiedDataCache:
             'historical_3year': os.path.join(cache_dir, 'historical_3year.json'),
             'intraday_5d': os.path.join(cache_dir, 'intraday_5d.json'),
             'intraday_1d': os.path.join(cache_dir, 'intraday_1d.json'),
+            'intraday_1min': os.path.join(cache_dir, 'intraday_1min.json'),
             'hourly_10d': os.path.join(cache_dir, 'hourly_10d.json')
         }
 

@@ -171,9 +171,13 @@ def check_token_and_alert():
     """
     Check token validity and send Telegram alert if needed
 
+    Only sends alerts on trading days (Mon-Fri, excluding NSE holidays)
+
     Returns:
         bool: True if token is valid, False otherwise
     """
+    from market_utils import is_trading_day
+
     manager = TokenManager()
     is_valid, message, hours_remaining = manager.is_token_valid()
 
@@ -182,14 +186,17 @@ def check_token_and_alert():
     if warning_message:
         logger.warning(warning_message)
 
-        # Send Telegram alert
-        try:
-            from telegram_notifier import TelegramNotifier
-            telegram = TelegramNotifier()
-            telegram._send_message(warning_message)
-            logger.info("Sent token expiry alert via Telegram")
-        except Exception as e:
-            logger.error(f"Failed to send Telegram alert: {e}")
+        # Only send Telegram alert on trading days (no alerts on weekends/holidays)
+        if is_trading_day():
+            try:
+                from telegram_notifier import TelegramNotifier
+                telegram = TelegramNotifier()
+                telegram._send_message(warning_message)
+                logger.info("Sent token expiry alert via Telegram")
+            except Exception as e:
+                logger.error(f"Failed to send Telegram alert: {e}")
+        else:
+            logger.info("Skipping token alert (not a trading day - weekend/holiday)")
 
     return is_valid
 

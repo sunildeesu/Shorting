@@ -150,9 +150,10 @@ class OneMinAlertDetector:
         change_pct = ((current_price - price_1min_ago) / price_1min_ago) * 100
 
         if change_pct >= -config.DROP_THRESHOLD_1MIN:
-            logger.debug(f"Price drop {change_pct:.2f}% below threshold {config.DROP_THRESHOLD_1MIN}%")
+            logger.debug(f"[LAYER 1 FAIL] Price drop {change_pct:.2f}% below threshold -{config.DROP_THRESHOLD_1MIN}%")
             return False
 
+        logger.debug(f"[LAYER 1 PASS] Price drop {change_pct:.2f}% exceeds threshold -{config.DROP_THRESHOLD_1MIN}%")
         return True
 
     def _meets_price_threshold_rise(self, current_price: float, price_1min_ago: float) -> bool:
@@ -160,9 +161,10 @@ class OneMinAlertDetector:
         change_pct = ((current_price - price_1min_ago) / price_1min_ago) * 100
 
         if change_pct <= config.RISE_THRESHOLD_1MIN:
-            logger.debug(f"Price rise {change_pct:.2f}% below threshold {config.RISE_THRESHOLD_1MIN}%")
+            logger.debug(f"[LAYER 1 FAIL] Price rise {change_pct:.2f}% below threshold +{config.RISE_THRESHOLD_1MIN}%")
             return False
 
+        logger.debug(f"[LAYER 1 PASS] Price rise {change_pct:.2f}% exceeds threshold +{config.RISE_THRESHOLD_1MIN}%")
         return True
 
     # ====================================
@@ -174,37 +176,37 @@ class OneMinAlertDetector:
         Check for volume spike using percentage-based multiplier (2.5x average).
         This is MANDATORY for all 1-min alerts.
 
-        Uses ONLY percentage-based logic (no absolute minimum) because different stocks
-        have vastly different normal trading volumes. For example:
-        - Large-cap: 500K shares/min normal
-        - Mid-cap: 50K shares/min normal
-        - Small-cap: 5K shares/min normal
-
-        A 2.5x spike is significant regardless of absolute volume.
+        FIXED LOGIC: Now uses per-minute volume deltas from price_cache.
+        The price_cache already calculates and compares deltas correctly.
 
         Args:
             symbol: Stock symbol
-            current_volume: Current trading volume
+            current_volume: Current trading volume (cumulative - not used directly)
 
         Returns:
             True if volume spike detected, False otherwise
         """
-        # Get volume from 1 minute ago
+        # FIXED: Get volume data with corrected delta-based logic
         volume_data = self.price_cache.get_volume_data_1min(symbol)
-        avg_volume = volume_data.get("avg_volume", 0)
 
-        if avg_volume == 0:
-            logger.debug(f"{symbol}: No previous volume data for comparison")
-            return False
+        # The price_cache now handles the spike detection correctly
+        # using per-minute deltas instead of cumulative volumes
+        has_spike = volume_data.get("volume_spike", False)
 
-        # Check percentage-based condition only:
-        # Current volume >= 2.5x average (percentage-based, fair for all stock sizes)
-        if current_volume < config.VOLUME_SPIKE_MULTIPLIER_1MIN * avg_volume:
-            logger.debug(f"{symbol}: Volume {current_volume:,} < {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x avg {avg_volume:,}")
-            return False
+        if has_spike:
+            current_delta = volume_data.get("current_volume", 0)
+            avg_delta = volume_data.get("avg_volume", 0)
+            logger.debug(f"[LAYER 2 PASS] {symbol}: Volume spike! Per-min delta {current_delta:,} = {current_delta/avg_delta if avg_delta > 0 else 0:.1f}x avg {avg_delta:,}")
+        else:
+            current_delta = volume_data.get("current_volume", 0)
+            avg_delta = volume_data.get("avg_volume", 0)
+            if avg_delta > 0:
+                multiplier = current_delta / avg_delta if avg_delta > 0 else 0
+                logger.debug(f"[LAYER 2 FAIL] {symbol}: No spike. Per-min delta {current_delta:,} = {multiplier:.2f}x avg {avg_delta:,} (need {config.VOLUME_SPIKE_MULTIPLIER_1MIN}x)")
+            else:
+                logger.debug(f"[LAYER 2 FAIL] {symbol}: No previous volume data for comparison (insufficient history)")
 
-        logger.debug(f"{symbol}: Volume spike detected: {current_volume:,} = {current_volume/avg_volume:.1f}x avg {avg_volume:,}")
-        return True
+        return has_spike
 
     # ====================================
     # Layer 3: Quality Filters
@@ -228,22 +230,23 @@ class OneMinAlertDetector:
         """
         # Check 1: Price >= Rs. 50 (no penny stocks)
         if current_price < 50:
-            logger.debug(f"{symbol}: Price {current_price:.2f} < 50 (penny stock)")
+            logger.debug(f"[LAYER 3 FAIL] {symbol}: Price {current_price:.2f} < 50 (penny stock)")
             return False
 
         # Check 2: Not in F&O ban list
         # TODO: Add ban list check when available
         # if symbol in self.ban_list:
-        #     logger.debug(f"{symbol}: In F&O ban list")
+        #     logger.debug(f"[LAYER 3 FAIL] {symbol}: In F&O ban list")
         #     return False
 
         # Check 3: Market cap >= 1000 Cr
         # TODO: Add market cap check when available
         # market_cap = self.get_market_cap(symbol)
         # if market_cap and market_cap < 1000:
-        #     logger.debug(f"{symbol}: Market cap {market_cap} Cr < 1000 Cr")
+        #     logger.debug(f"[LAYER 3 FAIL] {symbol}: Market cap {market_cap} Cr < 1000 Cr")
         #     return False
 
+        logger.debug(f"[LAYER 3 PASS] {symbol}: Quality checks passed")
         return True
 
     # ====================================
@@ -262,9 +265,10 @@ class OneMinAlertDetector:
         """
         if not self.alert_history.should_send_alert(symbol, "1min",
                                                      cooldown_minutes=config.COOLDOWN_1MIN_ALERTS):
-            logger.debug(f"{symbol}: Cooldown active (last alert within {config.COOLDOWN_1MIN_ALERTS} minutes)")
+            logger.debug(f"[LAYER 4 FAIL] {symbol}: Cooldown active (last alert within {config.COOLDOWN_1MIN_ALERTS} minutes)")
             return False
 
+        logger.debug(f"[LAYER 4 PASS] {symbol}: Cooldown check passed")
         return True
 
     # ====================================
@@ -286,9 +290,10 @@ class OneMinAlertDetector:
         if last_5min:
             age = (datetime.now() - last_5min).total_seconds()
             if age <= 180:  # 3 minutes
-                logger.debug(f"{symbol}: 5-min alert sent {age:.0f}s ago (< 3 min)")
+                logger.debug(f"[LAYER 5 FAIL] {symbol}: 5-min alert sent {age:.0f}s ago (< 3 min)")
                 return False
 
+        logger.debug(f"[LAYER 5 PASS] {symbol}: No recent 5-min alert")
         return True
 
     # ====================================
