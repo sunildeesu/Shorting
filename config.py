@@ -131,6 +131,13 @@ QUOTE_CACHE_DB_FILE = 'data/unified_cache/quote_cache.db'  # SQLite database for
 ENABLE_SQLITE_CACHE = os.getenv('ENABLE_SQLITE_CACHE', 'true').lower() == 'true'  # Enable SQLite storage
 ENABLE_JSON_BACKUP = os.getenv('ENABLE_JSON_BACKUP', 'true').lower() == 'true'  # Keep JSON backup during transition
 
+# SQLite Lock Contention Fixes
+# Addressing database lock contention from multiple concurrent services (stock_monitor, atr_monitor, nifty_option_monitor)
+# Critical collision times: Every 30 minutes during market hours (10:00, 10:30, 11:00, etc.) when 3 services access DBs simultaneously
+SQLITE_TIMEOUT_SECONDS = int(os.getenv('SQLITE_TIMEOUT_SECONDS', '30'))  # Increased from 10s to handle API delays and lock contention
+SQLITE_MAX_RETRIES = int(os.getenv('SQLITE_MAX_RETRIES', '3'))  # Retry with exponential backoff on lock timeout
+SQLITE_RETRY_BASE_DELAY = float(os.getenv('SQLITE_RETRY_BASE_DELAY', '1.0'))  # Base delay for exponential backoff (1s, 2s, 4s)
+
 # Alert Excel Logging Configuration
 ALERT_EXCEL_PATH = 'data/alerts/alert_tracking.xlsx'
 ENABLE_EXCEL_LOGGING = os.getenv('ENABLE_EXCEL_LOGGING', 'true').lower() == 'true'
@@ -336,6 +343,11 @@ VOLUME_PROFILE_MIN_CANDLES = int(os.getenv('VOLUME_PROFILE_MIN_CANDLES', '30')) 
 VOLUME_PROFILE_TICK_SIZE_AUTO = os.getenv('VOLUME_PROFILE_TICK_SIZE_AUTO', 'true').lower() == 'true'  # Use adaptive tick size
 VOLUME_PROFILE_REPORT_DIR = 'data/volume_profile_reports'  # Report output directory
 
+# Dropbox Upload for Volume Profile Reports
+VOLUME_PROFILE_ENABLE_DROPBOX = os.getenv('VOLUME_PROFILE_ENABLE_DROPBOX', 'true').lower() == 'true'  # Auto-upload to Dropbox
+VOLUME_PROFILE_DROPBOX_TOKEN = os.getenv('VOLUME_PROFILE_DROPBOX_TOKEN', '')  # Dropbox access token
+VOLUME_PROFILE_DROPBOX_FOLDER = os.getenv('VOLUME_PROFILE_DROPBOX_FOLDER', '/VolumeProfile')  # Dropbox folder path
+
 # ============================================
 # GREEKS DIFFERENCE TRACKER CONFIGURATION
 # ============================================
@@ -370,3 +382,22 @@ GREEKS_DIFF_DROPBOX_TOKEN = os.getenv('GREEKS_DIFF_DROPBOX_TOKEN', '')  # Dropbo
 
 # Storage
 GREEKS_BASELINE_CACHE_KEY = 'greeks_baseline_{date}'  # Persists for the day
+
+# ============================================
+# CPR FIRST TOUCH ALERT CONFIGURATION
+# ============================================
+# Monitors NIFTY CPR (Central Pivot Range) levels and alerts on first touch
+# Detects when price crosses TC (Top Central) or BC (Bottom Central) for first time each day
+# Shares 1-minute NIFTY data with nifty_option_analyzer.py via unified_quote_cache
+
+# Enable/Disable CPR monitoring
+ENABLE_CPR_ALERTS = os.getenv('ENABLE_CPR_ALERTS', 'true').lower() == 'true'
+
+# Cooldown period (once per day = 1440 minutes)
+CPR_COOLDOWN_MINUTES = int(os.getenv('CPR_COOLDOWN_MINUTES', '1440'))  # 24 hours
+
+# Dry-run mode (testing without sending Telegram alerts)
+CPR_DRY_RUN_MODE = os.getenv('CPR_DRY_RUN_MODE', 'false').lower() == 'true'
+
+# State file (persistent storage for position tracking)
+CPR_STATE_FILE = 'data/cpr_state.json'

@@ -22,6 +22,7 @@ from kiteconnect import KiteConnect
 import config
 from price_cache import PriceCache
 from unified_quote_cache import UnifiedQuoteCache
+from api_coordinator import get_api_coordinator
 from alert_history_manager import AlertHistoryManager
 from alert_excel_logger import AlertExcelLogger
 from telegram_notifier import TelegramNotifier
@@ -79,6 +80,10 @@ class OneMinMonitor:
         logger.info("Initializing Kite Connect...")
         self.kite = KiteConnect(api_key=config.KITE_API_KEY)
         self.kite.set_access_token(config.KITE_ACCESS_TOKEN)
+
+        # Initialize API Coordinator (Tier 2 optimization - centralized quote management)
+        self.coordinator = get_api_coordinator(kite=self.kite)
+        logger.info("API Coordinator enabled (shared cache + smart batching)")
 
         # Initialize core components
         logger.info("Initializing core components...")
@@ -341,13 +346,18 @@ class OneMinMonitor:
                         instruments.append(futures_kite_symbol)
                         symbol_map[futures_kite_symbol] = symbol
 
-            # Fetch quotes in batches of 100 (Kite API limit is 500, but 100 is safer)
-            batch_size = 100
+            # Fetch quotes in batches of 200 (Kite API limit is 500, using 200 for optimal performance)
+            # Use API coordinator for smart batching (Tier 2 optimization)
+            batch_size = 200
             for i in range(0, len(instruments), batch_size):
                 batch = instruments[i:i + batch_size]
 
                 logger.debug(f"Fetching batch {i//batch_size + 1} ({len(batch)} instruments)...")
-                quotes = self.kite.quote(batch)
+                # Note: coordinator.get_multiple_instruments() bypasses cache for non-NSE instruments
+                quotes = self.coordinator.get_multiple_instruments(
+                    instruments=batch,
+                    use_cache=False  # Always fetch fresh for 1-min alerts
+                )
 
                 # Parse quotes
                 for kite_symbol, quote in quotes.items():

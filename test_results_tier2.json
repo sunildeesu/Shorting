@@ -1,0 +1,149 @@
+{
+  "timestamp": "2026-01-11T17:02:43.591571",
+  "summary": {
+    "total": 23,
+    "passed": 19,
+    "failed": 3,
+    "warnings": 1
+  },
+  "tests": [
+    {
+      "test": "Import api_coordinator",
+      "status": "FAIL",
+      "message": "ImportError: No module named 'kiteconnect'",
+      "timestamp": "2026-01-11T17:02:43.588469"
+    },
+    {
+      "test": "Data directory exists",
+      "status": "PASS",
+      "message": "data found",
+      "timestamp": "2026-01-11T17:02:43.588596"
+    },
+    {
+      "test": "Unified cache directory",
+      "status": "PASS",
+      "message": "data/unified_cache exists",
+      "timestamp": "2026-01-11T17:02:43.588626"
+    },
+    {
+      "test": "Quote cache database",
+      "status": "PASS",
+      "message": "quote_cache.db exists (0.56 MB)",
+      "timestamp": "2026-01-11T17:02:43.588656"
+    },
+    {
+      "test": "Historical cache directory",
+      "status": "WARN",
+      "message": "data/historical_cache not found (will be created)",
+      "timestamp": "2026-01-11T17:02:43.588677"
+    },
+    {
+      "test": "API Coordinator unit tests",
+      "status": "FAIL",
+      "message": "Unexpected error: No module named 'kiteconnect'",
+      "timestamp": "2026-01-11T17:02:43.588884"
+    },
+    {
+      "test": "Historical cache unit tests",
+      "status": "FAIL",
+      "message": "Unexpected error: No module named 'kiteconnect'",
+      "timestamp": "2026-01-11T17:02:43.589311"
+    },
+    {
+      "test": "atr_breakout_monitor.py - Imports",
+      "status": "PASS",
+      "message": "1 imports found",
+      "timestamp": "2026-01-11T17:02:43.589646"
+    },
+    {
+      "test": "atr_breakout_monitor.py - Initialization",
+      "status": "PASS",
+      "message": "1 init statements found",
+      "timestamp": "2026-01-11T17:02:43.589668"
+    },
+    {
+      "test": "atr_breakout_monitor.py - Usage",
+      "status": "PASS",
+      "message": "Found: self.coordinator.get_quotes...",
+      "timestamp": "2026-01-11T17:02:43.589689"
+    },
+    {
+      "test": "nifty_option_analyzer.py - Imports",
+      "status": "PASS",
+      "message": "2 imports found",
+      "timestamp": "2026-01-11T17:02:43.589789"
+    },
+    {
+      "test": "nifty_option_analyzer.py - Initialization",
+      "status": "PASS",
+      "message": "2 init statements found",
+      "timestamp": "2026-01-11T17:02:43.589803"
+    },
+    {
+      "test": "nifty_option_analyzer.py - Usage",
+      "status": "PASS",
+      "message": "Found: self.coordinator.get_single_quote...",
+      "timestamp": "2026-01-11T17:02:43.589822"
+    },
+    {
+      "test": "stock_monitor.py - Imports",
+      "status": "PASS",
+      "message": "1 imports found",
+      "timestamp": "2026-01-11T17:02:43.589920"
+    },
+    {
+      "test": "stock_monitor.py - Initialization",
+      "status": "PASS",
+      "message": "1 init statements found",
+      "timestamp": "2026-01-11T17:02:43.589933"
+    },
+    {
+      "test": "stock_monitor.py - Usage",
+      "status": "PASS",
+      "message": "Found: self.coordinator.get_quotes...",
+      "timestamp": "2026-01-11T17:02:43.589958"
+    },
+    {
+      "test": "onemin_monitor.py - Imports",
+      "status": "PASS",
+      "message": "1 imports found",
+      "timestamp": "2026-01-11T17:02:43.590016"
+    },
+    {
+      "test": "onemin_monitor.py - Initialization",
+      "status": "PASS",
+      "message": "1 init statements found",
+      "timestamp": "2026-01-11T17:02:43.590033"
+    },
+    {
+      "test": "onemin_monitor.py - Usage",
+      "status": "PASS",
+      "message": "Found: self.coordinator.get_multiple_instruments...",
+      "timestamp": "2026-01-11T17:02:43.590053"
+    },
+    {
+      "test": "atr_breakout_monitor.py - Error handling",
+      "status": "PASS",
+      "message": "try-except blocks found",
+      "timestamp": "2026-01-11T17:02:43.590938"
+    },
+    {
+      "test": "atr_breakout_monitor.py - Fallback logic",
+      "status": "PASS",
+      "message": "Fallback logic documented",
+      "timestamp": "2026-01-11T17:02:43.590982"
+    },
+    {
+      "test": "stock_monitor.py - Error handling",
+      "status": "PASS",
+      "message": "try-except blocks found",
+      "timestamp": "2026-01-11T17:02:43.591293"
+    },
+    {
+      "test": "stock_monitor.py - Fallback logic",
+      "status": "PASS",
+      "message": "Fallback logic documented",
+      "timestamp": "2026-01-11T17:02:43.591312"
+    }
+  ]
+}

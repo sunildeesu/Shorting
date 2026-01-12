@@ -1291,10 +1291,10 @@ class TelegramNotifier:
             "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
         )
 
-        # P-shaped profiles (Distribution - Bearish)
+        # P-shaped profiles (Bullish Strength)
         if p_shaped:
-            message += f"📉 <b>P-SHAPED PROFILES</b> (Distribution - Bearish)\n"
-            message += f"<i>Smart money distributing at highs</i>\n\n"
+            message += f"📈 <b>P-SHAPED PROFILES</b> (Bullish Strength)\n"
+            message += f"<i>Price held at highs - buyers in control</i>\n\n"
 
             for idx, result in enumerate(p_shaped[:10], 1):  # Limit to top 10
                 symbol = result.get('symbol', 'UNKNOWN')
@@ -1304,7 +1304,7 @@ class TelegramNotifier:
                 value_area_high = result.get('value_area_high', 0)
                 value_area_low = result.get('value_area_low', 0)
 
-                conf_emoji = "🔴" if confidence >= 8.5 else "🟠"
+                conf_emoji = "🟢" if confidence >= 8.5 else "🟡"  # Green for bullish
 
                 message += (
                     f"{idx}. <b>{symbol}</b> - Confidence: {confidence:.1f}/10 {conf_emoji}\n"
@@ -1312,10 +1312,10 @@ class TelegramNotifier:
                     f"   📊 Value Area: ₹{value_area_low:.2f} - ₹{value_area_high:.2f}\n\n"
                 )
 
-        # B-shaped profiles (Accumulation - Bullish)
+        # B-shaped profiles (Bearish Weakness)
         if b_shaped:
-            message += f"📈 <b>B-SHAPED PROFILES</b> (Accumulation - Bullish)\n"
-            message += f"<i>Smart money accumulating at lows</i>\n\n"
+            message += f"📉 <b>B-SHAPED PROFILES</b> (Bearish Weakness)\n"
+            message += f"<i>Price stuck at lows - sellers in control</i>\n\n"
 
             for idx, result in enumerate(b_shaped[:10], 1):  # Limit to top 10
                 symbol = result.get('symbol', 'UNKNOWN')
@@ -1325,7 +1325,7 @@ class TelegramNotifier:
                 value_area_high = result.get('value_area_high', 0)
                 value_area_low = result.get('value_area_low', 0)
 
-                conf_emoji = "🟢" if confidence >= 8.5 else "🟡"
+                conf_emoji = "🔴" if confidence >= 8.5 else "🟠"  # Red for bearish
 
                 message += (
                     f"{idx}. <b>{symbol}</b> - Confidence: {confidence:.1f}/10 {conf_emoji}\n"
@@ -1338,11 +1338,11 @@ class TelegramNotifier:
         message += (
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 <b>Total Patterns:</b> {total_patterns} stocks\n"
-            f"🔴 <b>P-Shaped:</b> {len(p_shaped)} | 🟢 <b>B-Shaped:</b> {len(b_shaped)}\n"
+            f"🟢 <b>P-Shaped:</b> {len(p_shaped)} (Bullish) | 🔴 <b>B-Shaped:</b> {len(b_shaped)} (Bearish)\n"
             f"💡 <b>Min Confidence:</b> {config.VOLUME_PROFILE_MIN_CONFIDENCE}/10\n\n"
             "📚 <b>Interpretation:</b>\n"
-            "  • P-shape: POC at top of range = distribution (bearish)\n"
-            "  • B-shape: POC at bottom = accumulation (bullish)\n"
+            "  • P-shape: POC at top of range = strength (bullish continuation)\n"
+            "  • B-shape: POC at bottom = weakness (bearish continuation)\n"
             "  • POC = Point of Control (highest volume price)\n\n"
             f"📄 <b>Full Report:</b> volume_profile_{time_label.replace(' ', '').replace(':', '').lower()}_{analysis_time.strftime('%Y-%m-%d')}.xlsx"
         )

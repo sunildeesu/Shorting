@@ -24,6 +24,8 @@ import math
 import config
 from market_regime_detector import MarketRegimeDetector
 from oi_analyzer import OIAnalyzer
+from api_coordinator import get_api_coordinator
+from historical_data_cache import get_historical_cache
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,17 @@ class NiftyOptionAnalyzer:
         self.regime_detector = MarketRegimeDetector(kite)
         self.oi_analyzer = OIAnalyzer()
 
+        # Initialize API coordinator for optimized quote fetching (Tier 2)
+        self.coordinator = get_api_coordinator(kite=kite)
+
+        # Initialize historical data cache for VIX/NIFTY history (Tier 2)
+        self.historical_cache = get_historical_cache()
+
         # Cache for instruments
         self._nfo_instruments = None
         self._instruments_cache_time = None
+
+        logger.info("NiftyOptionAnalyzer initialized with API Coordinator + Historical Cache")
 
     def analyze_option_selling_opportunity(
         self,
@@ -64,19 +74,18 @@ class NiftyOptionAnalyzer:
             logger.info("NIFTY OPTION SELLING ANALYSIS - Starting")
             logger.info("=" * 70)
 
-            # Step 1: Get NIFTY spot price
-            logger.info("Step 1: Fetching NIFTY spot price...")
-            nifty_spot = self._get_nifty_spot_price()
+            # Step 1-2: Get NIFTY spot + VIX in single batch call (Tier 2 optimization)
+            logger.info("Step 1-2: Fetching NIFTY spot price + India VIX (batch call)...")
+            indices = self._get_spot_indices_batch()
+            nifty_spot = indices['nifty_spot']
+            vix = indices['india_vix']
+
             if not nifty_spot:
                 raise ValueError("Unable to fetch NIFTY spot price")
-            logger.info(f"NIFTY Spot: {nifty_spot:.2f}")
-
-            # Step 2: Get India VIX
-            logger.info("Step 2: Fetching India VIX...")
-            vix = self._get_india_vix()
             if not vix:
                 raise ValueError("Unable to fetch India VIX")
-            logger.info(f"India VIX: {vix:.2f}")
+
+            logger.info(f"NIFTY Spot: {nifty_spot:.2f}, India VIX: {vix:.2f}")
 
             # Step 2a: Calculate VIX trend (CRITICAL for option selling!)
             logger.info("Step 2a: Calculating VIX trend...")
@@ -196,6 +205,31 @@ class NiftyOptionAnalyzer:
                 # Note: Intraday vol is a WARNING, not a hard veto (market can calm down)
                 # But we'll still include it in risk factors
 
+            # Step 2g: Calculate CPR and check for trending day
+            logger.info("Step 2g: Calculating CPR (Central Pivot Range) indicator...")
+            cpr_data = self._calculate_cpr()
+            cpr_check = self._check_cpr_trend(nifty_spot, cpr_data)
+
+            # CPR HARD VETO: If trending day detected, AVOID option selling
+            if not cpr_check['passed']:
+                veto_reason = f"CPR TRENDING DAY: {cpr_check['reason']}"
+                logger.error(f"🚫 HARD VETO: {veto_reason}")
+                logger.error("   Option selling strategies (straddle/strangle) DON'T work on trending days!")
+                logger.error("   Expected: Strong directional move - premium will be tested")
+
+                return self._generate_veto_response(
+                    nifty_spot=nifty_spot,
+                    vix=vix,
+                    vix_trend=vix_trend,
+                    iv_rank=iv_rank,
+                    veto_reason=veto_reason,
+                    veto_type='CPR_TRENDING_DAY',
+                    extra_data={
+                        'cpr_data': cpr_data,
+                        'cpr_check': cpr_check
+                    }
+                )
+
             # Step 3: Get market regime
             logger.info("Step 3: Analyzing market regime...")
             market_regime = self.regime_detector.get_market_regime()
@@ -251,24 +285,56 @@ class NiftyOptionAnalyzer:
             return self._generate_error_response(str(e))
 
     def _get_nifty_spot_price(self) -> Optional[float]:
-        """Get current NIFTY 50 spot price"""
+        """Get current NIFTY 50 spot price (OPTIMIZED: uses coordinator)"""
         try:
-            quote = self.kite.quote(["NSE:NIFTY 50"])
-            nifty_data = quote.get("NSE:NIFTY 50", {})
-            return nifty_data.get("last_price")
+            # Use coordinator to batch with VIX fetch
+            quote = self.coordinator.get_single_quote("NSE:NIFTY 50")
+            if quote:
+                return quote.get("last_price")
+            return None
         except Exception as e:
             logger.error(f"Error fetching NIFTY spot: {e}")
             return None
 
     def _get_india_vix(self) -> Optional[float]:
-        """Get current India VIX value"""
+        """Get current India VIX value (OPTIMIZED: uses coordinator)"""
         try:
-            quote = self.kite.quote(["NSE:INDIA VIX"])
-            vix_data = quote.get("NSE:INDIA VIX", {})
-            return vix_data.get("last_price")
+            # Use coordinator to batch with NIFTY fetch
+            quote = self.coordinator.get_single_quote("NSE:INDIA VIX")
+            if quote:
+                return quote.get("last_price")
+            return None
         except Exception as e:
             logger.error(f"Error fetching India VIX: {e}")
             return None
+
+    def _get_spot_indices_batch(self) -> Dict[str, float]:
+        """
+        Fetch NIFTY + VIX in single API call (NEW - Tier 2 optimization)
+
+        Returns:
+            Dict with 'nifty_spot' and 'india_vix' values
+        """
+        try:
+            # Batch fetch both indices in 1 API call instead of 2
+            # CHANGED: use_cache=True to read from CPR monitor's 1-min NIFTY cache
+            quotes = self.coordinator.get_multiple_instruments([
+                "NSE:NIFTY 50",
+                "NSE:INDIA VIX"
+            ], use_cache=True)
+
+            result = {}
+            nifty_data = quotes.get("NSE:NIFTY 50", {})
+            vix_data = quotes.get("NSE:INDIA VIX", {})
+
+            result['nifty_spot'] = nifty_data.get("last_price")
+            result['india_vix'] = vix_data.get("last_price")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error fetching spot indices: {e}")
+            return {'nifty_spot': None, 'india_vix': None}
 
     def _get_vix_trend(self, current_vix: float) -> float:
         """
@@ -286,7 +352,9 @@ class NiftyOptionAnalyzer:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days + 5)  # Extra days for weekends/holidays
 
-            vix_history = self.kite.historical_data(
+            # Use historical cache to avoid redundant API calls (Tier 2 optimization)
+            vix_history = self.historical_cache.get_historical_data(
+                kite=self.kite,
                 instrument_token=config.INDIA_VIX_TOKEN,
                 from_date=start_date,
                 to_date=end_date,
@@ -338,7 +406,9 @@ class NiftyOptionAnalyzer:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days + 30)  # Extra buffer for weekends/holidays
 
-            vix_history = self.kite.historical_data(
+            # Use historical cache to avoid redundant API calls (Tier 2 optimization)
+            vix_history = self.historical_cache.get_historical_data(
+                kite=self.kite,
                 instrument_token=config.INDIA_VIX_TOKEN,
                 from_date=start_date,
                 to_date=end_date,
@@ -388,8 +458,9 @@ class NiftyOptionAnalyzer:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days + 5)
 
-            # Fetch NIFTY historical data
-            nifty_history = self.kite.historical_data(
+            # Use historical cache to avoid redundant API calls (Tier 2 optimization)
+            nifty_history = self.historical_cache.get_historical_data(
+                kite=self.kite,
                 instrument_token=config.NIFTY_50_TOKEN,
                 from_date=start_date,
                 to_date=end_date,
@@ -459,8 +530,9 @@ class NiftyOptionAnalyzer:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days + 5)
 
-            # Fetch NIFTY historical data
-            nifty_history = self.kite.historical_data(
+            # Use historical cache to avoid redundant API calls (Tier 2 optimization)
+            nifty_history = self.historical_cache.get_historical_data(
+                kite=self.kite,
                 instrument_token=config.NIFTY_50_TOKEN,
                 from_date=start_date,
                 to_date=end_date,
@@ -521,8 +593,9 @@ class NiftyOptionAnalyzer:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days + 2)
 
-            # Fetch NIFTY intraday data (15-minute candles for last N days)
-            intraday_data = self.kite.historical_data(
+            # Use historical cache to avoid redundant API calls (Tier 2 optimization)
+            intraday_data = self.historical_cache.get_historical_data(
+                kite=self.kite,
                 instrument_token=config.NIFTY_50_TOKEN,
                 from_date=start_date,
                 to_date=end_date,
@@ -591,6 +664,179 @@ class NiftyOptionAnalyzer:
             logger.warning(f"Error checking intraday volatility: {e}")
             return {'passed': True, 'reason': f'Error: {e}'}
 
+    def _calculate_cpr(self) -> Dict:
+        """
+        Calculate CPR (Central Pivot Range) from previous day's data.
+
+        CPR is a powerful intraday indicator for determining market trend:
+        - Narrow CPR = Trending day likely (strong directional move)
+        - Wide CPR = Sideways day likely (range-bound)
+
+        CPR Components:
+        - TC (Top Central): Upper resistance (calculated pivot + (pivot - BC))
+        - Pivot: Central pivot ((High + Low + Close) / 3)
+        - BC (Bottom Central): Lower support ((High + Low) / 2)
+
+        Returns:
+            Dict with 'tc', 'pivot', 'bc', 'width_pct', 'width_points'
+        """
+        try:
+            # Get previous day's OHLC data
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=5)  # Get last 5 days to ensure we have previous day
+
+            # Use historical cache (Tier 2 optimization)
+            daily_data = self.historical_cache.get_historical_data(
+                kite=self.kite,
+                instrument_token=config.NIFTY_50_TOKEN,
+                from_date=start_date,
+                to_date=end_date,
+                interval='day'
+            )
+
+            if not daily_data or len(daily_data) < 2:
+                logger.warning("Insufficient data to calculate CPR")
+                return None
+
+            # Get previous trading day's data (second last candle, last is today incomplete)
+            prev_day = daily_data[-2]
+
+            high = prev_day['high']
+            low = prev_day['low']
+            close = prev_day['close']
+
+            # Calculate CPR levels
+            pivot = (high + low + close) / 3
+            bc = (high + low) / 2
+            tc = (pivot - bc) + pivot
+
+            # CPR width (narrow = trending, wide = sideways)
+            width_points = tc - bc
+            width_pct = (width_points / pivot) * 100
+
+            logger.info(f"CPR Calculated - Pivot: {pivot:.2f}, TC: {tc:.2f}, BC: {bc:.2f}, Width: {width_pct:.3f}%")
+
+            return {
+                'tc': tc,
+                'pivot': pivot,
+                'bc': bc,
+                'width_points': width_points,
+                'width_pct': width_pct,
+                'prev_day_high': high,
+                'prev_day_low': low,
+                'prev_day_close': close
+            }
+
+        except Exception as e:
+            logger.error(f"Error calculating CPR: {e}")
+            return None
+
+    def _check_cpr_trend(self, nifty_spot: float, cpr_data: Dict) -> Dict:
+        """
+        Check if today is a trending day based on CPR indicator.
+
+        CPR Trading Rules:
+        1. Price above TC = BULLISH TRENDING (strong uptrend expected)
+        2. Price below BC = BEARISH TRENDING (strong downtrend expected)
+        3. Price between TC-BC = SIDEWAYS/RANGE-BOUND (ideal for option selling)
+        4. Narrow CPR width (<0.3%) = High probability of trending day
+        5. Wide CPR width (>0.5%) = Sideways day likely
+
+        For option selling (straddle/strangle):
+        - BEST: Price within CPR + wide CPR (range-bound day)
+        - RISKY: Price outside CPR or narrow CPR (trending day likely)
+
+        Returns:
+            Dict with 'is_trending', 'trend_type', 'position', 'cpr_width_type', 'reason'
+        """
+        try:
+            if not cpr_data:
+                return {
+                    'is_trending': False,
+                    'reason': 'CPR data unavailable',
+                    'passed': True
+                }
+
+            tc = cpr_data['tc']
+            pivot = cpr_data['pivot']
+            bc = cpr_data['bc']
+            width_pct = cpr_data['width_pct']
+
+            # Determine CPR width type
+            if width_pct < 0.25:
+                cpr_width_type = 'VERY_NARROW'  # Strong trending day likely
+            elif width_pct < 0.35:
+                cpr_width_type = 'NARROW'  # Trending day possible
+            elif width_pct < 0.50:
+                cpr_width_type = 'MODERATE'  # Could go either way
+            else:
+                cpr_width_type = 'WIDE'  # Sideways day likely
+
+            # Determine price position relative to CPR
+            if nifty_spot > tc:
+                position = 'ABOVE_CPR'
+                trend_type = 'BULLISH_TRENDING'
+                is_trending = True
+                reason = f"Price {nifty_spot:.2f} above TC {tc:.2f} - BULLISH TRENDING DAY likely"
+            elif nifty_spot < bc:
+                position = 'BELOW_CPR'
+                trend_type = 'BEARISH_TRENDING'
+                is_trending = True
+                reason = f"Price {nifty_spot:.2f} below BC {bc:.2f} - BEARISH TRENDING DAY likely"
+            else:
+                position = 'WITHIN_CPR'
+                trend_type = 'SIDEWAYS'
+                is_trending = False
+                reason = f"Price {nifty_spot:.2f} within CPR ({bc:.2f} - {tc:.2f}) - SIDEWAYS/RANGE-BOUND"
+
+            # Additional check: Very narrow CPR suggests trending day even if price within CPR
+            if cpr_width_type == 'VERY_NARROW' and not is_trending:
+                logger.warning(f"⚠️  VERY NARROW CPR ({width_pct:.3f}%) - Trending day possible even within CPR")
+                is_trending = True  # Override
+                trend_type = 'POTENTIAL_TRENDING'
+                reason += f" BUT VERY NARROW CPR ({width_pct:.3f}%) suggests trending day"
+
+            # Log CPR analysis
+            logger.info(f"CPR Analysis:")
+            logger.info(f"  TC (Resistance): {tc:.2f}")
+            logger.info(f"  Pivot: {pivot:.2f}")
+            logger.info(f"  BC (Support): {bc:.2f}")
+            logger.info(f"  Current Price: {nifty_spot:.2f}")
+            logger.info(f"  Position: {position}")
+            logger.info(f"  CPR Width: {width_pct:.3f}% ({cpr_width_type})")
+            logger.info(f"  Trend Assessment: {trend_type}")
+
+            # Determine if option selling is safe
+            passed = not is_trending  # Fail if trending day
+
+            if is_trending:
+                logger.warning(f"❌ CPR VETO: {reason}")
+                logger.warning(f"   Option selling is RISKY on trending days - directional moves expected")
+            else:
+                logger.info(f"✅ CPR CHECK PASSED: {reason}")
+                logger.info(f"   Good for option selling - range-bound day expected")
+
+            return {
+                'passed': passed,
+                'is_trending': is_trending,
+                'trend_type': trend_type,
+                'position': position,
+                'cpr_width_type': cpr_width_type,
+                'cpr_width_pct': width_pct,
+                'tc': tc,
+                'pivot': pivot,
+                'bc': bc,
+                'reason': reason
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking CPR trend: {e}")
+            return {
+                'passed': True,  # Don't block on error
+                'is_trending': False,
+                'reason': f'Error: {e}'
+            }
+
     def _generate_veto_response(
         self,
         nifty_spot: float,
@@ -633,50 +879,54 @@ class NiftyOptionAnalyzer:
         }
 
     def _get_nifty_oi_analysis(self) -> Dict:
-        """Get OI analysis for NIFTY futures"""
+        """Get OI analysis for NIFTY futures (Tier 2: batch call optimization)"""
         try:
             # Get NIFTY futures quote for current month
             # Symbol format: NIFTY25JAN (year + month abbreviation)
             current_month = datetime.now()
-            year_short = str(current_month.year)[-2:]
-            month_abbr = current_month.strftime("%b").upper()
 
-            # Try current month and next month futures
+            # Build symbols for current month and next month futures
+            futures_symbols = []
             for month_offset in [0, 1]:
                 target_month = current_month + timedelta(days=30 * month_offset)
                 year_short = str(target_month.year)[-2:]
                 month_abbr = target_month.strftime("%b").upper()
                 futures_symbol = f"NFO:NIFTY{year_short}{month_abbr}FUT"
+                futures_symbols.append(futures_symbol)
 
-                try:
-                    quote = self.kite.quote([futures_symbol])
-                    futures_data = quote.get(futures_symbol, {})
+            # Single batch API call for both futures (Tier 2 optimization)
+            logger.info(f"Fetching {len(futures_symbols)} NIFTY futures in batch call...")
+            quotes = self.coordinator.get_multiple_instruments(futures_symbols)
 
-                    if futures_data:
-                        oi = futures_data.get("oi", 0)
-                        price = futures_data.get("last_price", 0)
-                        ohlc = futures_data.get("ohlc", {})
-                        open_price = ohlc.get("open", price)
+            # Try each futures contract (prefer current month, fallback to next month)
+            for futures_symbol in futures_symbols:
+                futures_data = quotes.get(futures_symbol, {})
 
-                        # Calculate price change from day open
-                        if open_price > 0:
-                            price_change_pct = ((price - open_price) / open_price) * 100
-                        else:
-                            price_change_pct = 0
+                if futures_data and futures_data.get("oi", 0) > 0:
+                    oi = futures_data.get("oi", 0)
+                    price = futures_data.get("last_price", 0)
+                    ohlc = futures_data.get("ohlc", {})
+                    open_price = ohlc.get("open", price)
 
-                        # Get OI analysis from analyzer
-                        oi_result = self.oi_analyzer.analyze_oi_change(
-                            symbol="NIFTY",
-                            current_oi=oi,
-                            price_change_pct=price_change_pct
-                        )
+                    # Calculate price change from day open
+                    if open_price > 0:
+                        price_change_pct = ((price - open_price) / open_price) * 100
+                    else:
+                        price_change_pct = 0
 
-                        if oi_result:
-                            return oi_result
-                except:
-                    continue
+                    # Get OI analysis from analyzer
+                    oi_result = self.oi_analyzer.analyze_oi_change(
+                        symbol="NIFTY",
+                        current_oi=oi,
+                        price_change_pct=price_change_pct
+                    )
+
+                    if oi_result:
+                        logger.info(f"OI analysis successful using {futures_symbol}")
+                        return oi_result
 
             # Default if no futures data found
+            logger.warning("No valid futures data found in batch response")
             return {
                 'pattern': 'UNKNOWN',
                 'price_change_pct': 0,
@@ -795,11 +1045,12 @@ class NiftyOptionAnalyzer:
                 'put': atm_strike - 100     # 2 strikes OTM
             }
 
-            # Fetch option data for these strikes
-            straddle_call = self._get_option_data('CE', expiry_date, straddle_strikes['call'], nifty_spot)
-            straddle_put = self._get_option_data('PE', expiry_date, straddle_strikes['put'], nifty_spot)
-            strangle_call = self._get_option_data('CE', expiry_date, strangle_strikes['call'], nifty_spot)
-            strangle_put = self._get_option_data('PE', expiry_date, strangle_strikes['put'], nifty_spot)
+            # Fetch all 4 options in single batch call (Tier 2 optimization)
+            options_batch = self._get_options_batch(expiry_date, straddle_strikes, strangle_strikes, nifty_spot)
+            straddle_call = options_batch['straddle_call']
+            straddle_put = options_batch['straddle_put']
+            strangle_call = options_batch['strangle_call']
+            strangle_put = options_batch['strangle_put']
 
             # Calculate days to expiry
             days_to_expiry = (expiry_date.date() - datetime.now().date()).days
@@ -872,6 +1123,88 @@ class NiftyOptionAnalyzer:
         NIFTY strikes are in multiples of 50
         """
         return round(spot_price / 50) * 50
+
+    def _get_options_batch(
+        self,
+        expiry: datetime,
+        straddle_strikes: Dict[str, int],
+        strangle_strikes: Dict[str, int],
+        nifty_spot: float = None
+    ) -> Dict:
+        """
+        Fetch all 4 options (straddle + strangle) in single batch call (Tier 2 optimization).
+
+        Returns:
+            Dict with keys: 'straddle_call', 'straddle_put', 'strangle_call', 'strangle_put'
+        """
+        try:
+            # Build all 4 option symbols for batch call
+            year_short = str(expiry.year)[-2:]
+            month = str(expiry.month)  # No leading zero
+            day = str(expiry.day).zfill(2)  # Day needs leading zero
+
+            symbols = {
+                'straddle_call': f"NFO:NIFTY{year_short}{month}{day}{straddle_strikes['call']}CE",
+                'straddle_put': f"NFO:NIFTY{year_short}{month}{day}{straddle_strikes['put']}PE",
+                'strangle_call': f"NFO:NIFTY{year_short}{month}{day}{strangle_strikes['call']}CE",
+                'strangle_put': f"NFO:NIFTY{year_short}{month}{day}{strangle_strikes['put']}PE"
+            }
+
+            # Single batch API call for all 4 options (Tier 2 optimization)
+            logger.info(f"Fetching 4 options in single batch call for expiry {expiry.date()}...")
+            quotes = self.coordinator.get_multiple_instruments(list(symbols.values()))
+
+            # Parse results and build structured data for each option
+            results = {}
+            for key, symbol in symbols.items():
+                option_data = quotes.get(symbol, {})
+                option_type = 'CE' if 'call' in key else 'PE'
+                strike = straddle_strikes['call'] if 'straddle_call' in key else \
+                         straddle_strikes['put'] if 'straddle_put' in key else \
+                         strangle_strikes['call'] if 'strangle_call' in key else \
+                         strangle_strikes['put']
+
+                # Extract Greeks if available
+                greeks = {}
+                if 'greeks' in option_data and option_data['greeks']:
+                    greeks = {
+                        'delta': option_data['greeks'].get('delta', 0),
+                        'theta': option_data['greeks'].get('theta', 0),
+                        'gamma': option_data['greeks'].get('gamma', 0),
+                        'vega': option_data['greeks'].get('vega', 0)
+                    }
+                else:
+                    # Fallback: Calculate approximate Greeks using Black-Scholes
+                    logger.warning(f"Greeks not available in API for {symbol}, using approximation")
+                    spot_for_greeks = nifty_spot if nifty_spot else strike
+                    greeks = self._approximate_greeks(
+                        option_type=option_type,
+                        spot=spot_for_greeks,
+                        strike=strike,
+                        expiry=expiry,
+                        iv=option_data.get('implied_volatility', 20) / 100
+                    )
+
+                results[key] = {
+                    'symbol': symbol,
+                    'last_price': option_data.get('last_price', 0),
+                    'greeks': greeks,
+                    'oi': option_data.get('oi', 0),
+                    'volume': option_data.get('volume', 0)
+                }
+
+            logger.info(f"Successfully fetched all 4 options via batch call")
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in batch options fetch: {e}. Falling back to individual calls...")
+            # Fallback to individual calls if batch fails
+            return {
+                'straddle_call': self._get_option_data('CE', expiry, straddle_strikes['call'], nifty_spot),
+                'straddle_put': self._get_option_data('PE', expiry, straddle_strikes['put'], nifty_spot),
+                'strangle_call': self._get_option_data('CE', expiry, strangle_strikes['call'], nifty_spot),
+                'strangle_put': self._get_option_data('PE', expiry, strangle_strikes['put'], nifty_spot)
+            }
 
     def _get_option_data(
         self,
@@ -1357,6 +1690,10 @@ class NiftyOptionAnalyzer:
         position_size = getattr(self, '_current_position_size', 1.0)
         premium_quality = getattr(self, '_current_premium_quality', 'TRADEABLE')
 
+        # Calculate CPR for inclusion in result
+        cpr_data = self._calculate_cpr()
+        cpr_check = self._check_cpr_trend(nifty_spot, cpr_data) if cpr_data else None
+
         return {
             'timestamp': datetime.now().isoformat(),
             'nifty_spot': nifty_spot,
@@ -1365,6 +1702,8 @@ class NiftyOptionAnalyzer:
             'iv_rank': iv_rank,
             'market_regime': market_regime,
             'oi_analysis': oi_analysis,
+            'cpr_data': cpr_data,  # CPR levels (TC, Pivot, BC)
+            'cpr_check': cpr_check,  # CPR trend analysis
             'signal': best_score.get('signal', 'HOLD'),
             'total_score': best_score.get('total_score', 50),
             # NEW FIELDS for tiered signals
@@ -1473,10 +1812,11 @@ class NiftyOptionAnalyzer:
             logger.info("NIFTY OPTION EXIT SIGNAL ANALYSIS - Starting")
             logger.info("=" * 70)
 
-            # Get current market data
+            # Get current market data (batch call for NIFTY + VIX - Tier 2 optimization)
             logger.info("Fetching current market data...")
-            nifty_spot = self._get_nifty_spot_price()
-            vix = self._get_india_vix()
+            indices = self._get_spot_indices_batch()
+            nifty_spot = indices['nifty_spot']
+            vix = indices['india_vix']
             market_regime = self.regime_detector.get_market_regime()
             oi_analysis = self._get_nifty_oi_analysis()
 

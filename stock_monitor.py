@@ -11,6 +11,7 @@ from telegram_notifier import TelegramNotifier
 from alert_history_manager import AlertHistoryManager
 from unified_quote_cache import UnifiedQuoteCache
 from unified_data_cache import UnifiedDataCache
+from api_coordinator import get_api_coordinator
 from rsi_analyzer import calculate_rsi_with_crossovers
 from sector_analyzer import get_sector_analyzer
 from sector_manager import get_sector_manager
@@ -106,6 +107,10 @@ class StockMonitor:
             self.kite.set_access_token(config.KITE_ACCESS_TOKEN)
             logger.info("Kite Connect initialized successfully")
 
+            # Initialize API Coordinator (Tier 2 optimization - centralized quote management)
+            self.coordinator = get_api_coordinator(kite=self.kite)
+            logger.info("API Coordinator enabled (shared cache + smart batching)")
+
             # Load instrument tokens for historical data fetching
             self.instrument_tokens = self._load_instrument_tokens()
 
@@ -121,6 +126,7 @@ class StockMonitor:
                     logger.warning("Continuing with stale cache (if available)")
         else:
             self.instrument_tokens = {}
+            self.coordinator = None
 
     def _load_stock_list(self) -> List[str]:
         """Load F&O stock list from JSON file"""
@@ -675,15 +681,15 @@ class StockMonitor:
         """
         price_data = {}
 
-        # Try to use unified quote cache if enabled
-        if self.quote_cache and config.ENABLE_UNIFIED_CACHE:
+        # Try to use API coordinator if enabled (Tier 2 optimization)
+        if self.coordinator:
             try:
-                # Get quotes from cache or fetch fresh (with futures OI if enabled)
-                quotes_dict = self.quote_cache.get_or_fetch_quotes(
-                    self.stocks,
-                    self.kite,
-                    batch_size=100,  # Increased from 50 for better performance
-                    futures_mapper=self.futures_mapper  # Enable futures OI fetching
+                # Get quotes from coordinator (automatic caching + smart batching)
+                quotes_dict = self.coordinator.get_quotes(
+                    symbols=self.stocks,
+                    force_refresh=False,  # Use cache if available
+                    include_futures=bool(self.futures_mapper),  # Include futures for OI data
+                    futures_mapper=self.futures_mapper
                 )
 
                 # Convert to comprehensive price_data format (two-pass for futures OI)
@@ -716,17 +722,17 @@ class StockMonitor:
                                     price_data[equity_symbol]['oi_day_low'] = int(quote_data.get('oi_day_low', 0) or 0)
                                     break
 
-                logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks")
+                logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks via API Coordinator")
                 return price_data
 
             except Exception as e:
-                logger.error(f"Unified cache error, falling back to direct fetch: {e}")
-                # Fall through to original implementation
+                logger.error(f"API Coordinator error, falling back to direct fetch: {e}")
+                # Fall through to fallback implementation
 
         # FALLBACK: Original implementation (if cache disabled or failed)
-        # OPTIMIZED: Increased batch size to 100 equity + ~100 futures = 200 total instruments
-        # This REDUCES API calls from 4 to 2 while adding OI data (50% reduction!)
-        BATCH_SIZE = 100  # Increased from 50 to reduce API calls (Kite supports up to 500)
+        # OPTIMIZED: Increased batch size to 200 equity + ~200 futures = 400 total instruments
+        # This REDUCES API calls from 4 to 1 while adding OI data (75% reduction!)
+        BATCH_SIZE = 200  # Increased from 100 to 200 to reduce API calls (Kite supports up to 500)
         failed_batches = []
         start_time = time.time()
 

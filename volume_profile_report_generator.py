@@ -37,12 +37,12 @@ class VolumeProfileReportGenerator:
         Generate Excel report with volume profile findings.
 
         Report structure: data/volume_profile_reports/YYYY/MM/
-        Files: volume_profile_{3pm|315pm}_YYYY-MM-DD.xlsx
+        Files: volume_profile_eod_YYYY-MM-DD.xlsx
 
         Args:
             profile_results: List of volume profile results
             analysis_time: Time of analysis
-            execution_window: "3:00PM" or "3:15PM"
+            execution_window: "3:25PM" (end of day)
 
         Returns:
             Path to generated Excel file
@@ -53,10 +53,9 @@ class VolumeProfileReportGenerator:
         report_dir = os.path.join(self.base_dir, year, month)
         Path(report_dir).mkdir(parents=True, exist_ok=True)
 
-        # Generate file name
+        # Generate file name (simple: end-of-day)
         date_str = analysis_time.strftime('%Y-%m-%d')
-        time_suffix = '3pm' if '3:00' in execution_window else '315pm'
-        file_name = f'volume_profile_{time_suffix}_{date_str}.xlsx'
+        file_name = f'volume_profile_eod_{date_str}.xlsx'
         file_path = os.path.join(report_dir, file_name)
 
         logger.info(f"Generating report: {file_path}")
@@ -116,12 +115,12 @@ class VolumeProfileReportGenerator:
 
         row = 2
         for result in sorted_results:
-            # Interpretation
+            # Interpretation (Continuation/Strength Framework)
             shape = result.get('profile_shape', 'UNKNOWN')
             if shape == 'P-SHAPE':
-                interpretation = 'Distribution (Bearish)'
+                interpretation = 'Bullish (Strength at Highs)'
             elif shape == 'B-SHAPE':
-                interpretation = 'Accumulation (Bullish)'
+                interpretation = 'Bearish (Weakness at Lows)'
             elif shape == 'BALANCED':
                 interpretation = 'Neutral'
             else:

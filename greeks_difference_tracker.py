@@ -28,6 +28,7 @@ import config
 from unified_data_cache import UnifiedDataCache
 from telegram_notifier import TelegramNotifier
 from black_scholes_greeks import BlackScholesGreeks
+from api_coordinator import get_api_coordinator
 
 # Setup logging
 logging.basicConfig(
@@ -60,6 +61,10 @@ class GreeksDifferenceTracker:
         self.cache = UnifiedDataCache()
         self.telegram = TelegramNotifier()
         self.bs_calculator = BlackScholesGreeks()  # Black-Scholes calculator
+
+        # Initialize API Coordinator (Tier 2 optimization - cache sharing with nifty_option_analyzer)
+        self.coordinator = get_api_coordinator(kite=self.kite)
+        logger.info("API Coordinator enabled (cache sharing with nifty_option_analyzer)")
 
         # Runtime state
         self.baseline_greeks: Dict = {}
@@ -94,12 +99,15 @@ class GreeksDifferenceTracker:
         logger.info("=" * 60)
 
         try:
-            # Fetch India VIX and set adaptive threshold
-            self.current_vix = self._get_india_vix()
+            # Fetch NIFTY + VIX in single batch call (Tier 2 optimization)
+            indices = self._get_spot_indices_batch()
+            self.current_vix = indices['india_vix']
+            nifty_spot = indices['nifty_spot']
+
+            # Set adaptive threshold based on VIX
             self.current_threshold = self._get_vix_adaptive_threshold(self.current_vix)
 
-            # Get NIFTY spot price and determine ATM strike
-            nifty_spot = self._get_nifty_spot_price()
+            # Determine ATM strike
             atm_strike = self._get_atm_strike(nifty_spot)
 
             # Get next week expiry
@@ -422,7 +430,7 @@ class GreeksDifferenceTracker:
 
     def _fetch_greeks_for_strikes(self, expiry: datetime, strikes: List[int]) -> Dict:
         """
-        Fetch Delta, Theta, Vega for all strikes (both CE and PE).
+        Fetch Delta, Theta, Vega for all strikes (both CE and PE) in SINGLE batch call (Tier 2).
 
         Args:
             expiry: Option expiry date
@@ -433,34 +441,90 @@ class GreeksDifferenceTracker:
         """
         greeks_map = {}
 
-        for strike in strikes:
-            try:
-                # Fetch CE option data
-                ce_data = self._get_option_data('CE', expiry, strike)
-                ce_greeks = ce_data.get('greeks', {})
+        try:
+            # Build all option symbols for batch call (Tier 2 optimization)
+            symbols = []
+            symbol_to_strike_type = {}
 
-                # Fetch PE option data
-                pe_data = self._get_option_data('PE', expiry, strike)
-                pe_greeks = pe_data.get('greeks', {})
+            for strike in strikes:
+                for opt_type in ['CE', 'PE']:
+                    symbol = f"NIFTY{expiry.strftime('%y%m%d')}{strike}{opt_type}"
+                    nfo_symbol = f"NFO:{symbol}"
+                    symbols.append(nfo_symbol)
+                    symbol_to_strike_type[nfo_symbol] = (strike, opt_type)
 
-                if ce_greeks and pe_greeks:
-                    greeks_map[strike] = {
-                        'CE': {
-                            'delta': ce_greeks.get('delta', 0),
-                            'theta': ce_greeks.get('theta', 0),
-                            'vega': ce_greeks.get('vega', 0)
-                        },
-                        'PE': {
-                            'delta': pe_greeks.get('delta', 0),
-                            'theta': pe_greeks.get('theta', 0),
-                            'vega': pe_greeks.get('vega', 0)
-                        }
+            # Single batch API call for ALL options (e.g., 8 options in 1 call instead of 8 calls)
+            logger.info(f"Fetching {len(symbols)} options in single batch call...")
+            quotes = self.coordinator.get_multiple_instruments(symbols)
+
+            # Parse results and build greeks_map
+            for nfo_symbol, quote_data in quotes.items():
+                if nfo_symbol not in symbol_to_strike_type:
+                    continue
+
+                strike, opt_type = symbol_to_strike_type[nfo_symbol]
+
+                # Initialize strike entry if needed
+                if strike not in greeks_map:
+                    greeks_map[strike] = {'CE': {}, 'PE': {}}
+
+                # Check if Greeks are in API response
+                if 'greeks' in quote_data and quote_data['greeks']:
+                    greeks_map[strike][opt_type] = {
+                        'delta': quote_data['greeks'].get('delta', 0),
+                        'theta': quote_data['greeks'].get('theta', 0),
+                        'vega': quote_data['greeks'].get('vega', 0)
                     }
                 else:
-                    logger.warning(f"Missing Greeks for strike {strike}")
+                    # Calculate Greeks using Black-Scholes if not in API
+                    logger.info(f"Calculating Greeks for {nfo_symbol} using Black-Scholes...")
+                    spot_price = self._get_nifty_spot_price()
+                    option_price = quote_data.get('last_price', 0)
 
-            except Exception as e:
-                logger.error(f"Error fetching Greeks for strike {strike}: {e}")
+                    if spot_price and option_price > 0:
+                        time_to_expiry = self.bs_calculator.calculate_time_to_expiry(expiry)
+                        greeks = self.bs_calculator.calculate_greeks_from_price(
+                            spot_price=spot_price,
+                            strike_price=strike,
+                            time_to_expiry=time_to_expiry,
+                            option_price=option_price,
+                            option_type=opt_type
+                        )
+
+                        if greeks:
+                            greeks_map[strike][opt_type] = {
+                                'delta': greeks.get('delta', 0),
+                                'theta': greeks.get('theta', 0),
+                                'vega': greeks.get('vega', 0)
+                            }
+
+            logger.info(f"Successfully fetched Greeks for {len(greeks_map)} strikes via batch call")
+
+        except Exception as e:
+            logger.error(f"Error in batch fetch: {e}. Falling back to individual calls...")
+            # Fallback to individual calls if batch fails
+            for strike in strikes:
+                try:
+                    ce_data = self._get_option_data('CE', expiry, strike)
+                    pe_data = self._get_option_data('PE', expiry, strike)
+                    ce_greeks = ce_data.get('greeks', {})
+                    pe_greeks = pe_data.get('greeks', {})
+
+                    if ce_greeks and pe_greeks:
+                        greeks_map[strike] = {
+                            'CE': {
+                                'delta': ce_greeks.get('delta', 0),
+                                'theta': ce_greeks.get('theta', 0),
+                                'vega': ce_greeks.get('vega', 0)
+                            },
+                            'PE': {
+                                'delta': pe_greeks.get('delta', 0),
+                                'theta': pe_greeks.get('theta', 0),
+                                'vega': pe_greeks.get('vega', 0)
+                            }
+                        }
+                except Exception as e2:
+                    logger.error(f"Error fetching strike {strike}: {e2}")
 
         return greeks_map
 
@@ -481,14 +545,15 @@ class GreeksDifferenceTracker:
         symbol = f"NIFTY{expiry.strftime('%y%m%d')}{strike}{option_type}"
 
         try:
-            # Fetch quote from Kite
-            quote = self.kite.quote([f"NFO:{symbol}"])
+            # Fetch quote via coordinator (fallback method, batching is preferred)
+            nfo_symbol = f"NFO:{symbol}"
+            quotes = self.coordinator.get_multiple_instruments([nfo_symbol])
 
-            if not quote or f"NFO:{symbol}" not in quote:
+            if not quotes or nfo_symbol not in quotes:
                 logger.warning(f"No quote data for {symbol}")
                 return {}
 
-            option_data = quote[f"NFO:{symbol}"]
+            option_data = quotes[nfo_symbol]
 
             # Check if Greeks are available in API response
             if 'greeks' in option_data and option_data['greeks']:
@@ -847,28 +912,61 @@ class GreeksDifferenceTracker:
 
     # Helper methods from nifty_option_analyzer.py (simplified versions)
 
-    def _get_nifty_spot_price(self) -> float:
-        """Get current NIFTY 50 spot price"""
+    def _get_spot_indices_batch(self) -> Dict[str, float]:
+        """
+        Fetch NIFTY + VIX in single batch call (Tier 2 optimization).
+        Shares cache with nifty_option_analyzer at collision times.
+
+        Returns:
+            Dict with 'nifty_spot' and 'india_vix'
+        """
         try:
-            quote = self.kite.quote(["NSE:NIFTY 50"])
-            return quote["NSE:NIFTY 50"]["last_price"]
+            quotes = self.coordinator.get_multiple_instruments([
+                "NSE:NIFTY 50",
+                "NSE:INDIA VIX"
+            ])
+
+            nifty_data = quotes.get("NSE:NIFTY 50", {})
+            vix_data = quotes.get("NSE:INDIA VIX", {})
+
+            nifty_spot = nifty_data.get("last_price", 0)
+            vix_value = vix_data.get("last_price", 10.0)
+
+            logger.info(f"NIFTY: {nifty_spot:.2f}, VIX: {vix_value:.2f}%")
+
+            return {
+                'nifty_spot': nifty_spot,
+                'india_vix': vix_value / 100.0  # Convert to decimal
+            }
+        except Exception as e:
+            logger.error(f"Error fetching spot indices: {e}")
+            return {'nifty_spot': 0.0, 'india_vix': 0.10}
+
+    def _get_nifty_spot_price(self) -> float:
+        """Get current NIFTY 50 spot price (via coordinator for cache sharing)"""
+        try:
+            quote = self.coordinator.get_single_quote("NSE:NIFTY 50")
+            if quote:
+                return quote.get("last_price", 0)
+            return 0.0
         except Exception as e:
             logger.error(f"Error fetching NIFTY price: {e}")
             return 0.0
 
     def _get_india_vix(self) -> float:
         """
-        Get current India VIX value.
+        Get current India VIX value (via coordinator for cache sharing).
 
         Returns:
             VIX value as decimal (e.g., 0.15 for 15%)
         """
         try:
-            # India VIX instrument token: 264969
-            quote = self.kite.quote(["NSE:INDIA VIX"])
-            vix_value = quote["NSE:INDIA VIX"]["last_price"]
-            logger.info(f"India VIX: {vix_value:.2f}%")
-            return vix_value / 100.0  # Convert to decimal
+            quote = self.coordinator.get_single_quote("NSE:INDIA VIX")
+            if quote:
+                vix_value = quote.get("last_price", 10.0)
+                logger.info(f"India VIX: {vix_value:.2f}%")
+                return vix_value / 100.0  # Convert to decimal
+            return 0.10
         except Exception as e:
             logger.warning(f"Error fetching India VIX: {e}, using default 10%")
             return 0.10

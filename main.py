@@ -13,7 +13,7 @@ from stock_monitor import StockMonitor
 import config
 
 def setup_logging():
-    """Configure logging to both file and console"""
+    """Configure logging to file and optionally console (avoids duplicate logging under LaunchD)"""
     # Create logs directory if it doesn't exist
     os.makedirs(os.path.dirname(config.LOG_FILE), exist_ok=True)
 
@@ -21,21 +21,25 @@ def setup_logging():
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     date_format = '%Y-%m-%d %H:%M:%S'
 
-    # File handler
+    # File handler (always enabled)
     file_handler = logging.FileHandler(config.LOG_FILE)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(log_format, date_format))
-
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter(log_format, date_format))
 
     # Root logger configuration
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
+
+    # Console handler (only if running interactively, NOT under LaunchD)
+    # Avoids duplicate logging when LaunchD redirects stdout to the same log file
+    if sys.stdout.isatty():
+        # Running interactively in terminal - add console output
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter(log_format, date_format))
+        root_logger.addHandler(console_handler)
+    # If stdout is redirected (LaunchD case), skip console handler to avoid duplicates
 
 def main():
     """Main execution function"""

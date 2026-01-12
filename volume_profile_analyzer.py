@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Volume Profile Analyzer - Main Orchestrator
-Runs at 3:00 PM and 3:15 PM daily to detect P-shaped and B-shaped volume profiles for F&O stocks.
+Runs at 3:25 PM daily (near market close) to detect P-shaped and B-shaped volume profiles for F&O stocks.
 
-P-shaped: Distribution at highs (bearish signal)
-B-shaped: Accumulation at lows (bullish signal)
+P-shaped: Price held at highs (bullish strength/continuation signal)
+B-shaped: Price held at lows (bearish weakness/continuation signal)
 """
 
 import json
@@ -37,12 +37,12 @@ logger = logging.getLogger(__name__)
 class VolumeProfileAnalyzer:
     """Main orchestrator for volume profile analysis"""
 
-    def __init__(self, execution_time: str = "3:00PM"):
+    def __init__(self, execution_time: str = "3:25PM"):
         """
         Initialize volume profile analyzer.
 
         Args:
-            execution_time: "3:00PM" or "3:15PM"
+            execution_time: "3:25PM" (end of day analysis)
         """
         self.execution_time = execution_time
         logger.info(f"="*70)
@@ -246,6 +246,84 @@ class VolumeProfileAnalyzer:
         logger.info(f"Batch analysis complete: {len(results)} stocks analyzed")
         return results
 
+    def _upload_to_dropbox(self, excel_path: str) -> Optional[str]:
+        """
+        Upload Excel report to Dropbox and return shareable link.
+
+        Args:
+            excel_path: Local path to Excel file
+
+        Returns:
+            Shareable Dropbox link, or None if error/disabled
+        """
+        if not config.VOLUME_PROFILE_ENABLE_DROPBOX:
+            logger.info("Dropbox upload disabled in config")
+            return None
+
+        try:
+            # Import Dropbox dependencies
+            import dropbox
+            from dropbox.files import WriteMode
+
+            logger.info("Uploading volume profile report to Dropbox...")
+
+            # Authenticate
+            token = config.VOLUME_PROFILE_DROPBOX_TOKEN
+            if not token:
+                logger.error("Dropbox token not configured (VOLUME_PROFILE_DROPBOX_TOKEN)")
+                return None
+
+            dbx = dropbox.Dropbox(token)
+
+            # File path in Dropbox (preserve execution time in filename)
+            file_basename = excel_path.split('/')[-1]  # Get filename from path
+            dropbox_path = f"{config.VOLUME_PROFILE_DROPBOX_FOLDER}/{file_basename}"
+
+            # Upload file (overwrite if exists)
+            with open(excel_path, 'rb') as f:
+                dbx.files_upload(
+                    f.read(),
+                    dropbox_path,
+                    mode=WriteMode.overwrite
+                )
+
+            logger.info(f"✓ Uploaded to Dropbox: {dropbox_path}")
+
+            # Create or get shareable link
+            try:
+                # Try to get existing link
+                links = dbx.sharing_list_shared_links(path=dropbox_path)
+                if links.links:
+                    link_url = links.links[0].url
+                else:
+                    # Create new link
+                    link = dbx.sharing_create_shared_link_with_settings(dropbox_path)
+                    link_url = link.url
+
+                # Convert to direct download link (optional, for easier viewing)
+                shareable_link = link_url.replace('?dl=0', '?dl=1')
+                logger.info(f"✓ Dropbox link: {shareable_link}")
+                return shareable_link
+
+            except dropbox.exceptions.ApiError as e:
+                if 'shared_link_already_exists' in str(e):
+                    # Link already exists, retrieve it
+                    links = dbx.sharing_list_shared_links(path=dropbox_path)
+                    if links.links:
+                        link_url = links.links[0].url
+                        shareable_link = link_url.replace('?dl=0', '?dl=1')
+                        logger.info(f"✓ Existing Dropbox link: {shareable_link}")
+                        return shareable_link
+                raise
+
+        except ImportError as e:
+            logger.error(f"Dropbox library not installed: {e}")
+            logger.error("Install: pip install dropbox")
+            return None
+        except Exception as e:
+            logger.error(f"Error uploading to Dropbox: {e}", exc_info=True)
+            return None
+
     def run_analysis(self) -> Optional[str]:
         """
         Main analysis pipeline:
@@ -321,6 +399,16 @@ class VolumeProfileAnalyzer:
             logger.error(f"Failed to generate Excel report: {e}", exc_info=True)
             report_path = None
 
+        # Step 5.1: Upload report to Dropbox
+        dropbox_link = None
+        if report_path:
+            try:
+                dropbox_link = self._upload_to_dropbox(report_path)
+                if dropbox_link:
+                    logger.info(f"Report uploaded to Dropbox: {dropbox_link}")
+            except Exception as e:
+                logger.error(f"Failed to upload to Dropbox: {e}", exc_info=True)
+
         # Step 6: Send Telegram alerts (only if high-confidence patterns found)
         try:
             if high_conf_p or high_conf_b:
@@ -348,8 +436,8 @@ class VolumeProfileAnalyzer:
 def main():
     """Main entry point with command-line argument support"""
     parser = argparse.ArgumentParser(description='Volume Profile Analyzer')
-    parser.add_argument('--execution-time', default='3:00PM',
-                       help='Execution time: 3:00PM or 3:15PM')
+    parser.add_argument('--execution-time', default='3:25PM',
+                       help='Execution time: 3:25PM (end of day)')
 
     args = parser.parse_args()
 

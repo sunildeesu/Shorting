@@ -29,6 +29,7 @@ from alert_excel_logger import AlertExcelLogger
 from unified_quote_cache import UnifiedQuoteCache
 from unified_data_cache import UnifiedDataCache
 from rsi_analyzer import calculate_rsi_with_crossovers
+from api_coordinator import get_api_coordinator
 import requests
 
 # Configure logging
@@ -70,23 +71,24 @@ class ATRBreakoutMonitor:
                 logger.error(f"Failed to initialize Excel logger: {e}")
                 self.excel_logger = None
 
-        # Initialize unified caches (shared with stock_monitor and eod_analyzer)
-        self.quote_cache = None
+        # Initialize API coordinator (Tier 2 optimization - shared cache across all services)
+        self.coordinator = None
         self.data_cache = None
         if config.ENABLE_UNIFIED_CACHE:
             try:
-                self.quote_cache = UnifiedQuoteCache(
-                    cache_file=config.QUOTE_CACHE_FILE,
-                    ttl_seconds=config.QUOTE_CACHE_TTL_SECONDS
-                )
+                # Get shared API coordinator instance (eliminates duplicate API calls)
+                self.coordinator = get_api_coordinator(kite=self.kite)
                 self.data_cache = UnifiedDataCache(
                     cache_dir=config.HISTORICAL_CACHE_DIR
                 )
-                logger.info("Unified cache enabled (quote + data cache)")
+                logger.info("API Coordinator enabled (shared cache + smart batching)")
             except Exception as e:
-                logger.error(f"Failed to initialize unified cache: {e}")
-                self.quote_cache = None
+                logger.error(f"Failed to initialize API coordinator: {e}")
+                self.coordinator = None
                 self.data_cache = None
+
+        # Fallback: Keep quote_cache reference for backward compatibility
+        self.quote_cache = None
 
         # Load shares outstanding for market cap calculation
         self.shares_outstanding = self._load_shares_outstanding()
@@ -242,35 +244,41 @@ class ATRBreakoutMonitor:
 
     def fetch_all_quotes_batch(self) -> Dict[str, Dict]:
         """
-        Fetch quotes for all F&O stocks using batch API (OPTIMIZED)
-        Now uses UnifiedQuoteCache to share with stock_monitor!
+        Fetch quotes for all F&O stocks using API Coordinator (TIER 2 OPTIMIZED)
+
+        Benefits:
+        - Shared cache across all services (eliminates duplicate fetches)
+        - Automatic batching (200 instruments/call)
+        - Cache hit logging for monitoring
+        - Zero API calls if another service fetched recently
 
         Returns:
             Dictionary mapping instrument (NSE:SYMBOL) to quote data
         """
-        # Try unified cache first
-        if self.quote_cache and config.ENABLE_UNIFIED_CACHE:
+        # Try API coordinator first (Tier 2 optimization)
+        if self.coordinator and config.ENABLE_UNIFIED_CACHE:
             try:
-                logger.info(f"Checking unified quote cache...")
-                quotes_dict = self.quote_cache.get_or_fetch_quotes(
-                    self.stocks,
-                    self.kite,
-                    batch_size=50
+                logger.info(f"Fetching quotes via API Coordinator...")
+
+                # Coordinator handles caching, batching, and rate limiting automatically
+                quote_data = self.coordinator.get_quotes(
+                    symbols=self.stocks,
+                    force_refresh=False  # Use cache if available
                 )
 
-                logger.info(f"Quote fetch complete: {len(quotes_dict)} stocks retrieved (via cache)")
-                return quotes_dict
+                logger.info(f"Quote fetch complete: {len(quote_data)} quotes retrieved")
+                return quote_data
 
             except Exception as e:
-                logger.error(f"Unified cache error, falling back to direct fetch: {e}")
+                logger.error(f"API Coordinator error, falling back to direct fetch: {e}")
                 # Fall through to original implementation below
 
-        # Original implementation (fallback)
+        # FALLBACK: Original implementation (if coordinator disabled or failed)
         quote_data = {}
-        batch_size = 50  # Kite supports up to 500, but 50 is safer
+        batch_size = 200  # Kite supports up to 500, using 200 for optimal performance (75% fewer API calls)
         total_batches = (len(self.stocks) + batch_size - 1) // batch_size
 
-        logger.info(f"Fetching quotes for {len(self.stocks)} stocks in {total_batches} batch(es)...")
+        logger.info(f"[FALLBACK] Fetching quotes for {len(self.stocks)} stocks in {total_batches} batch(es)...")
 
         for i in range(0, len(self.stocks), batch_size):
             batch = self.stocks[i:i + batch_size]
