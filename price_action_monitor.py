@@ -221,6 +221,25 @@ class PriceActionMonitor:
                             else:
                                 stats['neutral_patterns'] += 1
 
+                            # Check if opportunity has already passed
+                            target = pattern_details.get('target')
+                            entry_price = pattern_details.get('entry_price')
+                            pattern_type = pattern_details['type']
+
+                            if target and entry_price:
+                                if pattern_type == 'bullish':
+                                    # For bullish patterns, skip if current price >= target
+                                    if current_price >= target:
+                                        logger.info(f"{symbol}: Skipping {pattern_name} - price already at/above target "
+                                                   f"(current: ₹{current_price:.2f}, target: ₹{target:.2f})")
+                                        continue
+                                elif pattern_type == 'bearish':
+                                    # For bearish patterns, skip if current price <= target
+                                    if current_price <= target:
+                                        logger.info(f"{symbol}: Skipping {pattern_name} - price already at/below target "
+                                                   f"(current: ₹{current_price:.2f}, target: ₹{target:.2f})")
+                                        continue
+
                             # Check cooldown
                             alert_key = f"price_action_{symbol}_{pattern_name}"
                             if not self.alert_history.should_send_alert(
@@ -235,6 +254,7 @@ class PriceActionMonitor:
                                 symbol=symbol,
                                 pattern_name=pattern_name,
                                 pattern_details=pattern_details,
+                                current_price=current_price,
                                 market_regime=market_regime
                             )
                             stats['alerts_sent'] += 1
@@ -371,6 +391,7 @@ class PriceActionMonitor:
         symbol: str,
         pattern_name: str,
         pattern_details: Dict,
+        current_price: float,
         market_regime: str
     ):
         """
@@ -380,6 +401,7 @@ class PriceActionMonitor:
             symbol: Stock symbol
             pattern_name: Pattern name
             pattern_details: Pattern detection result dict
+            current_price: Current market price
             market_regime: Current market regime
         """
         try:
@@ -392,11 +414,9 @@ class PriceActionMonitor:
                 entry_price=pattern_details['entry_price'],
                 target=pattern_details.get('target'),
                 stop_loss=pattern_details.get('stop_loss'),
-                volume_ratio=pattern_details['volume_ratio'],
-                pattern_description=pattern_details['pattern_description'],
-                candle_data=pattern_details['candle_data'],
-                market_regime=market_regime,
-                confidence_breakdown=pattern_details.get('confidence_breakdown')
+                current_price=current_price,
+                pattern_details=pattern_details,
+                market_regime=market_regime
             )
             logger.info(f"{symbol}: Telegram alert sent for {pattern_name} (confidence: {pattern_details['confidence_score']:.1f})")
         except Exception as e:

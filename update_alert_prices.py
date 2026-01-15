@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
-Update Alert Prices Script
+Update Alert Prices Script V2 (PROPER FIX)
 
-Fetches and updates 2-minute and 10-minute prices for pending alerts in the Excel tracking file.
-Only fetches prices for stocks that have generated alerts (API efficient).
+Fetches ACTUAL historical prices based on alert timestamps:
+- 2-min price: Price from exactly 2 minutes after alert
+- 10-min price: Price from exactly 10 minutes after alert
+
+Uses Kite historical data API with 1-minute candles.
 
 Usage:
-    python3 update_alert_prices.py [--2min] [--10min] [--both]
-
-Examples:
-    python3 update_alert_prices.py --2min      # Update only 2-min prices
-    python3 update_alert_prices.py --10min     # Update only 10-min prices
-    python3 update_alert_prices.py --both      # Update both (default)
+    python3 update_alert_prices_v2.py [--2min] [--10min] [--both]
 """
 
 import sys
 import logging
 import argparse
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Set
+from typing import Dict, List, Optional
 from kiteconnect import KiteConnect
 import config
 from alert_excel_logger import AlertExcelLogger
@@ -35,8 +34,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class AlertPriceUpdater:
-    """Updates historical prices for logged alerts using Kite API."""
+class AlertPriceUpdaterV2:
+    """Updates historical prices for logged alerts using Kite historical data API."""
 
     def __init__(self):
         """Initialize Kite connection and Excel logger."""
@@ -52,15 +51,37 @@ class AlertPriceUpdater:
         self.excel_logger = AlertExcelLogger(config.ALERT_EXCEL_PATH)
         logger.info(f"Excel logger initialized: {config.ALERT_EXCEL_PATH}")
 
+        # Cache for instrument tokens
+        self.instrument_tokens = {}
+        self._load_instrument_tokens()
+
+    def _load_instrument_tokens(self):
+        """Load and cache NSE instrument tokens for symbol lookup."""
+        try:
+            logger.info("Loading NSE instrument tokens...")
+            instruments = self.kite.instruments("NSE")
+
+            for instrument in instruments:
+                symbol = instrument['tradingsymbol']
+                token = instrument['instrument_token']
+                self.instrument_tokens[symbol] = token
+
+            logger.info(f"Loaded {len(self.instrument_tokens)} instrument tokens")
+
+        except Exception as e:
+            logger.error(f"Error loading instrument tokens: {e}")
+            raise
+
     def update_2min_prices(self) -> int:
         """
         Update Price_2min column for alerts that are at least 2 minutes old.
+        Fetches HISTORICAL price from exactly 2 minutes after the alert.
 
         Returns:
             Number of alerts updated
         """
         logger.info("=" * 60)
-        logger.info("Starting 2-minute price updates...")
+        logger.info("Starting 2-minute HISTORICAL price updates...")
 
         # Get pending updates (alerts at least 2 minutes old)
         pending = self.excel_logger.get_pending_updates(min_age_minutes=2)
@@ -71,7 +92,6 @@ class AlertPriceUpdater:
 
         # Filter alerts that don't have Price_2min filled yet
         alerts_to_update = []
-        symbols_needed = set()
 
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
@@ -96,37 +116,40 @@ class AlertPriceUpdater:
                         'date': alert['date'],
                         'time': alert['time']
                     })
-                    symbols_needed.add(alert['symbol'])
 
         if not alerts_to_update:
             logger.info("All eligible alerts already have 2-min prices")
             return 0
 
         logger.info(f"Found {len(alerts_to_update)} alerts needing 2-min price updates")
-        logger.info(f"Fetching prices for {len(symbols_needed)} unique stocks")
 
-        # Fetch current prices for all needed symbols
-        prices = self._fetch_prices_batch(list(symbols_needed))
-
-        # Prepare updates
+        # Fetch historical prices for each alert
         updates = []
         for alert in alerts_to_update:
-            symbol = alert['symbol']
-            clean_symbol = symbol.replace('.NS', '')
+            symbol = alert['symbol'].replace('.NS', '')
+            alert_datetime = datetime.strptime(f"{alert['date']} {alert['time']}", "%Y-%m-%d %H:%M:%S")
+            target_time = alert_datetime + timedelta(minutes=2)
 
-            if clean_symbol in prices:
+            # Fetch price at target time
+            price = self._fetch_price_at_time(symbol, target_time)
+
+            if price:
                 updates.append({
                     'row_id': alert['row_id'],
                     'sheet_name': alert['sheet_name'],
-                    'price': prices[clean_symbol]
+                    'price': price
                 })
+                logger.info(f"  {symbol} @ {target_time.strftime('%H:%M:%S')}: ₹{price:.2f}")
             else:
-                logger.warning(f"Price not available for {symbol}")
+                logger.warning(f"  {symbol}: No price data at {target_time.strftime('%H:%M:%S')}")
+
+            # Rate limiting
+            time.sleep(0.1)
 
         # Update Excel
         if updates:
             updated_count = self.excel_logger.update_prices(updates, price_column="2min")
-            logger.info(f"✓ Updated {updated_count} alerts with 2-min prices")
+            logger.info(f"✓ Updated {updated_count} alerts with 2-min HISTORICAL prices")
             return updated_count
         else:
             logger.warning("No prices fetched, nothing to update")
@@ -135,12 +158,13 @@ class AlertPriceUpdater:
     def update_10min_prices(self) -> int:
         """
         Update Price_10min column for alerts that are at least 10 minutes old.
+        Fetches HISTORICAL price from exactly 10 minutes after the alert.
 
         Returns:
             Number of alerts updated
         """
         logger.info("=" * 60)
-        logger.info("Starting 10-minute price updates...")
+        logger.info("Starting 10-minute HISTORICAL price updates...")
 
         # Get pending updates (alerts at least 10 minutes old)
         pending = self.excel_logger.get_pending_updates(min_age_minutes=10)
@@ -151,7 +175,6 @@ class AlertPriceUpdater:
 
         # Filter alerts that don't have Price_10min filled yet
         alerts_to_update = []
-        symbols_needed = set()
 
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
@@ -176,83 +199,121 @@ class AlertPriceUpdater:
                         'date': alert['date'],
                         'time': alert['time']
                     })
-                    symbols_needed.add(alert['symbol'])
 
         if not alerts_to_update:
             logger.info("All eligible alerts already have 10-min prices")
             return 0
 
         logger.info(f"Found {len(alerts_to_update)} alerts needing 10-min price updates")
-        logger.info(f"Fetching prices for {len(symbols_needed)} unique stocks")
 
-        # Fetch current prices for all needed symbols
-        prices = self._fetch_prices_batch(list(symbols_needed))
-
-        # Prepare updates
+        # Fetch historical prices for each alert
         updates = []
         for alert in alerts_to_update:
-            symbol = alert['symbol']
-            clean_symbol = symbol.replace('.NS', '')
+            symbol = alert['symbol'].replace('.NS', '')
+            alert_datetime = datetime.strptime(f"{alert['date']} {alert['time']}", "%Y-%m-%d %H:%M:%S")
+            target_time = alert_datetime + timedelta(minutes=10)
 
-            if clean_symbol in prices:
+            # Fetch price at target time
+            price = self._fetch_price_at_time(symbol, target_time)
+
+            if price:
                 updates.append({
                     'row_id': alert['row_id'],
                     'sheet_name': alert['sheet_name'],
-                    'price': prices[clean_symbol]
+                    'price': price
                 })
+                logger.info(f"  {symbol} @ {target_time.strftime('%H:%M:%S')}: ₹{price:.2f}")
             else:
-                logger.warning(f"Price not available for {symbol}")
+                logger.warning(f"  {symbol}: No price data at {target_time.strftime('%H:%M:%S')}")
+
+            # Rate limiting
+            time.sleep(0.1)
 
         # Update Excel
         if updates:
             updated_count = self.excel_logger.update_prices(updates, price_column="10min")
-            logger.info(f"✓ Updated {updated_count} alerts with 10-min prices")
+            logger.info(f"✓ Updated {updated_count} alerts with 10-min HISTORICAL prices")
             return updated_count
         else:
             logger.warning("No prices fetched, nothing to update")
             return 0
 
-    def _fetch_prices_batch(self, symbols: List[str]) -> Dict[str, float]:
+    def _fetch_price_at_time(self, symbol: str, target_datetime: datetime) -> Optional[float]:
         """
-        Fetch current prices for multiple symbols using batch API.
+        Fetch historical price at a specific datetime using 1-minute candles.
 
         Args:
-            symbols: List of stock symbols (without .NS suffix)
+            symbol: Stock symbol (e.g., "RELIANCE")
+            target_datetime: The datetime to fetch price for
 
         Returns:
-            Dict mapping symbol to current price
+            Close price of the 1-minute candle at that time, or None if unavailable
         """
-        if not symbols:
-            return {}
-
-        prices = {}
-
         try:
-            # Convert to NSE instruments format
-            instruments = [f"NSE:{symbol.replace('.NS', '')}" for symbol in symbols]
+            # Get instrument token
+            if symbol not in self.instrument_tokens:
+                logger.error(f"Instrument token not found for {symbol}")
+                return None
 
-            # Batch fetch (Kite supports up to 500 instruments per call)
-            batch_size = 50
-            for i in range(0, len(instruments), batch_size):
-                batch = instruments[i:i + batch_size]
+            instrument_token = self.instrument_tokens[symbol]
 
-                try:
-                    quotes = self.kite.quote(*batch)
+            # Fetch 1-minute candles for a window around the target time
+            # Get 15 minutes of data to ensure we capture the target candle
+            from_datetime = target_datetime - timedelta(minutes=5)
+            to_datetime = target_datetime + timedelta(minutes=5)
 
-                    for instrument, data in quotes.items():
-                        symbol = instrument.replace('NSE:', '')
-                        prices[symbol] = data['last_price']
+            # Fetch historical data
+            try:
+                candles = self.kite.historical_data(
+                    instrument_token=instrument_token,
+                    from_date=from_datetime,
+                    to_date=to_datetime,
+                    interval="minute"  # 1-minute candles
+                )
 
-                    logger.info(f"Fetched {len(batch)} prices (batch {i // batch_size + 1})")
+                if not candles:
+                    logger.warning(f"{symbol}: No candle data returned")
+                    return None
 
-                except Exception as e:
-                    logger.error(f"Error fetching batch {i // batch_size + 1}: {e}")
+                # Find the candle closest to our target time
+                closest_candle = None
+                min_time_diff = float('inf')
 
-            return prices
+                for candle in candles:
+                    candle_time = candle['date']
+                    # Remove timezone info for comparison
+                    if candle_time.tzinfo:
+                        candle_time = candle_time.replace(tzinfo=None)
+
+                    time_diff = abs((candle_time - target_datetime).total_seconds())
+
+                    if time_diff < min_time_diff:
+                        min_time_diff = time_diff
+                        closest_candle = candle
+
+                if closest_candle:
+                    # Use close price of the closest candle
+                    price = closest_candle['close']
+                    candle_time = closest_candle['date']
+                    if candle_time.tzinfo:
+                        candle_time = candle_time.replace(tzinfo=None)
+
+                    time_diff_minutes = min_time_diff / 60
+                    if time_diff_minutes > 5:
+                        logger.warning(f"{symbol}: Closest candle is {time_diff_minutes:.1f} mins away")
+
+                    return price
+                else:
+                    logger.warning(f"{symbol}: No suitable candle found")
+                    return None
+
+            except Exception as e:
+                logger.error(f"Error fetching historical data for {symbol}: {e}")
+                return None
 
         except Exception as e:
-            logger.error(f"Error in batch price fetch: {e}")
-            return {}
+            logger.error(f"Error in _fetch_price_at_time for {symbol}: {e}")
+            return None
 
     def close(self):
         """Close resources."""
@@ -263,7 +324,7 @@ class AlertPriceUpdater:
 def main():
     """Main entry point for alert price updater."""
     parser = argparse.ArgumentParser(
-        description="Update 2-min and 10-min prices for pending alerts"
+        description="Update 2-min and 10-min HISTORICAL prices for pending alerts"
     )
     parser.add_argument(
         '--2min',
@@ -290,7 +351,7 @@ def main():
         args.both = True
 
     try:
-        updater = AlertPriceUpdater()
+        updater = AlertPriceUpdaterV2()
 
         total_updated = 0
 

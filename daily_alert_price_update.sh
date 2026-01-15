@@ -28,17 +28,17 @@ TODAY=$(date '+%Y-%m-%d')
 
 echo "Step 1: Updating 2-minute historical prices..."
 echo "-----------------------------------------------------------------------"
-./venv/bin/python3 update_alert_prices_v2.py --2min
+./venv/bin/python3 update_alert_prices.py --2min
 echo ""
 
 echo "Step 2: Updating 10-minute historical prices..."
 echo "-----------------------------------------------------------------------"
-./venv/bin/python3 update_alert_prices_v2.py --10min
+./venv/bin/python3 update_alert_prices.py --10min
 echo ""
 
 echo "Step 3: Updating EOD closing prices for $TODAY..."
 echo "-----------------------------------------------------------------------"
-./venv/bin/python3 update_eod_prices_v2.py --date "$TODAY"
+./venv/bin/python3 update_eod_prices.py --date "$TODAY"
 echo ""
 
 echo "======================================================================="

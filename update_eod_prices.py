@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-Update EOD (End-of-Day) Prices Script
+Update EOD (End-of-Day) Prices Script V2 (PROPER FIX)
 
-Fetches and updates end-of-day closing prices for today's alerts.
-Designed to run automatically at market close (3:30 PM IST).
+Fetches ACTUAL historical closing prices for the date of the alert.
+Uses Kite historical data API to get the day's closing price, not current price.
 
 Usage:
-    python3 update_eod_prices.py [--date YYYY-MM-DD]
+    python3 update_eod_prices_v2.py [--date YYYY-MM-DD]
 
 Examples:
-    python3 update_eod_prices.py              # Update today's alerts
-    python3 update_eod_prices.py --date 2025-11-08  # Update specific date
+    python3 update_eod_prices_v2.py              # Update today's alerts
+    python3 update_eod_prices_v2.py --date 2025-11-08  # Update specific date
 """
 
 import sys
 import logging
 import argparse
-from datetime import datetime, date
-from typing import Dict, List, Set
+import time
+from datetime import datetime, date, timedelta
+from typing import Dict, List, Optional
 from kiteconnect import KiteConnect
 import config
 from alert_excel_logger import AlertExcelLogger
@@ -34,8 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class EODPriceUpdater:
-    """Updates end-of-day prices for logged alerts using Kite API."""
+class EODPriceUpdaterV2:
+    """Updates end-of-day HISTORICAL closing prices for logged alerts."""
 
     def __init__(self):
         """Initialize Kite connection and Excel logger."""
@@ -51,9 +52,31 @@ class EODPriceUpdater:
         self.excel_logger = AlertExcelLogger(config.ALERT_EXCEL_PATH)
         logger.info(f"Excel logger initialized: {config.ALERT_EXCEL_PATH}")
 
+        # Cache for instrument tokens
+        self.instrument_tokens = {}
+        self._load_instrument_tokens()
+
+    def _load_instrument_tokens(self):
+        """Load and cache NSE instrument tokens for symbol lookup."""
+        try:
+            logger.info("Loading NSE instrument tokens...")
+            instruments = self.kite.instruments("NSE")
+
+            for instrument in instruments:
+                symbol = instrument['tradingsymbol']
+                token = instrument['instrument_token']
+                self.instrument_tokens[symbol] = token
+
+            logger.info(f"Loaded {len(self.instrument_tokens)} instrument tokens")
+
+        except Exception as e:
+            logger.error(f"Error loading instrument tokens: {e}")
+            raise
+
     def update_eod_prices(self, target_date: str = None) -> int:
         """
         Update EOD prices for all alerts from a specific date.
+        Fetches the ACTUAL closing price for that trading day.
 
         Args:
             target_date: Date string in YYYY-MM-DD format (defaults to today)
@@ -65,7 +88,7 @@ class EODPriceUpdater:
             target_date = date.today().strftime("%Y-%m-%d")
 
         logger.info("=" * 60)
-        logger.info(f"Starting EOD price updates for {target_date}...")
+        logger.info(f"Starting EOD HISTORICAL price updates for {target_date}...")
 
         # Get all pending updates (no age filter)
         pending = self.excel_logger.get_pending_updates(min_age_minutes=0)
@@ -76,7 +99,6 @@ class EODPriceUpdater:
 
         # Filter alerts from target date that don't have Price_EOD filled yet
         alerts_to_update = []
-        symbols_needed = set()
 
         for sheet_name, alerts in pending.items():
             ws = self.excel_logger.workbook[sheet_name]
@@ -105,37 +127,38 @@ class EODPriceUpdater:
                         'date': alert['date'],
                         'time': alert['time']
                     })
-                    symbols_needed.add(alert['symbol'])
 
         if not alerts_to_update:
             logger.info(f"All alerts from {target_date} already have EOD prices")
             return 0
 
         logger.info(f"Found {len(alerts_to_update)} alerts from {target_date} needing EOD prices")
-        logger.info(f"Fetching prices for {len(symbols_needed)} unique stocks")
 
-        # Fetch current prices for all needed symbols
-        prices = self._fetch_prices_batch(list(symbols_needed))
+        # Group by symbol to minimize API calls
+        symbols_needed = set(alert['symbol'].replace('.NS', '') for alert in alerts_to_update)
+        logger.info(f"Fetching EOD prices for {len(symbols_needed)} unique stocks")
 
-        if not prices:
-            logger.error("Failed to fetch any prices")
+        # Fetch EOD prices for all symbols
+        eod_prices = self._fetch_eod_prices_batch(list(symbols_needed), target_date)
+
+        if not eod_prices:
+            logger.error("Failed to fetch any EOD prices")
             return 0
 
         # Prepare updates
         updates = []
         for alert in alerts_to_update:
-            symbol = alert['symbol']
-            clean_symbol = symbol.replace('.NS', '')
+            symbol = alert['symbol'].replace('.NS', '')
 
-            if clean_symbol in prices:
+            if symbol in eod_prices:
                 updates.append({
                     'row_id': alert['row_id'],
                     'sheet_name': alert['sheet_name'],
-                    'price': prices[clean_symbol]
+                    'price': eod_prices[symbol]
                 })
-                logger.info(f"  {clean_symbol}: ₹{prices[clean_symbol]:.2f}")
+                logger.info(f"  {symbol}: ₹{eod_prices[symbol]:.2f}")
             else:
-                logger.warning(f"Price not available for {symbol}")
+                logger.warning(f"EOD price not available for {symbol}")
 
         # Update Excel (auto-complete status when EOD is filled)
         if updates:
@@ -144,55 +167,84 @@ class EODPriceUpdater:
                 price_column="EOD",
                 auto_complete_eod=True  # Mark as Complete when EOD is filled
             )
-            logger.info(f"✓ Updated {updated_count} alerts with EOD prices")
+            logger.info(f"✓ Updated {updated_count} alerts with EOD HISTORICAL prices")
             logger.info(f"✓ Marked {updated_count} alerts as 'Complete'")
             return updated_count
         else:
             logger.warning("No prices fetched, nothing to update")
             return 0
 
-    def _fetch_prices_batch(self, symbols: List[str]) -> Dict[str, float]:
+    def _fetch_eod_prices_batch(self, symbols: List[str], target_date: str) -> Dict[str, float]:
         """
-        Fetch current prices for multiple symbols using batch API.
+        Fetch end-of-day closing prices for multiple symbols for a specific date.
+        Uses historical data API to get the actual closing price.
 
         Args:
             symbols: List of stock symbols (without .NS suffix)
+            target_date: Date string in YYYY-MM-DD format
 
         Returns:
-            Dict mapping symbol to current price
+            Dict mapping symbol to EOD closing price
         """
         if not symbols:
             return {}
 
-        prices = {}
+        eod_prices = {}
+        target_datetime = datetime.strptime(target_date, "%Y-%m-%d")
 
-        try:
-            # Convert to NSE instruments format
-            instruments = [f"NSE:{symbol.replace('.NS', '')}" for symbol in symbols]
+        # Fetch EOD price for each symbol
+        for symbol in symbols:
+            try:
+                # Get instrument token
+                if symbol not in self.instrument_tokens:
+                    logger.warning(f"Instrument token not found for {symbol}")
+                    continue
 
-            # Batch fetch (Kite supports up to 500 instruments per call)
-            batch_size = 50
-            for i in range(0, len(instruments), batch_size):
-                batch = instruments[i:i + batch_size]
+                instrument_token = self.instrument_tokens[symbol]
+
+                # Fetch daily candle for the target date
+                # Request a 3-day window to ensure we get the date even if it's a holiday
+                from_date = target_datetime - timedelta(days=1)
+                to_date = target_datetime + timedelta(days=1)
 
                 try:
-                    quotes = self.kite.quote(*batch)
+                    candles = self.kite.historical_data(
+                        instrument_token=instrument_token,
+                        from_date=from_date,
+                        to_date=to_date,
+                        interval="day"  # Daily candles
+                    )
 
-                    for instrument, data in quotes.items():
-                        symbol = instrument.replace('NSE:', '')
-                        # Use last_price (current LTP at EOD time)
-                        prices[symbol] = data['last_price']
+                    if not candles:
+                        logger.warning(f"{symbol}: No EOD candle data returned")
+                        continue
 
-                    logger.info(f"Fetched {len(batch)} prices (batch {i // batch_size + 1})")
+                    # Find the candle for the target date
+                    for candle in candles:
+                        candle_date = candle['date']
+                        # Remove timezone info
+                        if candle_date.tzinfo:
+                            candle_date = candle_date.replace(tzinfo=None)
+
+                        # Check if this is the target date (compare dates only)
+                        if candle_date.date() == target_datetime.date():
+                            # Use the closing price
+                            eod_prices[symbol] = candle['close']
+                            break
+
+                    if symbol not in eod_prices:
+                        logger.warning(f"{symbol}: No candle found for {target_date}")
 
                 except Exception as e:
-                    logger.error(f"Error fetching batch {i // batch_size + 1}: {e}")
+                    logger.error(f"Error fetching EOD data for {symbol}: {e}")
 
-            return prices
+                # Rate limiting
+                time.sleep(0.1)
 
-        except Exception as e:
-            logger.error(f"Error in batch price fetch: {e}")
-            return {}
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {e}")
+
+        return eod_prices
 
     def close(self):
         """Close resources."""
@@ -203,7 +255,7 @@ class EODPriceUpdater:
 def main():
     """Main entry point for EOD price updater."""
     parser = argparse.ArgumentParser(
-        description="Update EOD prices for today's alerts"
+        description="Update EOD HISTORICAL prices for today's alerts"
     )
     parser.add_argument(
         '--date',
@@ -224,13 +276,13 @@ def main():
             return 1
 
     try:
-        updater = EODPriceUpdater()
+        updater = EODPriceUpdaterV2()
 
         # Update EOD prices
         updated_count = updater.update_eod_prices(target_date)
 
         logger.info("=" * 60)
-        logger.info(f"SUMMARY: Updated {updated_count} alerts with EOD prices")
+        logger.info(f"SUMMARY: Updated {updated_count} alerts with EOD HISTORICAL prices")
         logger.info("=" * 60)
 
         updater.close()
