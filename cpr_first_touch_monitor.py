@@ -170,21 +170,27 @@ class CPRFirstTouchMonitor:
     def _ensure_cpr_is_fresh(self) -> Optional[Dict]:
         """
         Ensure CPR levels are for current trading day.
-        Calculates once per day and caches in memory.
+        Uses persistent state file to check if it's a new trading day.
 
         Returns:
             Dict with CPR levels or None if error
         """
         current_date = get_current_ist_time().date()
 
-        # Check if we have cached CPR for today
-        if self._cpr_cache:
-            cached_date_str = self._cpr_cache.get('trading_date')
-            if cached_date_str:
-                cached_date = date.fromisoformat(cached_date_str)
-                if cached_date == current_date:
-                    # Cache is fresh, use it
-                    return self._cpr_cache['levels']
+        # Check state file for trading date (persistent across restarts)
+        state_trading_date = self.state_tracker.get_trading_date()
+
+        if state_trading_date and state_trading_date == current_date:
+            # Same trading day - use cached CPR from state file
+            cpr_levels = self.state_tracker.get_cpr_levels()
+            if cpr_levels and cpr_levels.get('tc'):
+                logger.debug(f"Using existing CPR levels for {current_date}")
+                return {
+                    'tc': cpr_levels['tc'],
+                    'bc': cpr_levels['bc'],
+                    'pivot': cpr_levels['pivot'],
+                    'width_pct': ((cpr_levels['tc'] - cpr_levels['bc']) / cpr_levels['pivot']) * 100
+                }
 
         # New trading day - recalculate CPR and reset state
         logger.info(f"New trading day detected: {current_date}")
@@ -220,15 +226,16 @@ class CPRFirstTouchMonitor:
     def _get_nifty_spot(self) -> Optional[float]:
         """
         Get current NIFTY spot price via API coordinator.
-        CRITICAL: Uses force_refresh=True to write to cache for nifty_option_analyzer.
+        CRITICAL: Fetches fresh data to write to cache for nifty_option_analyzer.
 
         Returns:
             NIFTY spot price or None if error
         """
         try:
-            # IMPORTANT: force_refresh=True to always fetch fresh and write to cache
-            # This allows nifty_option_analyzer.py to use cached data (force_refresh=False)
-            quotes = self.coordinator.get_quotes(['NIFTY'], force_refresh=True)
+            # IMPORTANT: Use get_multiple_instruments with full instrument name
+            # Always fetches fresh (no cache on this call) and writes to cache
+            # This allows nifty_option_analyzer.py to use cached data (use_cache=True)
+            quotes = self.coordinator.get_multiple_instruments(['NSE:NIFTY 50'], use_cache=False)
 
             if not quotes or 'NSE:NIFTY 50' not in quotes:
                 logger.error("Failed to fetch NIFTY quote from API")
@@ -423,22 +430,20 @@ class CPRFirstTouchMonitor:
                     stats['crossings_detected'] += 1
                     logger.info(f"🔔 CROSSING DETECTED: {level_name} {touch_info['direction']} at {nifty_spot:.2f}")
 
-                    # Check cooldown (24 hours - once per day)
-                    alert_type = f"cpr_{level_name.lower()}_touch"
-                    cooldown_minutes = config.CPR_COOLDOWN_MINUTES
-
-                    if self.alert_history.should_send_alert('NIFTY', alert_type, cooldown_minutes):
-                        logger.info(f"✅ Cooldown passed - sending first touch alert for {level_name}")
+                    # Check if alert already sent today (resets at 9:15 AM each trading day)
+                    if not self.state_tracker.was_alert_sent_today(level_name):
+                        logger.info(f"✅ First touch of the day - sending alert for {level_name}")
 
                         # Send alert
                         self._send_cpr_alert(touch_info, cpr_data, nifty_spot)
+
+                        # Mark alert as sent for today
+                        self.state_tracker.mark_alert_sent(level_name)
+
                         stats['alerts_sent'] += 1
                     else:
-                        # Cooldown active - duplicate alert
-                        last_alert_time = self.alert_history.get_last_alert_time('NIFTY', alert_type)
-                        if last_alert_time:
-                            hours_ago = (datetime.now() - last_alert_time).total_seconds() / 3600
-                            logger.info(f"⏸️  Cooldown active - {level_name} already alerted today ({hours_ago:.1f}h ago)")
+                        # Already alerted today - skip
+                        logger.info(f"⏸️  Alert already sent for {level_name} today - skipping duplicate")
 
             # Log current positions
             tc_position = self.state_tracker.get_position('TC')

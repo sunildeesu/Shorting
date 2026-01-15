@@ -132,6 +132,10 @@ class CPRStateTracker:
                     "timestamp": None
                 }
             },
+            "alerts_sent_today": {
+                "TC": False,
+                "BC": False
+            },
             "last_updated": None
         }
 
@@ -269,7 +273,7 @@ class CPRStateTracker:
     def reset_for_new_day(self, trading_date: date):
         """
         Reset state tracker for a new trading day.
-        Clears all position tracking to allow fresh first-touch detection.
+        Clears all position tracking and alert flags to allow fresh first-touch detection.
 
         Args:
             trading_date: New trading date
@@ -289,6 +293,11 @@ class CPRStateTracker:
                 "price": None,
                 "timestamp": None
             }
+        }
+        # Reset alert flags for new day
+        self.state['alerts_sent_today'] = {
+            "TC": False,
+            "BC": False
         }
         self.state['last_updated'] = datetime.now().isoformat()
 
@@ -325,6 +334,40 @@ class CPRStateTracker:
             Complete state dict
         """
         return self.state.copy()
+
+    def was_alert_sent_today(self, level_name: str) -> bool:
+        """
+        Check if alert was already sent for a level today.
+
+        Args:
+            level_name: "TC" or "BC"
+
+        Returns:
+            True if alert was sent today, False otherwise
+        """
+        # Ensure alerts_sent_today exists (for backward compatibility)
+        if 'alerts_sent_today' not in self.state:
+            self.state['alerts_sent_today'] = {"TC": False, "BC": False}
+            self._save_state()
+
+        return self.state['alerts_sent_today'].get(level_name, False)
+
+    def mark_alert_sent(self, level_name: str):
+        """
+        Mark that alert was sent for a level today.
+
+        Args:
+            level_name: "TC" or "BC"
+        """
+        # Ensure alerts_sent_today exists (for backward compatibility)
+        if 'alerts_sent_today' not in self.state:
+            self.state['alerts_sent_today'] = {"TC": False, "BC": False}
+
+        self.state['alerts_sent_today'][level_name] = True
+        self.state['last_updated'] = datetime.now().isoformat()
+        self._save_state()
+
+        logger.info(f"Alert marked as sent for {level_name} today")
 
 
 def main():

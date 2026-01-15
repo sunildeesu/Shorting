@@ -145,7 +145,7 @@ class KiteAPICoordinator:
         if all_quotes:
             # Extract equity quotes for cache (exclude futures)
             equity_quotes = {k: v for k, v in all_quotes.items() if k.startswith('NSE:')}
-            self.quote_cache.update_quotes(equity_quotes)
+            self.quote_cache.set_cached_quotes(equity_quotes)
 
             elapsed = time.time() - start_time
             logger.info(f"Fetched {len(all_quotes)} quotes in {elapsed:.2f}s "
@@ -224,6 +224,13 @@ class KiteAPICoordinator:
             except Exception as e:
                 logger.error(f"Error fetching instrument batch {batch_count}: {e}")
                 continue
+
+        # Update cache with NSE instruments (for sharing across services)
+        if all_quotes:
+            equity_quotes = {k: v for k, v in all_quotes.items() if k.startswith('NSE:')}
+            if equity_quotes:
+                self.quote_cache.set_cached_quotes(equity_quotes)
+                logger.debug(f"Updated cache with {len(equity_quotes)} NSE quotes")
 
         logger.info(f"Fetched {len(all_quotes)} instrument quotes "
                    f"({batch_count} API call{'s' if batch_count > 1 else ''})")

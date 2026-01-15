@@ -1,75 +1,35 @@
 {
-  "status": "EXITED",
+  "status": "ENTERED",
   "layers": [
     {
       "layer_number": 1,
-      "timestamp": "2026-01-12T10:00:12.356475",
+      "timestamp": "2026-01-13T14:45:12.610595",
       "signal": "SELL",
-      "score": 85.6,
-      "nifty_spot": 25559.65,
-      "vix": 11.82,
+      "score": 82.8,
+      "nifty_spot": 25696.1,
+      "vix": 11.36,
       "regime": "NEUTRAL",
-      "oi_pattern": "LONG_UNWINDING",
+      "oi_pattern": "SHORT_BUILDUP",
       "strategy": "straddle",
       "strikes": {
-        "call": 25550,
-        "put": 25550
+        "call": 25700,
+        "put": 25700
       },
-      "premium": 348.25
-    },
-    {
-      "layer_number": 2,
-      "timestamp": "2026-01-12T10:45:10.153551",
-      "signal": "SELL",
-      "score": 85.9,
-      "nifty_spot": 25560.95,
-      "vix": 11.65,
-      "regime": "NEUTRAL",
-      "oi_pattern": "LONG_UNWINDING",
-      "strategy": "straddle",
-      "strikes": {
-        "call": 25550,
-        "put": 25550
-      },
-      "premium": 341.7
-    },
-    {
-      "layer_number": 3,
-      "timestamp": "2026-01-12T11:15:10.545302",
-      "signal": "SELL",
-      "score": 85.9,
-      "nifty_spot": 25532.25,
-      "vix": 11.63,
-      "regime": "NEUTRAL",
-      "oi_pattern": "LONG_UNWINDING",
-      "strategy": "straddle",
-      "strikes": {
-        "call": 25550,
-        "put": 25550
-      },
-      "premium": 336.85
+      "premium": 290
     }
   ],
-  "entry_timestamp": "2026-01-12T10:00:12.356475",
-  "entry_score": 85.6,
-  "entry_nifty_spot": 25559.65,
-  "entry_vix": 11.82,
+  "entry_timestamp": "2026-01-13T14:45:12.610595",
+  "entry_score": 82.8,
+  "entry_nifty_spot": 25696.1,
+  "entry_vix": 11.36,
   "entry_regime": "NEUTRAL",
-  "entry_oi_pattern": "LONG_UNWINDING",
+  "entry_oi_pattern": "SHORT_BUILDUP",
   "entry_strategy": "straddle",
   "entry_strikes": {
-    "call": 25550,
-    "put": 25550
+    "call": 25700,
+    "put": 25700
   },
-  "entry_premium": 348.25,
-  "last_check_timestamp": "2026-01-12T12:15:11.829055",
-  "last_check_score": 86.1,
-  "exit_timestamp": "2026-01-12T13:30:05.059744",
-  "exit_score": null,
-  "exit_nifty_spot": null,
-  "exit_vix": null,
-  "exit_regime": null,
-  "exit_reason": "Score dropped 85.6 points (entry: 85.6 \u2192 current: 0.0); Score below exit threshold (0.0 < 40); NIFTY moved 130 points from entry (0.5%)",
-  "estimated_pnl": -17064.25,
-  "estimated_pnl_pct": -4900.0
+  "entry_premium": 290,
+  "last_check_timestamp": "2026-01-13T15:15:09.860520",
+  "last_check_score": 85.8
 }
