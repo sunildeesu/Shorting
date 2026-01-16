@@ -75,7 +75,7 @@ class TelegramNotifier:
                        previous_price: float, change_percent: float,
                        volume_data: dict = None, market_cap_cr: float = None,
                        rsi_analysis: dict = None, oi_analysis: dict = None,
-                       sector_context: dict = None) -> bool:
+                       priority: str = "NORMAL") -> bool:
         """
         Send a 1-minute timeframe alert to Telegram channel
 
@@ -91,7 +91,7 @@ class TelegramNotifier:
             market_cap_cr=market_cap_cr,
             rsi_analysis=rsi_analysis,
             oi_analysis=oi_analysis,
-            sector_context=sector_context
+            priority=priority
         )
 
     # ========================================

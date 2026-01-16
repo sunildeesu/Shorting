@@ -43,3 +43,22 @@ class BaseNotifier:
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
+
+    def send_test_message(self) -> bool:
+        """
+        Send a test message to verify Telegram integration.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        from datetime import datetime
+        test_message = (
+            "🧪 <b>TELEGRAM TEST MESSAGE</b> 🧪\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ Telegram bot is connected and working!\n\n"
+            f"📅 Test Time: {datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}\n"
+            f"🤖 Bot: Active\n"
+            f"📢 Channel: Connected\n\n"
+            "All systems operational! 🚀"
+        )
+        return self._send_message(test_message)
