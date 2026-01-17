@@ -91,6 +91,7 @@ class SectorAnalyzer:
             # Initialize sector aggregates
             sector_data = defaultdict(lambda: {
                 'stocks': [],
+                'stock_details': [],  # NEW: Store detailed stock-level metrics
                 'total_market_cap': 0,
                 'weighted_price_change_5min': 0,
                 'weighted_price_change_10min': 0,
@@ -157,6 +158,20 @@ class SectorAnalyzer:
 
                 # Aggregate into sector
                 sector_data[sector]['stocks'].append(symbol)
+
+                # Store detailed stock-level metrics
+                sector_data[sector]['stock_details'].append({
+                    'symbol': symbol,
+                    'price': current_price,
+                    'price_change_5min': round(price_change_5min, 2),
+                    'price_change_10min': round(price_change_10min, 2),
+                    'price_change_30min': round(price_change_30min, 2),
+                    'volume': current_volume,
+                    'avg_volume': avg_volume,
+                    'volume_ratio': round(current_volume / avg_volume, 2) if avg_volume > 0 else 1.0,
+                    'market_cap_cr': round(market_cap, 2)
+                })
+
                 sector_data[sector]['total_market_cap'] += market_cap
                 sector_data[sector]['total_volume_current'] += current_volume
                 sector_data[sector]['total_volume_avg'] += avg_volume
@@ -229,7 +244,12 @@ class SectorAnalyzer:
                     'total_stocks': total_stocks,
                     'participation_pct': round(participation_5min, 1),
                     'total_market_cap_cr': round(data['total_market_cap'], 2),
-                    'total_volume': data['total_volume_current']
+                    'total_volume': data['total_volume_current'],
+                    'stock_details': sorted(
+                        data['stock_details'],
+                        key=lambda x: x['price_change_10min'],
+                        reverse=True
+                    )  # Sort by 10-min performance (best to worst)
                 }
 
             logger.info(f"Analyzed {len(result['sectors'])} sectors")

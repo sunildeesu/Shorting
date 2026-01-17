@@ -10,6 +10,7 @@ from typing import Dict, Optional
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class SectorEODReportGenerator:
             report_dir: Base directory for saving reports
         """
         self.report_dir = report_dir
+        self.last_dropbox_link = None  # Store last uploaded Dropbox link
         os.makedirs(report_dir, exist_ok=True)
 
     def generate_report(self, sector_analysis: Dict, report_date: datetime = None) -> str:
@@ -59,6 +61,7 @@ class SectorEODReportGenerator:
             self._create_summary_sheet(wb, sector_analysis, report_date)
             self._create_detailed_metrics_sheet(wb, sector_analysis)
             self._create_fund_flow_sheet(wb, sector_analysis)
+            self._create_stock_details_sheet(wb, sector_analysis)  # NEW: Stock-level details
 
             # Remove default sheet if it exists
             if "Sheet" in wb.sheetnames:
@@ -67,6 +70,14 @@ class SectorEODReportGenerator:
             # Save workbook
             wb.save(filepath)
             logger.info(f"Sector EOD report generated: {filepath}")
+
+            # Upload to Dropbox (if enabled)
+            dropbox_link = self._upload_to_dropbox(filepath)
+            if dropbox_link:
+                logger.info(f"Sector EOD report uploaded to Dropbox: {dropbox_link}")
+                self.last_dropbox_link = dropbox_link
+            else:
+                self.last_dropbox_link = None
 
             return filepath
 
@@ -362,6 +373,176 @@ class SectorEODReportGenerator:
         ws.column_dimensions['F'].width = 12
         ws.column_dimensions['G'].width = 12
         ws.column_dimensions['H'].width = 18
+
+    def _create_stock_details_sheet(self, wb: openpyxl.Workbook, sector_analysis: Dict):
+        """Create stock-level details sheet grouped by sector"""
+        ws = wb.create_sheet("Stock Details")
+
+        # Title
+        ws['A1'] = "STOCK-LEVEL DETAILS BY SECTOR"
+        ws['A1'].font = Font(size=14, bold=True)
+
+        # Headers
+        headers = [
+            "Sector", "Stock", "Price", "5-Min %", "10-Min %", "30-Min %",
+            "Volume", "Avg Volume", "Volume Ratio", "Market Cap (Cr)"
+        ]
+
+        header_row = 3
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=header_row, column=col, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+
+        # Sort sectors alphabetically
+        sectors = sector_analysis.get('sectors', {})
+        sorted_sectors = sorted(sectors.items(), key=lambda x: x[0])
+
+        # Data rows
+        row = header_row + 1
+        for sector, data in sorted_sectors:
+            sector_name = sector.replace('_', ' ').title()
+            stock_details = data.get('stock_details', [])
+
+            if not stock_details:
+                continue
+
+            # Stocks are already sorted by 10-min performance in analyzer
+            for stock_data in stock_details:
+                # Write data
+                ws.cell(row=row, column=1, value=sector_name)
+                ws.cell(row=row, column=2, value=stock_data.get('symbol', ''))
+                ws.cell(row=row, column=3, value=stock_data.get('price', 0))
+                ws.cell(row=row, column=4, value=stock_data.get('price_change_5min', 0))
+                ws.cell(row=row, column=5, value=stock_data.get('price_change_10min', 0))
+                ws.cell(row=row, column=6, value=stock_data.get('price_change_30min', 0))
+                ws.cell(row=row, column=7, value=stock_data.get('volume', 0))
+                ws.cell(row=row, column=8, value=stock_data.get('avg_volume', 0))
+                ws.cell(row=row, column=9, value=stock_data.get('volume_ratio', 1.0))
+                ws.cell(row=row, column=10, value=stock_data.get('market_cap_cr', 0))
+
+                # Format numbers
+                ws.cell(row=row, column=3).number_format = '0.00'
+                ws.cell(row=row, column=4).number_format = '0.00'
+                ws.cell(row=row, column=5).number_format = '0.00'
+                ws.cell(row=row, column=6).number_format = '0.00'
+                ws.cell(row=row, column=7).number_format = '#,##0'
+                ws.cell(row=row, column=8).number_format = '#,##0'
+                ws.cell(row=row, column=9).number_format = '0.00'
+                ws.cell(row=row, column=10).number_format = '#,##0'
+
+                # Color-code price changes
+                for col in [4, 5, 6]:  # 5-min, 10-min, 30-min columns
+                    price_change = ws.cell(row=row, column=col).value
+                    if price_change and price_change > 0:
+                        ws.cell(row=row, column=col).font = Font(color="00B050", bold=True)
+                    elif price_change and price_change < 0:
+                        ws.cell(row=row, column=col).font = Font(color="FF0000", bold=True)
+
+                # Add borders
+                for col in range(1, 11):
+                    ws.cell(row=row, column=col).border = Border(
+                        left=Side(style='thin'),
+                        right=Side(style='thin'),
+                        top=Side(style='thin'),
+                        bottom=Side(style='thin')
+                    )
+
+                row += 1
+
+        # Adjust column widths
+        ws.column_dimensions['A'].width = 20  # Sector
+        ws.column_dimensions['B'].width = 15  # Stock
+        ws.column_dimensions['C'].width = 12  # Price
+        ws.column_dimensions['D'].width = 12  # 5-Min %
+        ws.column_dimensions['E'].width = 12  # 10-Min %
+        ws.column_dimensions['F'].width = 12  # 30-Min %
+        ws.column_dimensions['G'].width = 15  # Volume
+        ws.column_dimensions['H'].width = 15  # Avg Volume
+        ws.column_dimensions['I'].width = 12  # Volume Ratio
+        ws.column_dimensions['J'].width = 15  # Market Cap
+
+    def _upload_to_dropbox(self, excel_path: str) -> Optional[str]:
+        """
+        Upload Excel file to Dropbox and return shareable link.
+
+        Args:
+            excel_path: Local path to Excel file
+
+        Returns:
+            Shareable Dropbox link, or None if error
+        """
+        # Check if Dropbox upload is enabled
+        if not config.SECTOR_ENABLE_DROPBOX:
+            logger.info("Dropbox upload disabled for sector reports")
+            return None
+
+        try:
+            # Import Dropbox dependencies
+            import dropbox
+            from dropbox.files import WriteMode
+
+            logger.info("Uploading sector report to Dropbox...")
+
+            # Get token from config
+            token = config.SECTOR_DROPBOX_TOKEN
+            if not token:
+                logger.error("Dropbox token not configured (SECTOR_DROPBOX_TOKEN)")
+                return None
+
+            dbx = dropbox.Dropbox(token)
+
+            # Extract filename from path
+            filename = os.path.basename(excel_path)
+
+            # Dropbox path: /SectorAnalysis/sector_analysis_YYYYMMDD.xlsx
+            dropbox_folder = config.SECTOR_DROPBOX_FOLDER
+            dropbox_path = f"{dropbox_folder}/{filename}"
+
+            # Upload file (overwrite if exists - daily update)
+            with open(excel_path, 'rb') as f:
+                dbx.files_upload(
+                    f.read(),
+                    dropbox_path,
+                    mode=WriteMode.overwrite
+                )
+
+            logger.info(f"✓ Uploaded to Dropbox: {dropbox_path}")
+
+            # Create or get shareable link
+            try:
+                # Try to get existing link
+                links = dbx.sharing_list_shared_links(path=dropbox_path)
+                if links.links:
+                    link_url = links.links[0].url
+                else:
+                    # Create new link
+                    link = dbx.sharing_create_shared_link_with_settings(dropbox_path)
+                    link_url = link.url
+
+                # Convert to direct download link
+                shareable_link = link_url.replace('?dl=0', '?dl=1')
+                logger.info(f"✓ Dropbox link: {shareable_link}")
+                return shareable_link
+
+            except dropbox.exceptions.ApiError as e:
+                logger.error(f"Error creating Dropbox link: {e}")
+                return None
+
+        except ImportError as e:
+            logger.error(f"Dropbox library not installed: {e}")
+            logger.error("Install: pip install dropbox")
+            return None
+        except Exception as e:
+            logger.error(f"Error uploading to Dropbox: {e}", exc_info=True)
+            return None
 
 
 # Global singleton instance

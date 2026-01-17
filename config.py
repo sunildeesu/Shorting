@@ -175,6 +175,11 @@ MIN_SECTOR_STOCKS = int(os.getenv('MIN_SECTOR_STOCKS', '3'))  # Minimum stocks n
 ENABLE_SECTOR_CONTEXT_IN_ALERTS = os.getenv('ENABLE_SECTOR_CONTEXT_IN_ALERTS', 'true').lower() == 'true'  # Add sector info to stock alerts
 ENABLE_SECTOR_EOD_REPORT = os.getenv('ENABLE_SECTOR_EOD_REPORT', 'true').lower() == 'true'  # Generate Excel report at EOD (3:25 PM)
 
+# Sector EOD Report - Dropbox Upload Configuration
+SECTOR_ENABLE_DROPBOX = os.getenv('SECTOR_ENABLE_DROPBOX', 'true').lower() == 'true'  # Enable/disable Dropbox upload
+SECTOR_DROPBOX_TOKEN = os.getenv('SECTOR_DROPBOX_TOKEN', os.getenv('GREEKS_DIFF_DROPBOX_TOKEN', ''))  # Fallback to existing Greeks token
+SECTOR_DROPBOX_FOLDER = os.getenv('SECTOR_DROPBOX_FOLDER', '/SectorAnalysis')  # Dropbox folder path
+
 # ============================================
 # PRICE ACTION ALERT CONFIGURATION
 # ============================================
