@@ -43,7 +43,15 @@ class PriceCache:
         self.cache = self._load_cache()
 
     def _init_database(self):
-        """Initialize SQLite database with WAL mode and optimizations"""
+        """
+        Initialize SQLite database with WAL mode and optimizations.
+
+        DATA ACCURACY FIRST: Raises exception if database cannot be initialized.
+        No silent fallback to JSON - if SQLite fails, we want to know immediately.
+
+        Raises:
+            RuntimeError: If database initialization fails
+        """
         try:
             # Create data directory if needed
             os.makedirs(os.path.dirname(self.db_file), exist_ok=True)
@@ -68,9 +76,11 @@ class PriceCache:
 
             logger.info(f"SQLite database initialized: {self.db_file}")
         except Exception as e:
-            logger.error(f"Failed to initialize SQLite database: {e}")
-            self.db_conn = None
-            self.use_sqlite = False
+            # DATA ACCURACY: Do NOT silently fall back to JSON
+            # Raise exception so the caller knows about the failure
+            error_msg = f"CRITICAL: Failed to initialize SQLite database {self.db_file}: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     def _create_tables(self):
         """Create SQLite tables and indexes if they don't exist"""
@@ -387,57 +397,96 @@ class PriceCache:
             raise
 
     def _load_cache(self) -> Dict:
-        """Load cache from SQLite, fallback to JSON, migrate if needed"""
+        """
+        Load cache from SQLite database.
 
-        # Try SQLite first
-        if self.use_sqlite and self.db_conn:
+        DATA ACCURACY FIRST: SQLite is the primary source of truth.
+        JSON fallback is only used for one-time migration, not as a backup.
+
+        Returns:
+            Dict of cached data
+
+        Raises:
+            RuntimeError: If SQLite is enabled but loading fails
+        """
+        # SQLite is required when enabled - no silent fallback
+        if self.use_sqlite:
+            if not self.db_conn:
+                raise RuntimeError("CRITICAL: SQLite enabled but connection is None")
+
             try:
                 cache = self._load_from_sqlite()
                 if cache:
                     logger.info(f"Loaded {len(cache)} stocks from SQLite")
                     return cache
-            except Exception as e:
-                logger.warning(f"Failed to load from SQLite: {e}")
+                else:
+                    # Empty SQLite - check for JSON migration
+                    if os.path.exists(self.cache_file):
+                        try:
+                            with open(self.cache_file, 'r') as f:
+                                json_cache = json.load(f)
+                            if json_cache:
+                                logger.info(f"Found JSON cache with {len(json_cache)} stocks - migrating to SQLite...")
+                                self._migrate_json_to_sqlite(json_cache)
+                                return json_cache
+                        except (json.JSONDecodeError, IOError) as e:
+                            logger.warning(f"JSON migration skipped - file unreadable: {e}")
 
-        # Fallback to JSON
+                    # Empty cache is OK for fresh start
+                    logger.info("Starting with empty SQLite cache")
+                    return {}
+
+            except Exception as e:
+                # DATA ACCURACY: Do NOT silently fall back to JSON
+                error_msg = f"CRITICAL: Failed to load from SQLite: {e}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+
+        # SQLite disabled - use JSON (legacy mode)
         if os.path.exists(self.cache_file):
             try:
                 with open(self.cache_file, 'r') as f:
                     cache = json.load(f)
-                logger.info(f"Loaded {len(cache)} stocks from JSON")
-
-                # Auto-migrate JSON to SQLite (one-time)
-                if self.use_sqlite and self.db_conn and cache:
-                    logger.info("Auto-migrating JSON data to SQLite...")
-                    self._migrate_json_to_sqlite(cache)
-
+                logger.info(f"Loaded {len(cache)} stocks from JSON (SQLite disabled)")
                 return cache
             except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Failed to load from JSON: {e}")
+                error_msg = f"CRITICAL: Failed to load from JSON: {e}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
         # Empty cache
         logger.info("Starting with empty cache")
         return {}
 
     def _save_cache(self):
-        """Save cache to storage (SQLite primary, JSON backup)"""
+        """
+        Save cache to SQLite storage.
 
+        DATA ACCURACY FIRST: SQLite save failures are raised, not silently ignored.
+        JSON backup is optional but SQLite success is required.
+
+        Raises:
+            RuntimeError: If SQLite save fails after retries
+        """
         # Save to SQLite (primary) with retry logic for lock contention
         if self.use_sqlite and self.db_conn:
             try:
                 self._save_to_sqlite_with_retry()
             except Exception as e:
-                logger.error(f"SQLite save failed after retries: {e}")
-                # Continue to JSON backup
+                # DATA ACCURACY: Do NOT silently continue
+                error_msg = f"CRITICAL: SQLite save failed after retries: {e}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-        # Save to JSON (backup - can be disabled after SQLite is proven stable)
+        # Save to JSON (optional backup - only for debugging/migration purposes)
         if config.ENABLE_JSON_BACKUP:
             try:
                 os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
                 with open(self.cache_file, 'w') as f:
                     json.dump(self.cache, f, indent=2)
             except Exception as e:
-                logger.error(f"JSON save failed: {e}")
+                # JSON backup failure is logged but not fatal
+                logger.warning(f"JSON backup failed (non-fatal): {e}")
 
     def _is_same_day(self, timestamp1: str, timestamp2: str) -> bool:
         """

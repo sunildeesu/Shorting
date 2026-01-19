@@ -4,6 +4,12 @@ Central Quote Database - Unified Data Store
 Stores real-time quotes for all F&O stocks, NIFTY, and VIX
 All monitoring services read from this central database
 
+CONCURRENCY DESIGN:
+- Writer (Central Collector): Single persistent connection with WAL mode
+- Readers (All Services): Separate connections per service, read-only mode
+- WAL mode allows multiple concurrent readers + 1 writer
+- Each service gets its own connection to avoid blocking
+
 Author: Claude Sonnet 4.5
 Date: 2026-01-19
 """
@@ -11,62 +17,139 @@ Date: 2026-01-19
 import sqlite3
 import logging
 import os
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import config
 
 logger = logging.getLogger(__name__)
 
+# Thread-local storage for reader connections
+_thread_local = threading.local()
+
 
 class CentralQuoteDB:
     """
     Centralized quote database for all monitoring services.
     Single source of truth for real-time market data.
+
+    CONCURRENCY MODEL:
+    - Writer mode: Single persistent connection for central collector
+    - Reader mode: Thread-local connections for each reading service
+    - WAL mode allows 1 writer + unlimited concurrent readers
     """
 
-    def __init__(self, db_path: str = "data/central_quotes.db"):
+    def __init__(self, db_path: str = "data/central_quotes.db", mode: str = "reader"):
         """
         Initialize central quote database.
 
         Args:
             db_path: Path to SQLite database file
+            mode: "writer" for central collector, "reader" for services
         """
         self.db_path = db_path
-        self.conn = None
+        self.mode = mode
+        self._writer_conn = None  # Persistent connection for writer
+        self._lock = threading.Lock()  # Lock for writer operations
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
-        # Initialize database
+        # Initialize database (create tables if needed)
         self._init_database()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """
+        Get a database connection optimized for the current mode.
+
+        - Writer mode: Returns persistent connection
+        - Reader mode: Returns thread-local connection (each thread gets its own)
+
+        Returns:
+            sqlite3.Connection optimized for the mode
+        """
+        if self.mode == "writer":
+            # Writer uses persistent connection
+            if self._writer_conn is None:
+                self._writer_conn = self._create_writer_connection()
+            return self._writer_conn
+        else:
+            # Reader uses thread-local connection (avoids blocking other readers)
+            if not hasattr(_thread_local, 'conn') or _thread_local.conn is None:
+                _thread_local.conn = self._create_reader_connection()
+            return _thread_local.conn
+
+    def _create_writer_connection(self) -> sqlite3.Connection:
+        """Create optimized connection for writer (central collector)"""
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=config.SQLITE_TIMEOUT_SECONDS,
+            check_same_thread=False
+        )
+
+        # Writer-optimized settings
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=30000")  # 30 second busy timeout
+        conn.execute("PRAGMA wal_autocheckpoint=1000")  # Checkpoint every 1000 pages
+
+        logger.info(f"Writer connection created: {self.db_path}")
+        return conn
+
+    def _create_reader_connection(self) -> sqlite3.Connection:
+        """Create optimized connection for reader (monitoring services)"""
+        conn = sqlite3.connect(
+            self.db_path,
+            timeout=config.SQLITE_TIMEOUT_SECONDS,
+            check_same_thread=False
+        )
+
+        # Reader-optimized settings
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-32000")  # 32MB cache (smaller for readers)
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=5000")  # 5 second busy timeout (readers shouldn't wait long)
+        conn.execute("PRAGMA query_only=ON")  # Read-only mode (prevents accidental writes)
+        conn.execute("PRAGMA read_uncommitted=ON")  # Allow reading uncommitted data (faster)
+
+        logger.debug(f"Reader connection created for thread {threading.current_thread().name}")
+        return conn
 
     def _init_database(self):
         """Initialize SQLite database with optimized settings"""
         try:
-            self.conn = sqlite3.connect(
+            # Use a temporary connection to create tables
+            conn = sqlite3.connect(
                 self.db_path,
-                timeout=config.SQLITE_TIMEOUT_SECONDS,
-                check_same_thread=False  # Allow multi-threaded access
+                timeout=config.SQLITE_TIMEOUT_SECONDS
             )
 
             # Enable WAL mode for concurrent reads/writes
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
-            self.conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
-            self.conn.execute("PRAGMA temp_store=MEMORY")
-            self.conn.execute("PRAGMA busy_timeout=30000")  # 30 second busy timeout
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=30000")
 
             # Create tables
-            self._create_tables()
+            self._create_tables_with_conn(conn)
+            conn.close()
 
-            logger.info(f"Central quote database initialized: {self.db_path}")
+            logger.info(f"Central quote database initialized: {self.db_path} (mode={self.mode})")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
             raise
 
-    def _create_tables(self):
-        """Create database tables and indexes"""
-        cursor = self.conn.cursor()
+    @property
+    def conn(self):
+        """Property for backward compatibility - returns appropriate connection"""
+        return self._get_connection()
+
+    def _create_tables_with_conn(self, conn: sqlite3.Connection):
+        """Create database tables and indexes using provided connection"""
+        cursor = conn.cursor()
 
         # Table 1: F&O Stock Quotes (real-time equity + futures data)
         cursor.execute("""
@@ -141,8 +224,12 @@ class CentralQuoteDB:
             )
         """)
 
-        self.conn.commit()
+        conn.commit()
         logger.info("Database tables and indexes created successfully")
+
+    def _create_tables(self):
+        """Create database tables and indexes (backward compatibility)"""
+        self._create_tables_with_conn(self.conn)
 
     # ============================================
     # WRITE OPERATIONS (Central Collector Only)
@@ -509,6 +596,102 @@ class CentralQuoteDB:
         row = cursor.fetchone()
         return row[0] if row else None
 
+    def is_data_fresh(self, max_age_minutes: int = 2) -> Tuple[bool, Optional[int]]:
+        """
+        Check if data is fresh (not stale).
+
+        IMPORTANT: Services should call this before using data to ensure accuracy.
+
+        Args:
+            max_age_minutes: Maximum acceptable age in minutes (default: 2)
+
+        Returns:
+            Tuple of (is_fresh: bool, age_minutes: int or None)
+            - is_fresh: True if data was updated within max_age_minutes
+            - age_minutes: How old the data is, or None if no data
+        """
+        cursor = self.conn.cursor()
+
+        # Check last stock update time
+        cursor.execute("SELECT MAX(last_updated) FROM stock_quotes")
+        row = cursor.fetchone()
+
+        if not row or not row[0]:
+            return False, None
+
+        try:
+            last_update = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+            age = datetime.now() - last_update
+            age_minutes = int(age.total_seconds() / 60)
+
+            is_fresh = age_minutes <= max_age_minutes
+            return is_fresh, age_minutes
+
+        except Exception as e:
+            logger.error(f"Error checking data freshness: {e}")
+            return False, None
+
+    def get_data_health(self) -> Dict:
+        """
+        Get comprehensive data health status.
+
+        Returns:
+            Dict with health metrics for monitoring
+        """
+        cursor = self.conn.cursor()
+
+        health = {
+            'is_healthy': False,
+            'stock_data_age_minutes': None,
+            'nifty_data_age_minutes': None,
+            'vix_data_age_minutes': None,
+            'collection_status': None,
+            'last_collection_time': None,
+            'health_alert': None,
+            'unique_stocks': 0
+        }
+
+        try:
+            # Get stock data age
+            cursor.execute("SELECT MAX(last_updated) FROM stock_quotes")
+            row = cursor.fetchone()
+            if row and row[0]:
+                last_update = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+                health['stock_data_age_minutes'] = int((datetime.now() - last_update).total_seconds() / 60)
+
+            # Get NIFTY data age
+            cursor.execute("SELECT MAX(last_updated) FROM nifty_quotes")
+            row = cursor.fetchone()
+            if row and row[0]:
+                last_update = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+                health['nifty_data_age_minutes'] = int((datetime.now() - last_update).total_seconds() / 60)
+
+            # Get VIX data age
+            cursor.execute("SELECT MAX(last_updated) FROM vix_quotes")
+            row = cursor.fetchone()
+            if row and row[0]:
+                last_update = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
+                health['vix_data_age_minutes'] = int((datetime.now() - last_update).total_seconds() / 60)
+
+            # Get metadata
+            health['collection_status'] = self.get_metadata('collection_status')
+            health['last_collection_time'] = self.get_metadata('last_collection_time')
+            health['health_alert'] = self.get_metadata('health_alert')
+
+            # Get stock count
+            cursor.execute("SELECT COUNT(DISTINCT symbol) FROM stock_quotes")
+            health['unique_stocks'] = cursor.fetchone()[0]
+
+            # Determine overall health (data < 3 minutes old and status is success)
+            stock_fresh = health['stock_data_age_minutes'] is not None and health['stock_data_age_minutes'] <= 3
+            status_ok = health['collection_status'] == 'success'
+            health['is_healthy'] = stock_fresh and status_ok
+
+        except Exception as e:
+            logger.error(f"Error getting data health: {e}")
+
+        return health
+
     # ============================================
     # MAINTENANCE OPERATIONS
     # ============================================
@@ -589,18 +772,59 @@ class CentralQuoteDB:
             logger.info("Database connection closed")
 
 
-# Singleton instance
-_db_instance = None
+# Singleton instances (separate for writer and reader)
+_writer_instance = None
+_reader_instance = None
+_instance_lock = threading.Lock()
 
 
-def get_central_db() -> CentralQuoteDB:
+def get_central_db(mode: str = "reader") -> CentralQuoteDB:
     """
     Get singleton instance of central quote database.
 
+    Args:
+        mode: "writer" for central collector, "reader" for services (default)
+
     Returns:
-        CentralQuoteDB instance
+        CentralQuoteDB instance optimized for the mode
+
+    Usage:
+        # For services (readers) - default
+        db = get_central_db()
+
+        # For central collector (writer)
+        db = get_central_db(mode="writer")
     """
-    global _db_instance
-    if _db_instance is None:
-        _db_instance = CentralQuoteDB()
-    return _db_instance
+    global _writer_instance, _reader_instance
+
+    with _instance_lock:
+        if mode == "writer":
+            if _writer_instance is None:
+                _writer_instance = CentralQuoteDB(mode="writer")
+            return _writer_instance
+        else:
+            if _reader_instance is None:
+                _reader_instance = CentralQuoteDB(mode="reader")
+            return _reader_instance
+
+
+def get_central_db_writer() -> CentralQuoteDB:
+    """
+    Convenience function to get writer instance.
+    Use this in central_data_collector.py
+
+    Returns:
+        CentralQuoteDB instance in writer mode
+    """
+    return get_central_db(mode="writer")
+
+
+def get_central_db_reader() -> CentralQuoteDB:
+    """
+    Convenience function to get reader instance.
+    Use this in all monitoring services.
+
+    Returns:
+        CentralQuoteDB instance in reader mode
+    """
+    return get_central_db(mode="reader")

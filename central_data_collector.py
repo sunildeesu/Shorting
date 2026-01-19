@@ -9,6 +9,14 @@ Fetches all market data every 1 minute and stores in central database:
 
 All other monitoring services read from this central database.
 
+ROBUSTNESS FEATURES:
+- Retry with exponential backoff (3 attempts per batch)
+- Batch-level retry with smaller batch sizes on failure
+- Partial success handling (store successful data, retry failed)
+- Token validation before collection
+- Health tracking and alerting
+- Graceful degradation
+
 Author: Claude Sonnet 4.5
 Date: 2026-01-19
 """
@@ -18,14 +26,25 @@ import logging
 import os
 import sys
 import time
+import random
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from kiteconnect import KiteConnect
+from kiteconnect.exceptions import (
+    TokenException, NetworkException, GeneralException,
+    DataException, InputException
+)
 
 import config
-from central_quote_db import get_central_db
+from central_quote_db import get_central_db_writer
 from market_utils import is_market_open, get_market_status
 from futures_mapper import get_futures_mapper
+
+# Retry configuration
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0  # seconds
+MAX_RETRY_DELAY = 10.0  # seconds
+BACKOFF_MULTIPLIER = 2.0
 
 # Configure logging
 logging.basicConfig(
@@ -43,6 +62,8 @@ class CentralDataCollector:
     """
     Central data collection service.
     Fetches ALL market data and stores in centralized database.
+
+    ROBUSTNESS: Includes retry logic, health tracking, and graceful degradation.
     """
 
     def __init__(self):
@@ -50,6 +71,12 @@ class CentralDataCollector:
         logger.info("=" * 80)
         logger.info("CENTRAL DATA COLLECTOR - Initializing")
         logger.info("=" * 80)
+
+        # Health tracking
+        self._consecutive_failures = 0
+        self._total_failures = 0
+        self._total_successes = 0
+        self._last_successful_collection = None
 
         # Market check
         if not is_market_open():
@@ -64,11 +91,17 @@ class CentralDataCollector:
         logger.info("Initializing Kite Connect...")
         self.kite = KiteConnect(api_key=config.KITE_API_KEY)
         self.kite.set_access_token(config.KITE_ACCESS_TOKEN)
-        logger.info("✓ Kite Connect initialized")
+
+        # Validate token before proceeding
+        if not self._validate_token():
+            logger.error("❌ Token validation failed - cannot proceed")
+            sys.exit(1)
+
+        logger.info("✓ Kite Connect initialized and token validated")
 
         # Initialize central database
         logger.info("Initializing central database...")
-        self.db = get_central_db()
+        self.db = get_central_db_writer()  # Writer mode for central collector
         logger.info("✓ Central database initialized")
 
         # Load F&O stock list
@@ -90,6 +123,73 @@ class CentralDataCollector:
         logger.info("CENTRAL DATA COLLECTOR - Ready")
         logger.info("=" * 80)
 
+    def _validate_token(self) -> bool:
+        """
+        Validate Kite access token by making a test API call.
+
+        Returns:
+            True if token is valid, False otherwise
+        """
+        try:
+            # Simple profile call to validate token
+            profile = self.kite.profile()
+            logger.info(f"✓ Token valid - User: {profile.get('user_name', 'Unknown')}")
+            return True
+        except TokenException as e:
+            logger.error(f"Token invalid or expired: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Token validation error: {e}")
+            return False
+
+    def _retry_with_backoff(self, func, *args, max_retries: int = MAX_RETRIES, **kwargs):
+        """
+        Execute a function with exponential backoff retry.
+
+        Args:
+            func: Function to execute
+            *args: Function arguments
+            max_retries: Maximum retry attempts
+            **kwargs: Function keyword arguments
+
+        Returns:
+            Function result or None if all retries failed
+        """
+        last_exception = None
+        delay = INITIAL_RETRY_DELAY
+
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+
+            except TokenException as e:
+                # Token errors are fatal - don't retry
+                logger.error(f"Token error (not retrying): {e}")
+                raise
+
+            except NetworkException as e:
+                last_exception = e
+                logger.warning(f"Network error (attempt {attempt + 1}/{max_retries}): {e}")
+
+            except (GeneralException, DataException) as e:
+                last_exception = e
+                logger.warning(f"API error (attempt {attempt + 1}/{max_retries}): {e}")
+
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Unexpected error (attempt {attempt + 1}/{max_retries}): {e}")
+
+            # Don't sleep after last attempt
+            if attempt < max_retries - 1:
+                # Add jitter to prevent thundering herd
+                jittered_delay = delay * (1 + random.uniform(-0.1, 0.1))
+                logger.info(f"Retrying in {jittered_delay:.1f}s...")
+                time.sleep(jittered_delay)
+                delay = min(delay * BACKOFF_MULTIPLIER, MAX_RETRY_DELAY)
+
+        logger.error(f"All {max_retries} retry attempts failed. Last error: {last_exception}")
+        return None
+
     def _load_stock_list(self) -> List[str]:
         """Load F&O stock list from JSON file"""
         try:
@@ -104,43 +204,87 @@ class CentralDataCollector:
         """
         Main collection cycle - fetch and store all data.
         This runs every 1 minute via LaunchAgent.
+
+        DATA ACCURACY POLICY:
+        - Only store COMPLETE data (no partial updates)
+        - If stocks < 95% success → DON'T store, keep last known good data
+        - If NIFTY/VIX fails → DON'T store, keep last known good data
+        - Better to have stale accurate data than fresh incomplete data
         """
         timestamp = datetime.now()
         logger.info(f"Starting collection cycle at {timestamp.strftime('%H:%M:%S')}")
 
+        # Minimum accuracy thresholds
+        MIN_STOCK_SUCCESS_RATE = 0.95  # 95% of stocks must succeed
+        min_stocks_required = int(len(self.stocks) * MIN_STOCK_SUCCESS_RATE)
+
         collection_stats = {
             'stocks_fetched': 0,
+            'stocks_expected': len(self.stocks),
+            'stocks_stored': 0,
             'nifty_fetched': False,
+            'nifty_stored': False,
             'vix_fetched': False,
-            'api_calls': 0,
-            'errors': 0
+            'vix_stored': False,
+            'errors': 0,
+            'data_quality': 'UNKNOWN'
         }
 
         start_time = time.time()
 
         try:
-            # Step 1: Fetch F&O stock quotes (equity + futures)
+            # ============================================
+            # Step 1: Fetch ALL data first (don't store yet)
+            # ============================================
+
+            # Fetch F&O stock quotes
             logger.info(f"Fetching quotes for {len(self.stocks)} stocks...")
             stock_quotes = self._fetch_stock_quotes()
             collection_stats['stocks_fetched'] = len(stock_quotes)
 
-            # Step 2: Fetch NIFTY spot data
+            # Fetch NIFTY spot data
             logger.info("Fetching NIFTY 50 quote...")
             nifty_quote = self._fetch_nifty_quote()
             collection_stats['nifty_fetched'] = (nifty_quote is not None)
 
-            # Step 3: Fetch India VIX data
+            # Fetch India VIX data
             logger.info("Fetching India VIX quote...")
             vix_quote = self._fetch_vix_quote()
             collection_stats['vix_fetched'] = (vix_quote is not None)
 
-            # Step 4: Store everything in database
-            logger.info("Storing data in central database...")
+            # ============================================
+            # Step 2: Validate data quality BEFORE storing
+            # ============================================
 
-            if stock_quotes:
+            stocks_ok = len(stock_quotes) >= min_stocks_required
+            nifty_ok = nifty_quote is not None
+            vix_ok = vix_quote is not None
+
+            logger.info("Data quality check:")
+            logger.info(f"  Stocks: {len(stock_quotes)}/{len(self.stocks)} "
+                       f"(need {min_stocks_required}, {'✓ PASS' if stocks_ok else '✗ FAIL'})")
+            logger.info(f"  NIFTY: {'✓ PASS' if nifty_ok else '✗ FAIL'}")
+            logger.info(f"  VIX: {'✓ PASS' if vix_ok else '✗ FAIL'}")
+
+            # ============================================
+            # Step 3: Store ONLY if data quality is acceptable
+            # ============================================
+
+            if stocks_ok:
+                # Stock data meets accuracy threshold - store it
                 self.db.store_stock_quotes(stock_quotes, timestamp)
+                collection_stats['stocks_stored'] = len(stock_quotes)
+                logger.info(f"✓ Stored {len(stock_quotes)} stock quotes (accuracy: "
+                           f"{len(stock_quotes)/len(self.stocks)*100:.1f}%)")
+            else:
+                # Stock data incomplete - DON'T store, keep last known good data
+                collection_stats['errors'] += 1
+                logger.error(f"✗ NOT storing stock quotes - only {len(stock_quotes)}/{len(self.stocks)} "
+                            f"({len(stock_quotes)/len(self.stocks)*100:.1f}% < {MIN_STOCK_SUCCESS_RATE*100}% threshold)")
+                logger.error("  Keeping last known good data in database")
 
-            if nifty_quote:
+            if nifty_ok:
+                # NIFTY data valid - store it
                 self.db.store_nifty_quote(
                     price=nifty_quote['last_price'],
                     ohlc={
@@ -151,8 +295,15 @@ class CentralDataCollector:
                     },
                     timestamp=timestamp
                 )
+                collection_stats['nifty_stored'] = True
+                logger.info(f"✓ Stored NIFTY quote: ₹{nifty_quote['last_price']:.2f}")
+            else:
+                # NIFTY failed - DON'T store, keep last known good data
+                collection_stats['errors'] += 1
+                logger.error("✗ NOT storing NIFTY quote - fetch failed, keeping last known good data")
 
-            if vix_quote:
+            if vix_ok:
+                # VIX data valid - store it
                 self.db.store_vix_quote(
                     vix_value=vix_quote['last_price'],
                     ohlc={
@@ -162,33 +313,140 @@ class CentralDataCollector:
                     },
                     timestamp=timestamp
                 )
+                collection_stats['vix_stored'] = True
+                logger.info(f"✓ Stored VIX quote: {vix_quote['last_price']:.2f}")
+            else:
+                # VIX failed - DON'T store, keep last known good data
+                collection_stats['errors'] += 1
+                logger.error("✗ NOT storing VIX quote - fetch failed, keeping last known good data")
 
-            # Update metadata
-            self.db.update_metadata('last_collection_time', timestamp.isoformat())
-            self.db.update_metadata('collection_status', 'success')
+            # ============================================
+            # Step 4: Determine overall data quality
+            # ============================================
+
+            if stocks_ok and nifty_ok and vix_ok:
+                collection_stats['data_quality'] = 'COMPLETE'
+                self._consecutive_failures = 0
+                self._total_successes += 1
+                self._last_successful_collection = timestamp
+                self.db.update_metadata('last_collection_time', timestamp.isoformat())
+                self.db.update_metadata('collection_status', 'success')
+            elif stocks_ok:
+                # Stocks OK but NIFTY/VIX failed - partial success
+                collection_stats['data_quality'] = 'PARTIAL'
+                self.db.update_metadata('last_collection_time', timestamp.isoformat())
+                self.db.update_metadata('collection_status', 'partial: stocks_only')
+            else:
+                # Stocks failed - this is a failure
+                collection_stats['data_quality'] = 'FAILED'
+                self._consecutive_failures += 1
+                self._total_failures += 1
+                self.db.update_metadata('collection_status',
+                    f'failed: {collection_stats["stocks_fetched"]}/{collection_stats["stocks_expected"]} stocks')
+
+                # Alert on consecutive failures
+                if self._consecutive_failures >= 3:
+                    logger.critical(f"🚨 ALERT: {self._consecutive_failures} consecutive collection failures!")
+                    logger.critical("🚨 Database contains STALE data - services may be using outdated prices!")
+                    self.db.update_metadata('health_alert',
+                        f'consecutive_failures: {self._consecutive_failures}, data may be stale')
+
+        except TokenException as e:
+            logger.error(f"❌ TOKEN ERROR: {e}")
+            logger.error("Token may have expired. Please regenerate token.")
+            logger.error("NOT storing any data - keeping last known good data")
+            collection_stats['errors'] += 1
+            collection_stats['data_quality'] = 'TOKEN_ERROR'
+            self._consecutive_failures += 1
+            self._total_failures += 1
+            self.db.update_metadata('collection_status', f'token_error: {str(e)}')
 
         except Exception as e:
-            logger.error(f"Collection cycle failed: {e}", exc_info=True)
+            logger.error(f"❌ Collection cycle failed: {e}", exc_info=True)
+            logger.error("NOT storing any data - keeping last known good data")
             collection_stats['errors'] += 1
+            collection_stats['data_quality'] = 'ERROR'
+            self._consecutive_failures += 1
+            self._total_failures += 1
             self.db.update_metadata('collection_status', f'error: {str(e)}')
 
         elapsed = time.time() - start_time
 
         # Summary
         logger.info("=" * 80)
-        logger.info(f"Collection cycle complete in {elapsed:.2f}s")
-        logger.info(f"  Stocks: {collection_stats['stocks_fetched']}/{len(self.stocks)}")
-        logger.info(f"  NIFTY: {'✓' if collection_stats['nifty_fetched'] else '✗'}")
-        logger.info(f"  VIX: {'✓' if collection_stats['vix_fetched'] else '✗'}")
-        logger.info(f"  API calls: {collection_stats['api_calls']}")
+        quality_icon = {'COMPLETE': '✓', 'PARTIAL': '⚠️', 'FAILED': '✗',
+                       'TOKEN_ERROR': '🔑', 'ERROR': '❌', 'UNKNOWN': '?'}
+        logger.info(f"Collection cycle {quality_icon.get(collection_stats['data_quality'], '?')} "
+                   f"{collection_stats['data_quality']} in {elapsed:.2f}s")
+        logger.info(f"  Stocks: fetched={collection_stats['stocks_fetched']}, "
+                   f"stored={collection_stats['stocks_stored']}/{collection_stats['stocks_expected']}")
+        logger.info(f"  NIFTY: fetched={'✓' if collection_stats['nifty_fetched'] else '✗'}, "
+                   f"stored={'✓' if collection_stats['nifty_stored'] else '✗'}")
+        logger.info(f"  VIX: fetched={'✓' if collection_stats['vix_fetched'] else '✗'}, "
+                   f"stored={'✓' if collection_stats['vix_stored'] else '✗'}")
         logger.info(f"  Errors: {collection_stats['errors']}")
+        logger.info(f"  Health: {self._total_successes} successes, {self._total_failures} failures, "
+                   f"{self._consecutive_failures} consecutive failures")
         logger.info("=" * 80)
 
         return collection_stats
 
+    def _fetch_batch_with_retry(self, instruments: List[str], batch_num: int) -> Tuple[Dict, List[str]]:
+        """
+        Fetch a batch of instruments with retry logic.
+
+        Args:
+            instruments: List of instruments to fetch
+            batch_num: Batch number for logging
+
+        Returns:
+            Tuple of (successful_quotes, failed_instruments)
+        """
+        # Try with full batch first
+        result = self._retry_with_backoff(
+            lambda: self.kite.quote(*instruments)
+        )
+
+        if result is not None:
+            return result, []
+
+        # If full batch failed, try smaller sub-batches
+        logger.warning(f"Batch {batch_num} failed completely. Trying smaller sub-batches...")
+
+        successful_quotes = {}
+        failed_instruments = []
+        sub_batch_size = 50  # Much smaller batch
+
+        for i in range(0, len(instruments), sub_batch_size):
+            sub_batch = instruments[i:i + sub_batch_size]
+            sub_batch_num = i // sub_batch_size + 1
+
+            result = self._retry_with_backoff(
+                lambda batch=sub_batch: self.kite.quote(*batch),
+                max_retries=2  # Fewer retries for sub-batches
+            )
+
+            if result is not None:
+                successful_quotes.update(result)
+                logger.info(f"  Sub-batch {sub_batch_num}: ✓ {len(result)} quotes")
+            else:
+                failed_instruments.extend(sub_batch)
+                logger.warning(f"  Sub-batch {sub_batch_num}: ✗ {len(sub_batch)} instruments failed")
+
+            # Small delay between sub-batches
+            time.sleep(0.2)
+
+        return successful_quotes, failed_instruments
+
     def _fetch_stock_quotes(self) -> Dict[str, Dict]:
         """
         Fetch F&O stock quotes in batches (equity + futures for OI).
+
+        ROBUSTNESS:
+        - Retry with exponential backoff on failures
+        - Fall back to smaller batches if large batch fails
+        - Track and report partial failures
+        - Continue with partial data rather than complete failure
 
         Returns:
             Dict of {symbol: {price, volume, oi, oi_day_high, oi_day_low}}
@@ -219,28 +477,39 @@ class CentralDataCollector:
         logger.info(f"Fetching {len(total_instruments)} instruments "
                    f"({len(self.stocks)} equity + futures)")
 
-        # Fetch in batches
+        # Fetch in batches with robust retry
         all_quotes = {}
+        all_failed = []
         batch_count = 0
+        successful_batches = 0
 
         for i in range(0, len(total_instruments), batch_size):
             batch = total_instruments[i:i + batch_size]
             batch_count += 1
 
-            try:
-                logger.debug(f"Batch {batch_count}: Fetching {len(batch)} instruments...")
-                batch_quotes = self.kite.quote(*batch)
+            logger.debug(f"Batch {batch_count}: Fetching {len(batch)} instruments...")
+
+            batch_quotes, failed = self._fetch_batch_with_retry(batch, batch_count)
+
+            if batch_quotes:
                 all_quotes.update(batch_quotes)
+                successful_batches += 1
 
-                # Rate limiting
-                if i + batch_size < len(total_instruments):
-                    time.sleep(config.REQUEST_DELAY_SECONDS)
+            if failed:
+                all_failed.extend(failed)
 
-            except Exception as e:
-                logger.error(f"Batch {batch_count} failed: {e}")
-                continue
+            # Rate limiting between batches
+            if i + batch_size < len(total_instruments):
+                time.sleep(config.REQUEST_DELAY_SECONDS)
 
-        logger.info(f"Fetched {len(all_quotes)} quotes in {batch_count} API calls")
+        # Log summary
+        logger.info(f"Fetched {len(all_quotes)} quotes in {batch_count} batches "
+                   f"({successful_batches} successful)")
+
+        if all_failed:
+            logger.warning(f"⚠️  {len(all_failed)} instruments failed after all retries")
+            # Log first few failed instruments for debugging
+            logger.warning(f"  Failed (first 10): {all_failed[:10]}")
 
         # Parse quotes into stock_data
         # Pass 1: Extract equity data (price, volume)
@@ -278,33 +547,41 @@ class CentralDataCollector:
 
     def _fetch_nifty_quote(self) -> Optional[Dict]:
         """
-        Fetch NIFTY 50 spot quote.
+        Fetch NIFTY 50 spot quote with retry logic.
 
         Returns:
             Quote dict or None
         """
-        try:
-            instrument = "NSE:NIFTY 50"
-            quotes = self.kite.quote(instrument)
-            return quotes.get(instrument)
-        except Exception as e:
-            logger.error(f"Failed to fetch NIFTY quote: {e}")
-            return None
+        instrument = "NSE:NIFTY 50"
+
+        result = self._retry_with_backoff(
+            lambda: self.kite.quote(instrument)
+        )
+
+        if result:
+            return result.get(instrument)
+
+        logger.error("Failed to fetch NIFTY quote after all retries")
+        return None
 
     def _fetch_vix_quote(self) -> Optional[Dict]:
         """
-        Fetch India VIX quote.
+        Fetch India VIX quote with retry logic.
 
         Returns:
             Quote dict or None
         """
-        try:
-            instrument = "NSE:INDIA VIX"
-            quotes = self.kite.quote(instrument)
-            return quotes.get(instrument)
-        except Exception as e:
-            logger.error(f"Failed to fetch VIX quote: {e}")
-            return None
+        instrument = "NSE:INDIA VIX"
+
+        result = self._retry_with_backoff(
+            lambda: self.kite.quote(instrument)
+        )
+
+        if result:
+            return result.get(instrument)
+
+        logger.error("Failed to fetch VIX quote after all retries")
+        return None
 
     def cleanup_old_data(self):
         """

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 Central Data Collector - CONTINUOUS MODE
-Runs from 9:30 AM to 3:25 PM with internal 1-minute loop
+Runs from 9:15 AM to 3:30 PM with internal 1-minute loop
 
 Efficiency:
-- Starts ONCE at 9:29 AM via launchd
+- Starts ONCE at 9:14 AM via launchd
 - Runs continuous loop during market hours
-- Exits cleanly after 3:25 PM
+- Exits cleanly after 3:30 PM
 - Zero checks outside market hours
 
 Author: Claude Sonnet 4.5
@@ -31,18 +31,18 @@ logger = logging.getLogger(__name__)
 
 
 def is_within_market_hours() -> bool:
-    """Check if current time is between 9:30 AM and 3:25 PM"""
+    """Check if current time is between 9:15 AM and 3:30 PM"""
     now = datetime.now().time()
-    market_start = dt_time(9, 30)
-    market_end = dt_time(15, 25)
+    market_start = dt_time(9, 15)
+    market_end = dt_time(15, 30)
     return market_start <= now <= market_end
 
 
 def wait_for_market_open():
-    """Wait until market opens (9:30 AM)"""
+    """Wait until market opens (9:15 AM)"""
     while True:
         now = datetime.now().time()
-        market_start = dt_time(9, 30)
+        market_start = dt_time(9, 15)
 
         if now >= market_start:
             logger.info("✅ Market is open - starting collection")
@@ -53,7 +53,7 @@ def wait_for_market_open():
                        (market_start.second - now.second))
 
         if wait_seconds > 0:
-            logger.info(f"⏳ Waiting {wait_seconds}s for market to open at 9:30 AM...")
+            logger.info(f"⏳ Waiting {wait_seconds}s for market to open at 9:15 AM...")
             time.sleep(min(wait_seconds, 30))  # Check every 30s max
 
 
@@ -74,7 +74,7 @@ def main():
 
     # Wait for market open if we're early
     now = datetime.now().time()
-    if now < dt_time(9, 30):
+    if now < dt_time(9, 15):
         logger.info("⏳ Started before market open - waiting...")
         wait_for_market_open()
 
@@ -93,7 +93,7 @@ def main():
 
     logger.info("=" * 80)
     logger.info("🚀 Starting continuous collection loop")
-    logger.info("📊 Market hours: 9:30 AM - 3:25 PM")
+    logger.info("📊 Market hours: 9:15 AM - 3:30 PM")
     logger.info("⏱️  Collection interval: Every 60 seconds")
     logger.info("=" * 80)
 
@@ -102,7 +102,7 @@ def main():
             # Check if still within market hours
             if not is_within_market_hours():
                 logger.info("=" * 80)
-                logger.info("🏁 Market hours ended (3:25 PM) - exiting")
+                logger.info("🏁 Market hours ended (3:30 PM) - exiting")
                 logger.info(f"📊 Total cycles completed: {cycle_count}")
                 logger.info(f"📈 Total stock records collected: {total_stocks_collected}")
                 logger.info("=" * 80)

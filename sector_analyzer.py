@@ -1,15 +1,17 @@
 """
-Sector Analyzer - Calculate sector-level metrics from existing price cache data
-Uses ZERO additional Kite API calls - reads from price_cache.json
+Sector Analyzer - Calculate sector-level metrics from central quote database
+MIGRATED: Now reads from central_quotes.db instead of price_cache.json
+Uses ZERO Kite API calls - data is pre-populated by central_data_collector
 """
 
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from sector_manager import get_sector_manager
+from central_quote_db import get_central_db
 import config
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,10 @@ class SectorAnalyzer:
         self.shares_outstanding_file = "data/shares_outstanding.json"
         self.sector_cache_file = "data/sector_analysis_cache.json"
         self.sector_snapshot_dir = "data/sector_snapshots"
+
+        # Initialize Central Quote Database (MIGRATED - Tier 3)
+        self.central_db = get_central_db()
+        logger.info("Sector Analyzer using Central Quote Database")
 
         # Load shares outstanding data
         self.shares_outstanding = self._load_shares_outstanding()
@@ -45,8 +51,24 @@ class SectorAnalyzer:
             return {}
 
     def _load_price_cache(self) -> Dict:
-        """Load price cache data (READONLY - no API calls)"""
+        """
+        Load price data from Central Quote Database (MIGRATED).
+        Builds the same structure as the old price_cache.json for compatibility.
+
+        Returns:
+            Dict with structure: {symbol: {current, previous, previous2, ...}}
+        """
         try:
+            # First try Central Quote Database
+            if self.central_db:
+                price_cache = self._load_from_central_db()
+                if price_cache:
+                    logger.info(f"Loaded {len(price_cache)} stocks from Central DB for sector analysis")
+                    return price_cache
+                else:
+                    logger.warning("No data in Central DB, falling back to price_cache.json")
+
+            # Fallback to JSON file
             if not os.path.exists(self.price_cache_file):
                 logger.warning(f"Price cache file not found: {self.price_cache_file}")
                 return {}
@@ -55,6 +77,77 @@ class SectorAnalyzer:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Error loading price cache: {e}")
+            return {}
+
+    def _load_from_central_db(self) -> Dict:
+        """
+        Load price data from Central Quote Database.
+        Builds the price_cache structure from DB for sector analysis.
+
+        Returns:
+            Dict with structure: {symbol: {current, previous, previous2, ...}}
+        """
+        try:
+            # Get all sectors and their stocks
+            all_sectors = self.sector_manager.get_all_sectors()
+            all_stocks = set()
+            for sector, stocks in all_sectors.items():
+                all_stocks.update(stocks)
+
+            # Get latest quotes for all stocks
+            latest_quotes = self.central_db.get_latest_stock_quotes(symbols=list(all_stocks))
+            if not latest_quotes:
+                return {}
+
+            # Build price cache structure
+            price_cache = {}
+            now = datetime.now()
+
+            for symbol, quote in latest_quotes.items():
+                # Get current price
+                current_price = quote.get('price', 0)
+                current_volume = quote.get('volume', 0)
+
+                if current_price == 0:
+                    continue
+
+                # Get historical prices for comparison
+                price_5min = self.central_db.get_stock_price_at(symbol, 5)
+                price_10min = self.central_db.get_stock_price_at(symbol, 10)
+                price_30min = self.central_db.get_stock_price_at(symbol, 30)
+
+                # Get historical volumes from history
+                history = self.central_db.get_stock_history(symbol, minutes=30)
+                volumes = [h.get('volume', 0) for h in history if h.get('volume', 0) > 0]
+
+                # Build structure compatible with existing analyze_sectors logic
+                price_cache[symbol] = {
+                    'current': {
+                        'price': current_price,
+                        'volume': current_volume,
+                        'timestamp': quote.get('timestamp', now.isoformat())
+                    },
+                    'previous': {
+                        'price': price_5min,
+                        'volume': volumes[-2] if len(volumes) >= 2 else 0,
+                        'timestamp': (now - timedelta(minutes=5)).isoformat()
+                    } if price_5min else None,
+                    'previous2': {
+                        'price': price_10min,
+                        'volume': volumes[-3] if len(volumes) >= 3 else 0,
+                        'timestamp': (now - timedelta(minutes=10)).isoformat()
+                    } if price_10min else None,
+                    'previous6': {
+                        'price': price_30min,
+                        'volume': volumes[0] if volumes else 0,
+                        'timestamp': (now - timedelta(minutes=30)).isoformat()
+                    } if price_30min else None
+                }
+
+            return price_cache
+
+        except Exception as e:
+            logger.error(f"Error loading from Central DB: {e}")
             return {}
 
     def calculate_market_cap(self, symbol: str, price: float) -> float:

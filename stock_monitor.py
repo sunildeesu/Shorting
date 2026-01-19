@@ -17,6 +17,7 @@ from sector_analyzer import get_sector_analyzer
 from sector_manager import get_sector_manager
 from sector_eod_report_generator import get_sector_eod_report_generator
 from oi_analyzer import get_oi_analyzer
+from central_quote_db import get_central_db
 import config
 
 # Import data source libraries based on configuration
@@ -111,6 +112,10 @@ class StockMonitor:
             self.coordinator = get_api_coordinator(kite=self.kite)
             logger.info("API Coordinator enabled (shared cache + smart batching)")
 
+            # Initialize Central Quote Database (Tier 3 - single source of truth)
+            self.central_db = get_central_db()
+            logger.info("Central Quote Database enabled (reads from central_quotes.db)")
+
             # Load instrument tokens for historical data fetching
             self.instrument_tokens = self._load_instrument_tokens()
 
@@ -127,6 +132,7 @@ class StockMonitor:
         else:
             self.instrument_tokens = {}
             self.coordinator = None
+            self.central_db = None
 
     def _load_stock_list(self) -> List[str]:
         """Load F&O stock list from JSON file"""
@@ -663,11 +669,10 @@ class StockMonitor:
 
     def fetch_all_prices_batch_kite_optimized(self) -> Dict[str, Dict]:
         """
-        Fetch prices using Kite's batch quote API with unified cache (OPTIMIZED)
-        Supports up to 500 instruments per call, using batches of 50 for safety
+        Fetch prices from Central Quote Database (MIGRATED - Tier 3 optimization).
+        ZERO API calls - reads from central_quotes.db populated by central_data_collector.
 
-        Uses UnifiedQuoteCache to prevent duplicate API calls within TTL window.
-        This reduces API calls from 191 to ~4 per run (98% reduction!)
+        Fallback to API coordinator if central DB unavailable.
 
         Returns:
             Dictionary mapping symbol to quote data dict with keys:
@@ -681,7 +686,31 @@ class StockMonitor:
         """
         price_data = {}
 
-        # Try to use API coordinator if enabled (Tier 2 optimization)
+        # TIER 3: Try Central Quote Database first (ZERO API calls)
+        if self.central_db:
+            try:
+                db_quotes = self.central_db.get_latest_stock_quotes(symbols=self.stocks)
+
+                if db_quotes:
+                    # Convert to expected format
+                    for symbol, quote in db_quotes.items():
+                        price_data[symbol] = {
+                            'price': quote.get('price', 0),
+                            'volume': quote.get('volume', 0),
+                            'oi': quote.get('oi', 0),
+                            'oi_day_high': quote.get('oi_day_high', 0),
+                            'oi_day_low': quote.get('oi_day_low', 0)
+                        }
+
+                    logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks from Central DB (0 API calls)")
+                    return price_data
+                else:
+                    logger.warning("No quotes in central database - falling back to API coordinator")
+
+            except Exception as e:
+                logger.error(f"Central DB error, falling back to API coordinator: {e}")
+
+        # TIER 2 FALLBACK: Try API coordinator if central DB unavailable
         if self.coordinator:
             try:
                 # Get quotes from coordinator (automatic caching + smart batching)
