@@ -109,10 +109,10 @@ class SectorAnalyzer:
             Dict with structure: {symbol: {current, previous, previous2, ...}}
         """
         try:
-            # Get all sectors and their stocks
-            all_sectors = self.sector_manager.get_all_sectors()
+            # Get all stocks from all sectors
             all_stocks = set()
-            for sector, stocks in all_sectors.items():
+            for sector in self.sector_manager.get_all_sectors():
+                stocks = self.sector_manager.get_stocks_in_sector(sector)
                 all_stocks.update(stocks)
 
             # Get latest quotes for all stocks
