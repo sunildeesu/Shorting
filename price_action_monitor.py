@@ -22,12 +22,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from kiteconnect import KiteConnect
 
+import time
 import config
 from alert_history_manager import AlertHistoryManager
 from alert_excel_logger import AlertExcelLogger
 from telegram_notifier import TelegramNotifier
 from price_action_detector import PriceActionDetector
 from market_utils import is_market_open, get_market_status
+from central_db_reader import fetch_nifty_vix, report_cycle_complete
 
 # Configure logging
 logging.basicConfig(
@@ -149,6 +151,8 @@ class PriceActionMonitor:
         Returns:
             Statistics dict with pattern counts
         """
+        cycle_start_time = time.time()  # Track cycle time for health reporting
+
         logger.info("=" * 80)
         logger.info(f"PRICE ACTION MONITOR - Starting cycle at {datetime.now().strftime('%H:%M:%S')}")
         logger.info("=" * 80)
@@ -279,6 +283,18 @@ class PriceActionMonitor:
         logger.info(f"  Errors: {stats['errors']}")
         logger.info("=" * 80)
 
+        # Report health metrics at end of cycle
+        report_cycle_complete(
+            service_name="price_action_monitor",
+            cycle_start_time=cycle_start_time,
+            stats={
+                "stocks_checked": stats['total_checked'],
+                "patterns_detected": stats['patterns_detected'],
+                "alerts_sent": stats['alerts_sent'],
+                "errors": stats['errors']
+            }
+        )
+
         return stats
 
     def _get_market_regime(self) -> str:
@@ -289,11 +305,20 @@ class PriceActionMonitor:
             'BULLISH', 'BEARISH', or 'NEUTRAL'
         """
         try:
-            # Fetch Nifty 50 current price
-            nifty_quote = self.kite.quote(["NSE:NIFTY 50"])
-            current_price = nifty_quote["NSE:NIFTY 50"]["last_price"]
+            # Fetch Nifty 50 current price from Central DB (with freshness check + API fallback)
+            indices = fetch_nifty_vix(
+                service_name="price_action_monitor",
+                kite_client=self.kite,
+                coordinator=None,  # No coordinator in this service
+                max_age_minutes=2
+            )
+            current_price = indices.get('nifty_spot')
 
-            # Fetch 50-day historical data for SMA calculation
+            if not current_price:
+                logger.warning("Unable to fetch NIFTY spot price")
+                return 'NEUTRAL'
+
+            # Fetch 50-day historical data for SMA calculation (keep on API - historical data not in central DB)
             end_date = datetime.now()
             start_date = end_date - timedelta(days=70)  # Extra buffer for holidays
 

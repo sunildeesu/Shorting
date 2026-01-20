@@ -187,7 +187,7 @@ SECTOR_DROPBOX_FOLDER = os.getenv('SECTOR_DROPBOX_FOLDER', '/SectorAnalysis')  #
 
 ENABLE_PRICE_ACTION_ALERTS = os.getenv('ENABLE_PRICE_ACTION_ALERTS', 'true').lower() == 'true'
 PRICE_ACTION_TIMEFRAME = '5minute'  # Timeframe for pattern detection
-PRICE_ACTION_MIN_CONFIDENCE = float(os.getenv('PRICE_ACTION_MIN_CONFIDENCE', '7.0'))  # Minimum 7.0/10
+PRICE_ACTION_MIN_CONFIDENCE = float(os.getenv('PRICE_ACTION_MIN_CONFIDENCE', '8.0'))  # Minimum 8.0/10 (high confidence only)
 PRICE_ACTION_LOOKBACK_CANDLES = int(os.getenv('PRICE_ACTION_LOOKBACK_CANDLES', '50'))  # Candles to analyze
 PRICE_ACTION_COOLDOWN = int(os.getenv('PRICE_ACTION_COOLDOWN', '30'))  # 30-min cooldown per stock/pattern
 

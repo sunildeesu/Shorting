@@ -27,6 +27,7 @@ from oi_analyzer import OIAnalyzer
 from api_coordinator import get_api_coordinator
 from historical_data_cache import get_historical_cache
 from central_quote_db import get_central_db
+from central_db_reader import fetch_nifty_vix, report_cycle_complete
 
 logger = logging.getLogger(__name__)
 
@@ -314,52 +315,28 @@ class NiftyOptionAnalyzer:
 
     def _get_spot_indices_batch(self) -> Dict[str, float]:
         """
-        Fetch NIFTY + VIX from Central Quote Database (MIGRATED - Tier 3 optimization)
+        Fetch NIFTY + VIX from Central Quote Database with freshness check + health reporting.
         ZERO API calls - data is pre-populated by central_data_collector
 
-        Fallback to API coordinator if central DB unavailable.
+        Fallback to API coordinator if central DB unavailable or stale.
 
         Returns:
             Dict with 'nifty_spot' and 'india_vix' values
         """
-        result = {'nifty_spot': None, 'india_vix': None}
+        # Use centralized helper with freshness check + health reporting
+        result = fetch_nifty_vix(
+            service_name="nifty_option_analyzer",
+            kite_client=self.kite,
+            coordinator=self.coordinator,
+            max_age_minutes=2
+        )
 
-        # TIER 3: Try Central Quote Database first (ZERO API calls)
-        if self.central_db:
-            try:
-                nifty_data = self.central_db.get_nifty_latest()
-                vix_data = self.central_db.get_vix_latest()
-
-                if nifty_data and vix_data:
-                    result['nifty_spot'] = nifty_data.get('price')
-                    result['india_vix'] = vix_data.get('vix_value')
-                    logger.info(f"Read NIFTY/VIX from Central DB (0 API calls)")
-                    return result
-                else:
-                    logger.warning("NIFTY/VIX not in Central DB - falling back to API coordinator")
-
-            except Exception as e:
-                logger.error(f"Central DB error for NIFTY/VIX: {e}")
-
-        # TIER 2 FALLBACK: Use API coordinator
-        try:
-            # Batch fetch both indices in 1 API call instead of 2
-            quotes = self.coordinator.get_multiple_instruments([
-                "NSE:NIFTY 50",
-                "NSE:INDIA VIX"
-            ], use_cache=True)
-
-            nifty_data = quotes.get("NSE:NIFTY 50", {})
-            vix_data = quotes.get("NSE:INDIA VIX", {})
-
-            result['nifty_spot'] = nifty_data.get("last_price")
-            result['india_vix'] = vix_data.get("last_price")
-
+        if result['nifty_spot'] and result['india_vix']:
             return result
 
-        except Exception as e:
-            logger.error(f"Error fetching spot indices from API: {e}")
-            return {'nifty_spot': None, 'india_vix': None}
+        # If helper returned incomplete data, log warning
+        logger.warning(f"Incomplete NIFTY/VIX data: nifty={result['nifty_spot']}, vix={result['india_vix']}")
+        return result
 
     def _get_vix_trend(self, current_vix: float) -> float:
         """

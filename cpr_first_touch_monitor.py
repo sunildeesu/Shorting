@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, date
 from typing import Dict, Optional
 from kiteconnect import KiteConnect
 
+import time
 import config
 from api_coordinator import get_api_coordinator
 from historical_data_cache import get_historical_cache
@@ -31,6 +32,7 @@ from alert_excel_logger import AlertExcelLogger
 from telegram_notifier import TelegramNotifier
 from cpr_state_tracker import CPRStateTracker
 from market_utils import is_market_open, get_market_status, get_current_ist_time
+from central_db_reader import fetch_nifty_vix, report_cycle_complete
 
 # Configure logging
 logging.basicConfig(
@@ -225,34 +227,26 @@ class CPRFirstTouchMonitor:
 
     def _get_nifty_spot(self) -> Optional[float]:
         """
-        Get current NIFTY spot price via API coordinator.
-        CRITICAL: Fetches fresh data to write to cache for nifty_option_analyzer.
+        Get current NIFTY spot price from Central DB with freshness check + API fallback.
 
         Returns:
             NIFTY spot price or None if error
         """
-        try:
-            # IMPORTANT: Use get_multiple_instruments with full instrument name
-            # Always fetches fresh (no cache on this call) and writes to cache
-            # This allows nifty_option_analyzer.py to use cached data (use_cache=True)
-            quotes = self.coordinator.get_multiple_instruments(['NSE:NIFTY 50'], use_cache=False)
+        # Use centralized helper with freshness check + health reporting
+        result = fetch_nifty_vix(
+            service_name="cpr_first_touch_monitor",
+            kite_client=self.kite,
+            coordinator=self.coordinator,
+            max_age_minutes=2
+        )
 
-            if not quotes or 'NSE:NIFTY 50' not in quotes:
-                logger.error("Failed to fetch NIFTY quote from API")
-                return None
+        nifty_spot = result.get('nifty_spot')
 
-            nifty_quote = quotes['NSE:NIFTY 50']
-            price = nifty_quote.get('last_price') or nifty_quote.get('ohlc', {}).get('close')
+        if nifty_spot:
+            return float(nifty_spot)
 
-            if price is None:
-                logger.error("NIFTY quote missing price data")
-                return None
-
-            return float(price)
-
-        except Exception as e:
-            logger.error(f"Error fetching NIFTY spot: {e}", exc_info=True)
-            return None
+        logger.error("Failed to fetch NIFTY spot from Central DB and API fallback")
+        return None
 
     def _format_cpr_touch_alert(self, touch_info: Dict, cpr_data: Dict, nifty_spot: float) -> str:
         """
@@ -381,6 +375,8 @@ class CPRFirstTouchMonitor:
         Returns:
             Statistics dict with alert counts
         """
+        cycle_start_time = time.time()  # Track cycle time for health reporting
+
         logger.info("=" * 80)
         logger.info(f"CPR MONITOR - Starting cycle at {get_current_ist_time().strftime('%H:%M:%S')}")
         logger.info("=" * 80)
@@ -453,10 +449,26 @@ class CPRFirstTouchMonitor:
             # Summary
             logger.info(f"Cycle complete: {stats['crossings_detected']} crossings detected, {stats['alerts_sent']} alerts sent")
 
+            # Report health metrics at end of cycle
+            report_cycle_complete(
+                service_name="cpr_first_touch_monitor",
+                cycle_start_time=cycle_start_time,
+                stats={
+                    "crossings_detected": stats['crossings_detected'],
+                    "alerts_sent": stats['alerts_sent']
+                }
+            )
+
             return stats
 
         except Exception as e:
             logger.error(f"Error in monitor cycle: {e}", exc_info=True)
+            # Still report cycle completion even on error
+            report_cycle_complete(
+                service_name="cpr_first_touch_monitor",
+                cycle_start_time=cycle_start_time,
+                stats={"error": True}
+            )
             return stats
 
 

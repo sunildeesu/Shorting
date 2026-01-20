@@ -18,6 +18,7 @@ from sector_manager import get_sector_manager
 from sector_eod_report_generator import get_sector_eod_report_generator
 from oi_analyzer import get_oi_analyzer
 from central_quote_db import get_central_db
+from central_db_reader import fetch_stock_prices, report_cycle_complete
 import config
 
 # Import data source libraries based on configuration
@@ -669,10 +670,10 @@ class StockMonitor:
 
     def fetch_all_prices_batch_kite_optimized(self) -> Dict[str, Dict]:
         """
-        Fetch prices from Central Quote Database (MIGRATED - Tier 3 optimization).
+        Fetch prices from Central Quote Database with freshness check + health reporting.
         ZERO API calls - reads from central_quotes.db populated by central_data_collector.
 
-        Fallback to API coordinator if central DB unavailable.
+        Fallback to API coordinator if central DB unavailable or stale.
 
         Returns:
             Dictionary mapping symbol to quote data dict with keys:
@@ -684,33 +685,25 @@ class StockMonitor:
                 'oi_day_low': int
             }
         """
+        # Use centralized helper with freshness check + health reporting
+        price_data = fetch_stock_prices(
+            symbols=self.stocks,
+            service_name="stock_monitor",
+            kite_client=self.kite if hasattr(self, 'kite') else None,
+            coordinator=self.coordinator,
+            futures_mapper=self.futures_mapper,
+            max_age_minutes=2  # Fail if data > 2 minutes old
+        )
+
+        if price_data:
+            return price_data
+
+        # If central_db_reader returned empty, it already tried API fallback
+        # Only reach here if both central DB AND API fallback failed
+        logger.warning("central_db_reader returned empty - trying emergency direct API")
         price_data = {}
 
-        # TIER 3: Try Central Quote Database first (ZERO API calls)
-        if self.central_db:
-            try:
-                db_quotes = self.central_db.get_latest_stock_quotes(symbols=self.stocks)
-
-                if db_quotes:
-                    # Convert to expected format
-                    for symbol, quote in db_quotes.items():
-                        price_data[symbol] = {
-                            'price': quote.get('price', 0),
-                            'volume': quote.get('volume', 0),
-                            'oi': quote.get('oi', 0),
-                            'oi_day_high': quote.get('oi_day_high', 0),
-                            'oi_day_low': quote.get('oi_day_low', 0)
-                        }
-
-                    logger.info(f"Successfully fetched prices for {len(price_data)}/{len(self.stocks)} stocks from Central DB (0 API calls)")
-                    return price_data
-                else:
-                    logger.warning("No quotes in central database - falling back to API coordinator")
-
-            except Exception as e:
-                logger.error(f"Central DB error, falling back to API coordinator: {e}")
-
-        # TIER 2 FALLBACK: Try API coordinator if central DB unavailable
+        # EMERGENCY FALLBACK: Try API coordinator if central DB and primary fallback both failed
         if self.coordinator:
             try:
                 # Get quotes from coordinator (automatic caching + smart batching)
@@ -1307,6 +1300,8 @@ class StockMonitor:
         Returns:
             Dictionary with stats: total, checked, drop_alerts, rise_alerts, alerts_sent, errors
         """
+        cycle_start_time = time.time()  # Track cycle time for health reporting
+
         stats = {
             "total": len(self.stocks),
             "checked": 0,
@@ -1437,6 +1432,17 @@ class StockMonitor:
 
             except Exception as e:
                 logger.error(f"Error in sector analysis: {e}")
+
+        # Report health metrics at end of cycle
+        report_cycle_complete(
+            service_name="stock_monitor",
+            cycle_start_time=cycle_start_time,
+            stats={
+                "stocks_checked": stats["checked"],
+                "alerts_sent": stats["alerts_sent"],
+                "errors": stats["errors"]
+            }
+        )
 
         return stats
 

@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 from sector_manager import get_sector_manager
 from central_quote_db import get_central_db
+from service_health import get_health_tracker
 import config
 
 logger = logging.getLogger(__name__)
@@ -58,15 +59,35 @@ class SectorAnalyzer:
         Returns:
             Dict with structure: {symbol: {current, previous, previous2, ...}}
         """
+        health = get_health_tracker()
+
         try:
-            # First try Central Quote Database
+            # First try Central Quote Database with freshness check
             if self.central_db:
-                price_cache = self._load_from_central_db()
-                if price_cache:
-                    logger.info(f"Loaded {len(price_cache)} stocks from Central DB for sector analysis")
-                    return price_cache
+                is_fresh, age_minutes = self.central_db.is_data_fresh(max_age_minutes=2)
+
+                if age_minutes is None:
+                    logger.warning("[sector_analyzer] No data in Central DB, falling back to price_cache.json")
+                    health.report_error("sector_analyzer", "central_db_empty",
+                                       "No data in central database", severity="warning")
+                    health.report_metric("sector_analyzer", "data_source", "json_file")
+                elif not is_fresh:
+                    logger.warning(f"[sector_analyzer] Central DB data is STALE ({age_minutes} min old)")
+                    health.report_error("sector_analyzer", "central_db_stale",
+                                       f"Data is {age_minutes} minutes old", severity="warning")
+                    health.report_metric("sector_analyzer", "data_source", "json_file")
                 else:
-                    logger.warning("No data in Central DB, falling back to price_cache.json")
+                    # Data is fresh - use Central DB
+                    price_cache = self._load_from_central_db()
+                    if price_cache:
+                        logger.info(f"[sector_analyzer] Loaded {len(price_cache)} stocks from Central DB (data {age_minutes} min old)")
+                        health.report_metric("sector_analyzer", "data_source", "central_db")
+                        health.report_metric("sector_analyzer", "central_db_age_minutes", age_minutes)
+                        health.clear_error("sector_analyzer", "central_db_empty")
+                        health.clear_error("sector_analyzer", "central_db_stale")
+                        return price_cache
+                    else:
+                        logger.warning("[sector_analyzer] No stocks loaded from Central DB")
 
             # Fallback to JSON file
             if not os.path.exists(self.price_cache_file):
@@ -468,6 +489,10 @@ class SectorAnalyzer:
         Returns:
             Sector analysis data
         """
+        import time
+        cycle_start_time = time.time()
+        health = get_health_tracker()
+
         # Analyze sectors
         analysis = self.analyze_sectors()
 
@@ -478,6 +503,12 @@ class SectorAnalyzer:
             # Save snapshot if requested
             if save_snapshot_at:
                 self.save_snapshot(analysis, save_snapshot_at)
+
+        # Report health metrics
+        cycle_duration_ms = int((time.time() - cycle_start_time) * 1000)
+        health.heartbeat("sector_analyzer", cycle_duration_ms)
+        health.report_metric("sector_analyzer", "last_cycle_duration_ms", cycle_duration_ms)
+        health.report_metric("sector_analyzer", "sectors_analyzed", len(analysis.get('sectors', {})) if analysis else 0)
 
         return analysis
 

@@ -29,6 +29,7 @@ NSE_HOLIDAYS = {
         date(2025, 12, 25),  # Christmas
     ],
     2026: [
+        date(2026, 1, 15),   # Municipal Corporation Elections (Maharashtra)
         date(2026, 1, 26),   # Republic Day
         date(2026, 3, 3),    # Holi
         date(2026, 3, 26),   # Shri Ram Navami
