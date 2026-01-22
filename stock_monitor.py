@@ -1062,30 +1062,33 @@ class StockMonitor:
                     )
                     alert_sent = alert_sent or success
 
-        # === CHECK 2: 5-Minute Drop (Rapid Detection) ===
-        if price_5min_ago is not None:
-            drop_5min = self.calculate_drop_percentage(current_price, price_5min_ago)
-
-            if drop_5min >= config.DROP_THRESHOLD_5MIN:
-                # Check if we should send this alert (10-minute cooldown for rapid alerts)
-                if self.should_send_alert(symbol, "5min", cooldown_minutes=10):
-                    logger.info(f"DROP DETECTED [5MIN]{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
-                               f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
-
-                    # Get sector context (using 10-min price change for sector comparison)
-                    drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
-                    sector_context = self._get_sector_context(symbol, -drop_10min)
-
-                    success = self.telegram.send_alert(
-                        symbol, drop_5min, current_price, price_5min_ago,
-                        alert_type="5min",
-                        volume_data=volume_data_5min,
-                        market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis,
-                        oi_analysis=oi_analysis,
-                        sector_context=sector_context
-                    )
-                    alert_sent = alert_sent or success
+        # === CHECK 2: 5-Minute Drop (DISABLED - moved to central_data_collector_continuous.py) ===
+        # 5-min detection now runs immediately after each collection cycle in the central collector
+        # for ~3-10 second latency (vs ~2-3 minute latency when running here every 5 mins).
+        # See rapid_drop_detector.py for implementation.
+        # if price_5min_ago is not None:
+        #     drop_5min = self.calculate_drop_percentage(current_price, price_5min_ago)
+        #
+        #     if drop_5min >= config.DROP_THRESHOLD_5MIN:
+        #         # Check if we should send this alert (10-minute cooldown for rapid alerts)
+        #         if self.should_send_alert(symbol, "5min", cooldown_minutes=10):
+        #             logger.info(f"DROP DETECTED [5MIN]{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
+        #                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+        #
+        #             # Get sector context (using 10-min price change for sector comparison)
+        #             drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+        #             sector_context = self._get_sector_context(symbol, -drop_10min)
+        #
+        #             success = self.telegram.send_alert(
+        #                 symbol, drop_5min, current_price, price_5min_ago,
+        #                 alert_type="5min",
+        #                 volume_data=volume_data_5min,
+        #                 market_cap_cr=market_cap_cr,
+        #                 rsi_analysis=rsi_analysis,
+        #                 oi_analysis=oi_analysis,
+        #                 sector_context=sector_context
+        #             )
+        #             alert_sent = alert_sent or success
 
         # === CHECK 3: 10-Minute Drop (Standard Alert) ===
         volume_data_10min = self.price_cache.get_volume_data_10min(symbol)
@@ -1215,30 +1218,33 @@ class StockMonitor:
                     )
                     alert_sent = alert_sent or success
 
-        # === CHECK 2: 5-Minute Rise (Rapid Detection) ===
-        if price_5min_ago is not None:
-            rise_5min = self.calculate_rise_percentage(current_price, price_5min_ago)
-
-            if rise_5min >= config.RISE_THRESHOLD_5MIN:
-                # Check if we should send this alert (10-minute cooldown for rapid alerts)
-                if self.should_send_alert(symbol, "5min_rise", cooldown_minutes=10):
-                    logger.info(f"RISE DETECTED [5MIN]: {symbol} rose {rise_5min:.2f}% "
-                               f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
-
-                    # Get sector context (using 10-min price change for sector comparison)
-                    rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
-                    sector_context = self._get_sector_context(symbol, rise_10min)
-
-                    success = self.telegram.send_alert(
-                        symbol, rise_5min, current_price, price_5min_ago,
-                        alert_type="5min_rise",
-                        volume_data=volume_data_5min,
-                        market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis,
-                        oi_analysis=oi_analysis,
-                        sector_context=sector_context
-                    )
-                    alert_sent = alert_sent or success
+        # === CHECK 2: 5-Minute Rise (DISABLED - moved to central_data_collector_continuous.py) ===
+        # 5-min detection now runs immediately after each collection cycle in the central collector
+        # for ~3-10 second latency. See rapid_drop_detector.py for implementation.
+        # Note: Currently only drops are detected by rapid_drop_detector. Rise detection can be added if needed.
+        # if price_5min_ago is not None:
+        #     rise_5min = self.calculate_rise_percentage(current_price, price_5min_ago)
+        #
+        #     if rise_5min >= config.RISE_THRESHOLD_5MIN:
+        #         # Check if we should send this alert (10-minute cooldown for rapid alerts)
+        #         if self.should_send_alert(symbol, "5min_rise", cooldown_minutes=10):
+        #             logger.info(f"RISE DETECTED [5MIN]: {symbol} rose {rise_5min:.2f}% "
+        #                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+        #
+        #             # Get sector context (using 10-min price change for sector comparison)
+        #             rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+        #             sector_context = self._get_sector_context(symbol, rise_10min)
+        #
+        #             success = self.telegram.send_alert(
+        #                 symbol, rise_5min, current_price, price_5min_ago,
+        #                 alert_type="5min_rise",
+        #                 volume_data=volume_data_5min,
+        #                 market_cap_cr=market_cap_cr,
+        #                 rsi_analysis=rsi_analysis,
+        #                 oi_analysis=oi_analysis,
+        #                 sector_context=sector_context
+        #             )
+        #             alert_sent = alert_sent or success
 
         # === CHECK 3: 10-Minute Rise (Standard Alert) ===
         volume_data_10min = self.price_cache.get_volume_data_10min(symbol)

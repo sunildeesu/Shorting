@@ -37,7 +37,7 @@ from kiteconnect.exceptions import (
 
 import config
 from central_quote_db import get_central_db_writer
-from market_utils import is_market_open, get_market_status
+# Note: Market hour checks handled by central_data_collector_continuous.py
 from futures_mapper import get_futures_mapper
 
 # Retry configuration
@@ -78,14 +78,12 @@ class CentralDataCollector:
         self._total_successes = 0
         self._last_successful_collection = None
 
-        # Market check
-        if not is_market_open():
-            status = get_market_status()
-            if not status['is_trading_day']:
-                logger.info("Not a trading day - exiting")
-            else:
-                logger.info("Outside market hours - exiting")
-            sys.exit(0)
+        # NOTE: Market hour checks removed from here.
+        # When used via central_data_collector_continuous.py (the normal case),
+        # the continuous script handles market hour checks with its own logic
+        # (9:15 AM - 3:30 PM vs config's 9:25 AM for stock_monitor).
+        # When running standalone, collect_and_store() will simply fail gracefully
+        # if the API returns no data outside market hours.
 
         # Initialize Kite Connect
         logger.info("Initializing Kite Connect...")
@@ -227,7 +225,8 @@ class CentralDataCollector:
             'vix_fetched': False,
             'vix_stored': False,
             'errors': 0,
-            'data_quality': 'UNKNOWN'
+            'data_quality': 'UNKNOWN',
+            'stock_quotes': {}  # For rapid_drop_detector: {symbol: {price, volume, oi, ...}}
         }
 
         start_time = time.time()
@@ -241,6 +240,7 @@ class CentralDataCollector:
             logger.info(f"Fetching quotes for {len(self.stocks)} stocks...")
             stock_quotes = self._fetch_stock_quotes()
             collection_stats['stocks_fetched'] = len(stock_quotes)
+            collection_stats['stock_quotes'] = stock_quotes  # Include for rapid_drop_detector
 
             # Fetch NIFTY spot data
             logger.info("Fetching NIFTY 50 quote...")

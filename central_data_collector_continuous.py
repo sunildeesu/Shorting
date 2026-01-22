@@ -18,6 +18,10 @@ import logging
 from datetime import datetime, time as dt_time
 from central_data_collector import CentralDataCollector
 from market_utils import is_market_open, get_market_status
+from central_quote_db import get_central_db
+from alert_history_manager import AlertHistoryManager
+from telegram_notifier import TelegramNotifier
+from rapid_drop_detector import RapidDropDetector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,6 +91,19 @@ def main():
         logger.error(f"❌ Failed to initialize collector: {e}", exc_info=True)
         return
 
+    # Initialize rapid drop detector (error-isolated - collection continues if this fails)
+    rapid_detector = None
+    try:
+        logger.info("Initializing rapid drop detector...")
+        alert_history = AlertHistoryManager()
+        telegram = TelegramNotifier()
+        detection_db = get_central_db(mode="reader")
+        rapid_detector = RapidDropDetector(detection_db, alert_history, telegram)
+        logger.info("✅ Rapid drop detector initialized (5-min alerts enabled)")
+    except Exception as e:
+        logger.error(f"⚠️ Rapid detector init failed (collection will continue without 5-min alerts): {e}")
+        rapid_detector = None
+
     # Continuous collection loop
     cycle_count = 0
     total_stocks_collected = 0
@@ -116,6 +133,21 @@ def main():
             # Run collection cycle
             stats = collector.collect_and_store()
             total_stocks_collected += stats['stocks_fetched']
+
+            # Run rapid drop detection immediately after collection
+            # (error-isolated - collection continues if detection fails)
+            if rapid_detector and stats.get('stocks_stored', stats.get('stocks_fetched', 0)) > 0:
+                try:
+                    # Get the just-collected stock quotes from the collector
+                    stock_quotes = stats.get('stock_quotes', {})
+                    if stock_quotes:
+                        detection_stats = rapid_detector.detect_all(stock_quotes)
+                        if detection_stats['alerts_sent'] > 0:
+                            logger.info(f"🚨 Rapid detection: {detection_stats['alerts_sent']} alerts sent "
+                                       f"({detection_stats['drops_detected']} drops detected)")
+                except Exception as e:
+                    logger.error(f"⚠️ Detection failed (collection unaffected): {e}")
+                    # Collection loop continues - error isolation!
 
             # Sleep until next minute
             # Sleep logic: If current time is 10:30:15, sleep until 10:31:00
