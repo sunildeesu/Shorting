@@ -66,3 +66,6 @@ data/caffeinate.pid
 # Credentials and sensitive files
 credentials/
 *.json.secret
+
+# Database files (too large for git)
+*.db
