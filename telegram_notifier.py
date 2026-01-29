@@ -278,14 +278,3 @@ class TelegramNotifier:
         Delegates to StockAlertNotifier (uses base _send_message)
         """
         return self.stock_alerts.send_test_message()
-
-    def _send_message(self, message: str) -> bool:
-        """
-        Send a raw message to Telegram channel.
-
-        Used by main.py, token_manager.py, greeks_difference_tracker.py
-        for sending warning/status messages.
-
-        Delegates to StockAlertNotifier's base _send_message method.
-        """
-        return self.stock_alerts._send_message(message)
