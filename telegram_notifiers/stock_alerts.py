@@ -7,6 +7,24 @@ from .formatting_helpers import format_rsi_section, format_oi_section, format_se
 logger = logging.getLogger(__name__)
 
 
+def _ordinal(n: int) -> str:
+    """
+    Convert an integer to its ordinal string representation.
+    Examples: 1 -> '1st', 2 -> '2nd', 3 -> '3rd', 11 -> '11th', 21 -> '21st'
+
+    Args:
+        n: Integer to convert
+
+    Returns:
+        Ordinal string (e.g., '1st', '2nd', '3rd')
+    """
+    if n % 100 in (11, 12, 13):
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f"{n}{suffix}"
+
+
 class StockAlertNotifier(BaseNotifier):
     """Handles stock price drop and rise alerts."""
 
@@ -24,7 +42,8 @@ class StockAlertNotifier(BaseNotifier):
                    previous_price: float, alert_type: str = "10min",
                    volume_data: dict = None, market_cap_cr: float = None,
                    rsi_analysis: dict = None, oi_analysis: dict = None,
-                   sector_context: dict = None) -> bool:
+                   sector_context: dict = None, alert_count: int = None,
+                   direction_arrows: str = None) -> bool:
         """
         Send a stock drop alert to Telegram channel.
 
@@ -39,13 +58,16 @@ class StockAlertNotifier(BaseNotifier):
             rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
             oi_analysis: Optional OI analysis dict with pattern and signal
             sector_context: Optional sector context dict with sector performance
+            alert_count: Optional count of how many times this stock has alerted today
+            direction_arrows: Optional string showing direction history (e.g., "↓ ↑ ↓")
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_alert_message(
             symbol, drop_percent, current_price, previous_price, alert_type,
-            volume_data, market_cap_cr, rsi_analysis, oi_analysis, sector_context
+            volume_data, market_cap_cr, rsi_analysis, oi_analysis, sector_context,
+            alert_count, direction_arrows
         )
         telegram_success = self._send_message(message)
 
@@ -73,7 +95,8 @@ class StockAlertNotifier(BaseNotifier):
                         previous_price: float, change_percent: float,
                         volume_data: dict = None, market_cap_cr: float = None,
                         rsi_analysis: dict = None, oi_analysis: dict = None,
-                        priority: str = "NORMAL") -> bool:
+                        priority: str = "NORMAL", alert_count: int = None,
+                        direction_arrows: str = None) -> bool:
         """
         Send a 1-minute ultra-fast alert to Telegram channel.
 
@@ -88,13 +111,16 @@ class StockAlertNotifier(BaseNotifier):
             rsi_analysis: Optional RSI analysis dict
             oi_analysis: Optional OI analysis dict
             priority: "HIGH" or "NORMAL"
+            alert_count: Optional count of how many times this stock has alerted today
+            direction_arrows: Optional string showing direction history (e.g., "↓ ↑ ↓")
 
         Returns:
             True if message sent successfully, False otherwise
         """
         message = self._format_1min_alert_message(
             symbol, direction, current_price, previous_price, change_percent,
-            volume_data, market_cap_cr, rsi_analysis, oi_analysis, priority
+            volume_data, market_cap_cr, rsi_analysis, oi_analysis, priority,
+            alert_count, direction_arrows
         )
         telegram_success = self._send_message(message)
 
@@ -107,7 +133,8 @@ class StockAlertNotifier(BaseNotifier):
                                      current_price: float, previous_price: float,
                                      change_percent: float, volume_data: dict = None,
                                      market_cap_cr: float = None, rsi_analysis: dict = None,
-                                     oi_analysis: dict = None, priority: str = "NORMAL") -> str:
+                                     oi_analysis: dict = None, priority: str = "NORMAL",
+                                     alert_count: int = None, direction_arrows: str = None) -> str:
         """
         Format 1-minute alert message with ultra-fast alert branding.
 
@@ -122,6 +149,8 @@ class StockAlertNotifier(BaseNotifier):
             rsi_analysis: Optional RSI analysis
             oi_analysis: Optional OI analysis
             priority: "HIGH" or "NORMAL"
+            alert_count: Optional count of how many times this stock has alerted today
+            direction_arrows: Optional string showing direction history (e.g., "↓ ↑ ↓")
 
         Returns:
             Formatted message string
@@ -167,6 +196,14 @@ class StockAlertNotifier(BaseNotifier):
 
         # Base message
         message = f"{header}\n\n"
+
+        # Alert count indicator with direction arrows
+        if alert_count and alert_count > 0:
+            if direction_arrows:
+                message += f"🔔 <b>{_ordinal(alert_count)} Alert</b> for {display_symbol} today: {direction_arrows}\n\n"
+            else:
+                message += f"🔔 <b>{_ordinal(alert_count)} Alert</b> for {display_symbol} today\n\n"
+
         message += f"📊 <b>Stock:</b> {display_symbol}\n"
         message += f"⏰ <b>Alert Time:</b> {time_str}\n\n"
 
@@ -211,7 +248,8 @@ class StockAlertNotifier(BaseNotifier):
                               current_price: float, previous_price: float,
                               alert_type: str = "10min", volume_data: dict = None,
                               market_cap_cr: float = None, rsi_analysis: dict = None,
-                              oi_analysis: dict = None, sector_context: dict = None) -> str:
+                              oi_analysis: dict = None, sector_context: dict = None,
+                              alert_count: int = None, direction_arrows: str = None) -> str:
         """
         Format alert message with stock details for both drops and rises.
 
@@ -227,6 +265,8 @@ class StockAlertNotifier(BaseNotifier):
             rsi_analysis: Optional RSI analysis dict with RSI values and crossovers
             oi_analysis: Optional OI analysis dict with pattern and signal
             sector_context: Optional sector context dict with sector performance
+            alert_count: Optional count of how many times this stock has alerted today
+            direction_arrows: Optional string showing direction history (e.g., "↓ ↑ ↓")
 
         Returns:
             Formatted message string
@@ -279,9 +319,21 @@ class StockAlertNotifier(BaseNotifier):
         time_str = current_time.strftime("%I:%M:%S %p")
 
         if is_priority:
-            message = f"{header}\n\n📊 <b>Stock: {display_symbol}</b>\n⏰ Alert Time: {time_str}\n"
+            message = f"{header}\n\n"
         else:
-            message = f"{header}\n\n📊 Stock: {display_symbol}\n⏰ Alert Time: {time_str}\n"
+            message = f"{header}\n\n"
+
+        # Alert count indicator with direction arrows
+        if alert_count and alert_count > 0:
+            if direction_arrows:
+                message += f"🔔 <b>{_ordinal(alert_count)} Alert</b> for {display_symbol} today: {direction_arrows}\n\n"
+            else:
+                message += f"🔔 <b>{_ordinal(alert_count)} Alert</b> for {display_symbol} today\n\n"
+
+        if is_priority:
+            message += f"📊 <b>Stock: {display_symbol}</b>\n⏰ Alert Time: {time_str}\n"
+        else:
+            message += f"📊 Stock: {display_symbol}\n⏰ Alert Time: {time_str}\n"
 
         # Add market cap if available
         if market_cap_cr:

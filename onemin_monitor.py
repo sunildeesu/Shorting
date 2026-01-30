@@ -314,8 +314,13 @@ class OneMinMonitor:
                     priority_icon = "🔥" if drop_priority == "HIGH" else "🔴"
                     logger.info(f"{priority_icon} {symbol}: DROP detected - {change_pct:.2f}% in 1 minute [{drop_priority}]")
 
+                    # Get and increment alert count for today (with direction)
+                    alert_count = self.alert_history.increment_alert_count(symbol, direction="drop")
+                    direction_arrows = self.alert_history.get_direction_arrows(symbol)
+
                     self._send_alert(symbol, "drop", current_price, price_1min_ago,
-                                    current_volume, oi, priority=drop_priority)
+                                    current_volume, oi, priority=drop_priority, alert_count=alert_count,
+                                    direction_arrows=direction_arrows)
                     stats['alerts_sent'] += 1
                     stats['drop_alerts'] += 1
 
@@ -328,8 +333,13 @@ class OneMinMonitor:
                         priority_icon = "🔥" if rise_priority == "HIGH" else "🟢"
                         logger.info(f"{priority_icon} {symbol}: RISE detected - {change_pct:.2f}% in 1 minute [{rise_priority}]")
 
+                        # Get and increment alert count for today (with direction)
+                        alert_count = self.alert_history.increment_alert_count(symbol, direction="rise")
+                        direction_arrows = self.alert_history.get_direction_arrows(symbol)
+
                         self._send_alert(symbol, "rise", current_price, price_1min_ago,
-                                        current_volume, oi, priority=rise_priority)
+                                        current_volume, oi, priority=rise_priority, alert_count=alert_count,
+                                        direction_arrows=direction_arrows)
                         stats['alerts_sent'] += 1
                         stats['rise_alerts'] += 1
 
@@ -559,7 +569,8 @@ class OneMinMonitor:
         return price_data
 
     def _send_alert(self, symbol: str, direction: str, current_price: float,
-                    prev_price: float, current_volume: int, oi: float, priority: str = "NORMAL"):
+                    prev_price: float, current_volume: int, oi: float, priority: str = "NORMAL",
+                    alert_count: int = None, direction_arrows: str = None):
         """
         Send 1-min alert via Telegram and log to Excel.
 
@@ -571,6 +582,8 @@ class OneMinMonitor:
             current_volume: Current trading volume
             oi: Open interest
             priority: "HIGH" or "NORMAL"
+            alert_count: Count of how many times this stock has alerted today
+            direction_arrows: Direction history arrows (e.g., "↓ ↑ ↓")
         """
         change_pct = abs(((current_price - prev_price) / prev_price) * 100)
 
@@ -592,7 +605,9 @@ class OneMinMonitor:
                 market_cap_cr=market_cap,
                 rsi_analysis=rsi_analysis,
                 oi_analysis=oi_analysis,
-                priority=priority
+                priority=priority,
+                alert_count=alert_count,
+                direction_arrows=direction_arrows
             )
         except Exception as e:
             logger.error(f"{symbol}: Failed to send Telegram alert - {e}")

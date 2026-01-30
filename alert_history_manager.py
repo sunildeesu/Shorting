@@ -7,7 +7,7 @@ import json
 import os
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 import fcntl
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,11 @@ class AlertHistoryManager:
         """
         self.history_file = history_file
         self.alert_history: Dict[Tuple[str, str], datetime] = {}
+
+        # Daily alert directions: tracks direction history for each symbol today
+        # "SYMBOL:YYYY-MM-DD" -> ["drop", "rise", "drop", ...]
+        self.daily_directions: Dict[str, List[str]] = {}
+        self.current_date: str = ""  # Track current date for reset
 
         # Ensure data directory exists
         os.makedirs(os.path.dirname(history_file), exist_ok=True)
@@ -61,6 +66,25 @@ class AlertHistoryManager:
 
                 self.alert_history[(symbol, alert_type)] = timestamp
 
+            # Load daily directions (new format) or migrate from daily_counts (old format)
+            if "daily_directions" in data:
+                self.daily_directions = data.get("daily_directions", {})
+            elif "daily_counts" in data:
+                # Backward compatibility: migrate old daily_counts to daily_directions
+                # Old format stored just count, so we create list with "drop" as default direction
+                old_counts = data.get("daily_counts", {})
+                self.daily_directions = {}
+                for key, count in old_counts.items():
+                    # Create list of "drop" with length = count (best effort migration)
+                    self.daily_directions[key] = ["drop"] * count
+                logger.info(f"Migrated {len(old_counts)} daily_counts to daily_directions format")
+            else:
+                self.daily_directions = {}
+            self.current_date = data.get("current_date", "")
+
+            # Reset counts if it's a new day
+            self._reset_daily_counts_if_new_day()
+
             logger.info(f"Loaded {len(self.alert_history)} alert entries from history file")
 
         except (json.JSONDecodeError, ValueError, KeyError) as e:
@@ -77,6 +101,8 @@ class AlertHistoryManager:
                     f"({symbol}, {alert_type})": timestamp.isoformat()
                     for (symbol, alert_type), timestamp in self.alert_history.items()
                 },
+                "daily_directions": self.daily_directions,
+                "current_date": self.current_date,
                 "last_updated": datetime.now().isoformat()
             }
 
@@ -166,6 +192,104 @@ class AlertHistoryManager:
         """
         alert_key = (symbol, alert_type)
         return self.alert_history.get(alert_key)
+
+    def _reset_daily_counts_if_new_day(self):
+        """Reset daily alert directions at the start of a new trading day."""
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if self.current_date != today:
+            if self.current_date:
+                logger.info(f"New trading day detected ({self.current_date} -> {today}), resetting daily alert directions")
+            self.daily_directions = {}
+            self.current_date = today
+            self._save_history()
+
+    def get_alert_count(self, symbol: str) -> int:
+        """
+        Get today's alert count for a symbol (across all alert types).
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+
+        Returns:
+            Number of alerts sent for this symbol today
+        """
+        # Reset counts if new day
+        self._reset_daily_counts_if_new_day()
+
+        # Normalize symbol (remove .NS suffix)
+        clean_symbol = symbol.replace('.NS', '')
+        key = f"{clean_symbol}:{self.current_date}"
+
+        return len(self.daily_directions.get(key, []))
+
+    def increment_alert_count(self, symbol: str, direction: str = "drop") -> int:
+        """
+        Record an alert direction and return the new count for a symbol today.
+        Call this when an alert is actually being sent (after cooldown check passes).
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+            direction: "drop" or "rise"
+
+        Returns:
+            New count after recording (1 for first alert, 2 for second, etc.)
+        """
+        # Reset counts if new day
+        self._reset_daily_counts_if_new_day()
+
+        # Normalize symbol (remove .NS suffix)
+        clean_symbol = symbol.replace('.NS', '')
+        key = f"{clean_symbol}:{self.current_date}"
+
+        # Append direction to list
+        if key not in self.daily_directions:
+            self.daily_directions[key] = []
+        self.daily_directions[key].append(direction)
+        new_count = len(self.daily_directions[key])
+
+        # Persist to file
+        self._save_history()
+
+        logger.debug(f"{clean_symbol}: Alert count incremented to {new_count} for today (direction: {direction})")
+        return new_count
+
+    def get_direction_history(self, symbol: str) -> List[str]:
+        """
+        Get list of directions for today's alerts.
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+
+        Returns:
+            List of direction strings (e.g., ["drop", "rise", "drop"])
+        """
+        # Reset counts if new day
+        self._reset_daily_counts_if_new_day()
+
+        # Normalize symbol (remove .NS suffix)
+        clean_symbol = symbol.replace('.NS', '')
+        key = f"{clean_symbol}:{self.current_date}"
+
+        return self.daily_directions.get(key, [])
+
+    def get_direction_arrows(self, symbol: str) -> str:
+        """
+        Get formatted arrow string for today's alert directions.
+
+        Args:
+            symbol: Stock symbol (with or without .NS suffix)
+
+        Returns:
+            Formatted arrow string like "↓ ↑ ↓" or empty string if no history
+        """
+        directions = self.get_direction_history(symbol)
+        if not directions:
+            return ""
+
+        arrow_map = {"drop": "↓", "rise": "↑"}
+        arrows = [arrow_map.get(d, "?") for d in directions]
+        return " ".join(arrows)
 
     def get_stats(self) -> Dict:
         """

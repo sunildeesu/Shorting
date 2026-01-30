@@ -52,7 +52,8 @@ class TelegramNotifier:
                    previous_price: float, alert_type: str = "10min",
                    volume_data: dict = None, market_cap_cr: float = None,
                    rsi_analysis: dict = None, oi_analysis: dict = None,
-                   sector_context: dict = None) -> bool:
+                   sector_context: dict = None, alert_count: int = None,
+                   direction_arrows: str = None) -> bool:
         """
         Send a stock drop alert to Telegram channel
 
@@ -68,14 +69,17 @@ class TelegramNotifier:
             market_cap_cr=market_cap_cr,
             rsi_analysis=rsi_analysis,
             oi_analysis=oi_analysis,
-            sector_context=sector_context
+            sector_context=sector_context,
+            alert_count=alert_count,
+            direction_arrows=direction_arrows
         )
 
     def send_1min_alert(self, symbol: str, direction: str, current_price: float,
                        previous_price: float, change_percent: float,
                        volume_data: dict = None, market_cap_cr: float = None,
                        rsi_analysis: dict = None, oi_analysis: dict = None,
-                       priority: str = "NORMAL") -> bool:
+                       priority: str = "NORMAL", alert_count: int = None,
+                       direction_arrows: str = None) -> bool:
         """
         Send a 1-minute timeframe alert to Telegram channel
 
@@ -91,7 +95,9 @@ class TelegramNotifier:
             market_cap_cr=market_cap_cr,
             rsi_analysis=rsi_analysis,
             oi_analysis=oi_analysis,
-            priority=priority
+            priority=priority,
+            alert_count=alert_count,
+            direction_arrows=direction_arrows
         )
 
     # ========================================

@@ -1051,6 +1051,10 @@ class StockMonitor:
                     drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
                     sector_context = self._get_sector_context(symbol, -drop_10min)
 
+                    # Get and increment alert count for today (with direction)
+                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="drop")
+                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                     success = self.telegram.send_alert(
                         symbol, drop_5min, current_price, price_5min_ago,
                         alert_type="volume_spike",
@@ -1058,7 +1062,9 @@ class StockMonitor:
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
                         oi_analysis=oi_analysis,
-                        sector_context=sector_context
+                        sector_context=sector_context,
+                        alert_count=alert_count,
+                        direction_arrows=direction_arrows
                     )
                     alert_sent = alert_sent or success
 
@@ -1103,6 +1109,10 @@ class StockMonitor:
                 # Get sector context (using 10-min price change for sector comparison)
                 sector_context = self._get_sector_context(symbol, -drop_10min)
 
+                # Get and increment alert count for today (with direction)
+                alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="drop")
+                direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                 success = self.telegram.send_alert(
                     symbol, drop_10min, current_price, price_10min_ago,
                     alert_type="10min",
@@ -1110,7 +1120,9 @@ class StockMonitor:
                     market_cap_cr=market_cap_cr,
                     rsi_analysis=rsi_analysis,
                     oi_analysis=oi_analysis,
-                    sector_context=sector_context
+                    sector_context=sector_context,
+                    alert_count=alert_count,
+                    direction_arrows=direction_arrows
                 )
                 alert_sent = alert_sent or success
 
@@ -1130,6 +1142,10 @@ class StockMonitor:
                     drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
                     sector_context = self._get_sector_context(symbol, -drop_10min)
 
+                    # Get and increment alert count for today (with direction)
+                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="drop")
+                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                     success = self.telegram.send_alert(
                         symbol, drop_30min, current_price, price_30min_ago,
                         alert_type="30min",
@@ -1137,7 +1153,9 @@ class StockMonitor:
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
                         oi_analysis=oi_analysis,
-                        sector_context=sector_context
+                        sector_context=sector_context,
+                        alert_count=alert_count,
+                        direction_arrows=direction_arrows
                     )
                     alert_sent = alert_sent or success
 
@@ -1207,6 +1225,10 @@ class StockMonitor:
                     rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
                     sector_context = self._get_sector_context(symbol, rise_10min)
 
+                    # Get and increment alert count for today (with direction)
+                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="rise")
+                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                     success = self.telegram.send_alert(
                         symbol, rise_5min, current_price, price_5min_ago,
                         alert_type="volume_spike_rise",
@@ -1214,7 +1236,9 @@ class StockMonitor:
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
                         oi_analysis=oi_analysis,
-                        sector_context=sector_context
+                        sector_context=sector_context,
+                        alert_count=alert_count,
+                        direction_arrows=direction_arrows
                     )
                     alert_sent = alert_sent or success
 
@@ -1259,6 +1283,10 @@ class StockMonitor:
                 # Get sector context (using 10-min price change for sector comparison)
                 sector_context = self._get_sector_context(symbol, rise_10min)
 
+                # Get and increment alert count for today (with direction)
+                alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="rise")
+                direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                 success = self.telegram.send_alert(
                     symbol, rise_10min, current_price, price_10min_ago,
                     alert_type="10min_rise",
@@ -1266,7 +1294,9 @@ class StockMonitor:
                     market_cap_cr=market_cap_cr,
                     rsi_analysis=rsi_analysis,
                     oi_analysis=oi_analysis,
-                    sector_context=sector_context
+                    sector_context=sector_context,
+                    alert_count=alert_count,
+                    direction_arrows=direction_arrows
                 )
                 alert_sent = alert_sent or success
 
@@ -1286,6 +1316,10 @@ class StockMonitor:
                     rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
                     sector_context = self._get_sector_context(symbol, rise_10min)
 
+                    # Get and increment alert count for today (with direction)
+                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="rise")
+                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+
                     success = self.telegram.send_alert(
                         symbol, rise_30min, current_price, price_30min_ago,
                         alert_type="30min_rise",
@@ -1293,7 +1327,9 @@ class StockMonitor:
                         market_cap_cr=market_cap_cr,
                         rsi_analysis=rsi_analysis,
                         oi_analysis=oi_analysis,
-                        sector_context=sector_context
+                        sector_context=sector_context,
+                        alert_count=alert_count,
+                        direction_arrows=direction_arrows
                     )
                     alert_sent = alert_sent or success
 
