@@ -21,7 +21,7 @@ from market_utils import is_market_open, get_market_status
 from central_quote_db import get_central_db
 from alert_history_manager import AlertHistoryManager
 from telegram_notifier import TelegramNotifier
-from rapid_drop_detector import RapidDropDetector
+from rapid_drop_detector import RapidAlertDetector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -91,15 +91,15 @@ def main():
         logger.error(f"❌ Failed to initialize collector: {e}", exc_info=True)
         return
 
-    # Initialize rapid drop detector (error-isolated - collection continues if this fails)
+    # Initialize rapid alert detector (error-isolated - collection continues if this fails)
     rapid_detector = None
     try:
-        logger.info("Initializing rapid drop detector...")
+        logger.info("Initializing rapid alert detector...")
         alert_history = AlertHistoryManager()
         telegram = TelegramNotifier()
         detection_db = get_central_db(mode="reader")
-        rapid_detector = RapidDropDetector(detection_db, alert_history, telegram)
-        logger.info("✅ Rapid drop detector initialized (5-min alerts enabled)")
+        rapid_detector = RapidAlertDetector(detection_db, alert_history, telegram)
+        logger.info("✅ Rapid alert detector initialized (5-min drop + rise alerts enabled)")
     except Exception as e:
         logger.error(f"⚠️ Rapid detector init failed (collection will continue without 5-min alerts): {e}")
         rapid_detector = None

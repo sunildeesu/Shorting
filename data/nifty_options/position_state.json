@@ -3,33 +3,33 @@
   "layers": [
     {
       "layer_number": 1,
-      "timestamp": "2026-01-13T14:45:12.610595",
+      "timestamp": "2026-01-30T14:00:10.464335",
       "signal": "SELL",
-      "score": 82.8,
-      "nifty_spot": 25696.1,
-      "vix": 11.36,
+      "score": 80.2,
+      "nifty_spot": 25344.6,
+      "vix": 13.78,
       "regime": "NEUTRAL",
-      "oi_pattern": "SHORT_BUILDUP",
+      "oi_pattern": "SHORT_COVERING",
       "strategy": "straddle",
       "strikes": {
-        "call": 25700,
-        "put": 25700
+        "call": 25350,
+        "put": 25350
       },
-      "premium": 290
+      "premium": 544.45
     }
   ],
-  "entry_timestamp": "2026-01-13T14:45:12.610595",
-  "entry_score": 82.8,
-  "entry_nifty_spot": 25696.1,
-  "entry_vix": 11.36,
+  "entry_timestamp": "2026-01-30T14:00:10.464335",
+  "entry_score": 80.2,
+  "entry_nifty_spot": 25344.6,
+  "entry_vix": 13.78,
   "entry_regime": "NEUTRAL",
-  "entry_oi_pattern": "SHORT_BUILDUP",
+  "entry_oi_pattern": "SHORT_COVERING",
   "entry_strategy": "straddle",
   "entry_strikes": {
-    "call": 25700,
-    "put": 25700
+    "call": 25350,
+    "put": 25350
   },
-  "entry_premium": 290,
-  "last_check_timestamp": "2026-01-13T15:15:09.860520",
-  "last_check_score": 85.8
+  "entry_premium": 544.45,
+  "last_check_timestamp": "2026-01-30T14:15:09.398192",
+  "last_check_score": 80.2
 }
