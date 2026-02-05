@@ -1032,41 +1032,45 @@ class StockMonitor:
 
         alert_sent = False
 
-        # === CHECK 1: Volume Spike with Drop (PRIORITY ALERT - checked first, 5-min comparison) ===
-        volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
-
-        if volume_data_5min["volume_spike"] and price_5min_ago is not None:
-            drop_5min = self.calculate_drop_percentage(current_price, price_5min_ago)
-
-            # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
-            if drop_5min >= config.DROP_THRESHOLD_VOLUME_SPIKE:
-                # Check if we should send this alert (15-minute cooldown for priority alerts)
-                if self.should_send_alert(symbol, "volume_spike", cooldown_minutes=15):
-                    spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
-                    logger.info(f"🚨 PRIORITY: VOLUME SPIKE DROP{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
-                               f"with {spike_ratio:.1f}x volume spike (5-min) "
-                               f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
-
-                    # Get sector context (using 10-min price change for sector comparison)
-                    drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
-                    sector_context = self._get_sector_context(symbol, -drop_10min)
-
-                    # Get and increment alert count for today (with direction)
-                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="drop")
-                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
-
-                    success = self.telegram.send_alert(
-                        symbol, drop_5min, current_price, price_5min_ago,
-                        alert_type="volume_spike",
-                        volume_data=volume_data_5min,
-                        market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis,
-                        oi_analysis=oi_analysis,
-                        sector_context=sector_context,
-                        alert_count=alert_count,
-                        direction_arrows=direction_arrows
-                    )
-                    alert_sent = alert_sent or success
+        # === CHECK 1: Volume Spike with Drop (DISABLED - moved to RapidAlertDetector) ===
+        # 5-min volume spike detection now runs in central_data_collector_continuous.py
+        # via RapidAlertDetector for faster detection (~1-3 second latency).
+        # See rapid_drop_detector.py for implementation.
+        #
+        # volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
+        #
+        # if volume_data_5min["volume_spike"] and price_5min_ago is not None:
+        #     drop_5min = self.calculate_drop_percentage(current_price, price_5min_ago)
+        #
+        #     # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
+        #     if drop_5min >= config.DROP_THRESHOLD_VOLUME_SPIKE:
+        #         # Check if we should send this alert (15-minute cooldown for priority alerts)
+        #         if self.should_send_alert(symbol, "volume_spike", cooldown_minutes=15):
+        #             spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
+        #             logger.info(f"🚨 PRIORITY: VOLUME SPIKE DROP{pharma_tag}: {symbol} dropped {drop_5min:.2f}% "
+        #                        f"with {spike_ratio:.1f}x volume spike (5-min) "
+        #                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+        #
+        #             # Get sector context (using 10-min price change for sector comparison)
+        #             drop_10min = self.calculate_drop_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+        #             sector_context = self._get_sector_context(symbol, -drop_10min)
+        #
+        #             # Get and increment alert count for today (with direction)
+        #             alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="drop")
+        #             direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+        #
+        #             success = self.telegram.send_alert(
+        #                 symbol, drop_5min, current_price, price_5min_ago,
+        #                 alert_type="volume_spike",
+        #                 volume_data=volume_data_5min,
+        #                 market_cap_cr=market_cap_cr,
+        #                 rsi_analysis=rsi_analysis,
+        #                 oi_analysis=oi_analysis,
+        #                 sector_context=sector_context,
+        #                 alert_count=alert_count,
+        #                 direction_arrows=direction_arrows
+        #             )
+        #             alert_sent = alert_sent or success
 
         # === CHECK 2: 5-Minute Drop (DISABLED - moved to central_data_collector_continuous.py) ===
         # 5-min detection now runs immediately after each collection cycle in the central collector
@@ -1206,41 +1210,45 @@ class StockMonitor:
 
         alert_sent = False
 
-        # === CHECK 1: Volume Spike with Rise (PRIORITY ALERT - checked first, 5-min comparison) ===
-        volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
-
-        if volume_data_5min["volume_spike"] and price_5min_ago is not None:
-            rise_5min = self.calculate_rise_percentage(current_price, price_5min_ago)
-
-            # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
-            if rise_5min >= config.RISE_THRESHOLD_VOLUME_SPIKE:
-                # Check if we should send this alert (15-minute cooldown for priority alerts)
-                if self.should_send_alert(symbol, "volume_spike_rise", cooldown_minutes=15):
-                    spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
-                    logger.info(f"🚨 PRIORITY: VOLUME SPIKE RISE: {symbol} rose {rise_5min:.2f}% "
-                               f"with {spike_ratio:.1f}x volume spike (5-min) "
-                               f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
-
-                    # Get sector context (using 10-min price change for sector comparison)
-                    rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
-                    sector_context = self._get_sector_context(symbol, rise_10min)
-
-                    # Get and increment alert count for today (with direction)
-                    alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="rise")
-                    direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
-
-                    success = self.telegram.send_alert(
-                        symbol, rise_5min, current_price, price_5min_ago,
-                        alert_type="volume_spike_rise",
-                        volume_data=volume_data_5min,
-                        market_cap_cr=market_cap_cr,
-                        rsi_analysis=rsi_analysis,
-                        oi_analysis=oi_analysis,
-                        sector_context=sector_context,
-                        alert_count=alert_count,
-                        direction_arrows=direction_arrows
-                    )
-                    alert_sent = alert_sent or success
+        # === CHECK 1: Volume Spike with Rise (DISABLED - moved to RapidAlertDetector) ===
+        # 5-min volume spike detection now runs in central_data_collector_continuous.py
+        # via RapidAlertDetector for faster detection (~1-3 second latency).
+        # See rapid_drop_detector.py for implementation.
+        #
+        # volume_data_5min = self.price_cache.get_volume_data_5min(symbol)
+        #
+        # if volume_data_5min["volume_spike"] and price_5min_ago is not None:
+        #     rise_5min = self.calculate_rise_percentage(current_price, price_5min_ago)
+        #
+        #     # Lower threshold for volume spikes (1.2% with 2.5x volume, 5-min comparison for faster detection)
+        #     if rise_5min >= config.RISE_THRESHOLD_VOLUME_SPIKE:
+        #         # Check if we should send this alert (15-minute cooldown for priority alerts)
+        #         if self.should_send_alert(symbol, "volume_spike_rise", cooldown_minutes=15):
+        #             spike_ratio = volume_data_5min["current_volume"] / volume_data_5min["avg_volume"]
+        #             logger.info(f"🚨 PRIORITY: VOLUME SPIKE RISE: {symbol} rose {rise_5min:.2f}% "
+        #                        f"with {spike_ratio:.1f}x volume spike (5-min) "
+        #                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+        #
+        #             # Get sector context (using 10-min price change for sector comparison)
+        #             rise_10min = self.calculate_rise_percentage(current_price, price_10min_ago) if price_10min_ago else 0
+        #             sector_context = self._get_sector_context(symbol, rise_10min)
+        #
+        #             # Get and increment alert count for today (with direction)
+        #             alert_count = self.alert_history_manager.increment_alert_count(symbol, direction="rise")
+        #             direction_arrows = self.alert_history_manager.get_direction_arrows(symbol)
+        #
+        #             success = self.telegram.send_alert(
+        #                 symbol, rise_5min, current_price, price_5min_ago,
+        #                 alert_type="volume_spike_rise",
+        #                 volume_data=volume_data_5min,
+        #                 market_cap_cr=market_cap_cr,
+        #                 rsi_analysis=rsi_analysis,
+        #                 oi_analysis=oi_analysis,
+        #                 sector_context=sector_context,
+        #                 alert_count=alert_count,
+        #                 direction_arrows=direction_arrows
+        #             )
+        #             alert_sent = alert_sent or success
 
         # === CHECK 2: 5-Minute Rise (DISABLED - moved to central_data_collector_continuous.py) ===
         # 5-min detection now runs immediately after each collection cycle in the central collector

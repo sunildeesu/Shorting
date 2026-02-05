@@ -506,6 +506,51 @@ class CentralQuoteDB:
 
         return result
 
+    def get_stock_quotes_at_batch(self, symbols: List[str], minutes_ago: int) -> Dict[str, Dict]:
+        """
+        Get price AND volume for multiple stocks N minutes ago in ONE query.
+
+        Used by RapidAlertDetector for volume spike detection.
+
+        Args:
+            symbols: List of stock symbols
+            minutes_ago: How many minutes back (e.g., 5 for 5-min detection)
+
+        Returns:
+            Dict mapping symbol to {price, volume}, e.g.,
+            {'RELIANCE': {'price': 2450.50, 'volume': 125000}, ...}
+            Symbols not found are omitted from result.
+        """
+        if not symbols:
+            return {}
+
+        target_time = datetime.now() - timedelta(minutes=minutes_ago)
+        target_str = target_time.strftime('%Y-%m-%d %H:%M:00')
+
+        cursor = self.conn.cursor()
+
+        # Build parameterized query for all symbols in one shot
+        placeholders = ','.join('?' * len(symbols))
+        query = f"""
+            SELECT symbol, price, volume
+            FROM stock_quotes
+            WHERE symbol IN ({placeholders})
+            AND timestamp = ?
+        """
+
+        # Execute with symbols + target timestamp
+        params = list(symbols) + [target_str]
+        cursor.execute(query, params)
+
+        # Build result dict
+        result = {}
+        for row in cursor.fetchall():
+            symbol, price, volume = row
+            if price and price > 0:
+                result[symbol] = {'price': price, 'volume': volume or 0}
+
+        return result
+
     def get_nifty_latest(self) -> Optional[Dict]:
         """
         Get latest NIFTY quote.

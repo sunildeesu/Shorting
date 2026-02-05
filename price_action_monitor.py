@@ -30,6 +30,7 @@ from telegram_notifier import TelegramNotifier
 from price_action_detector import PriceActionDetector
 from market_utils import is_market_open, get_market_status
 from central_db_reader import fetch_nifty_vix, report_cycle_complete
+from service_health import get_health_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -469,11 +470,23 @@ class PriceActionMonitor:
 
 def main():
     """Main entry point"""
+    cycle_start = time.time()
+    health = get_health_tracker()
+
     try:
         monitor = PriceActionMonitor()
         monitor.monitor()
+
+        # Record heartbeat
+        cycle_duration_ms = int((time.time() - cycle_start) * 1000)
+        health.heartbeat("price_action_monitor", cycle_duration_ms)
+
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        # Still record heartbeat on error so service shows as running
+        cycle_duration_ms = int((time.time() - cycle_start) * 1000)
+        health.heartbeat("price_action_monitor", cycle_duration_ms)
+        health.report_error("price_action_monitor", "fatal_error", str(e))
         sys.exit(1)
 
 

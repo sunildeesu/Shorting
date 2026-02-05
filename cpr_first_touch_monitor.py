@@ -33,6 +33,7 @@ from telegram_notifier import TelegramNotifier
 from cpr_state_tracker import CPRStateTracker
 from market_utils import is_market_open, get_market_status, get_current_ist_time
 from central_db_reader import fetch_nifty_vix, report_cycle_complete
+from service_health import get_health_tracker
 
 # Configure logging
 logging.basicConfig(
@@ -474,6 +475,9 @@ class CPRFirstTouchMonitor:
 
 def main():
     """Main entry point"""
+    cycle_start = time.time()
+    health = get_health_tracker()
+
     try:
         monitor = CPRFirstTouchMonitor()
         result = monitor.monitor()
@@ -484,8 +488,16 @@ def main():
         else:
             logger.info("✅ CPR monitor completed successfully - no alerts")
 
+        # Record heartbeat
+        cycle_duration_ms = int((time.time() - cycle_start) * 1000)
+        health.heartbeat("cpr_first_touch_monitor", cycle_duration_ms)
+
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        # Still record heartbeat on error so service shows as running
+        cycle_duration_ms = int((time.time() - cycle_start) * 1000)
+        health.heartbeat("cpr_first_touch_monitor", cycle_duration_ms)
+        health.report_error("cpr_first_touch_monitor", "fatal_error", str(e))
         sys.exit(1)
 
 

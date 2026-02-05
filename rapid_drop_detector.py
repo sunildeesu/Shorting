@@ -17,10 +17,11 @@ Updated: 2026-01-30 - Added rise detection for trending stocks
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from typing import Dict, Optional
 
 import config
+from alert_excel_logger import AlertExcelLogger
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +46,24 @@ class RapidAlertDetector:
         self.alert_history = alert_history
         self.telegram = telegram
 
+        # Initialize Excel logger for tracking
+        self.excel_logger = AlertExcelLogger(config.ALERT_EXCEL_PATH) if config.ENABLE_EXCEL_LOGGING else None
+
         # Configurable thresholds from config
         self.drop_threshold = config.DROP_THRESHOLD_5MIN  # Default: 1.25%
         self.rise_threshold = config.RISE_THRESHOLD_5MIN  # Default: 1.25%
         self.enable_rise_alerts = config.ENABLE_RISE_ALERTS  # Default: True
         self.cooldown_minutes = 10  # 10-minute cooldown for rapid alerts
+        self.volume_spike_multiplier = 1.8  # Require current_volume > prev_volume * 1.8
+
+        # Alert start time: 9:25 AM (from config)
+        self.alert_start_time = dt_time(config.MARKET_START_HOUR, config.MARKET_START_MINUTE)
 
         logger.info(f"RapidAlertDetector initialized (drop: {self.drop_threshold}%, rise: {self.rise_threshold}%, "
-                   f"rise_alerts: {self.enable_rise_alerts}, cooldown: {self.cooldown_minutes}min)")
+                   f"volume_spike: {self.volume_spike_multiplier}x, "
+                   f"rise_alerts: {self.enable_rise_alerts}, cooldown: {self.cooldown_minutes}min, "
+                   f"start_time: {self.alert_start_time.strftime('%H:%M')}, "
+                   f"excel_logging: {self.excel_logger is not None})")
 
     def detect_all(self, current_quotes: Dict[str, Dict]) -> Dict:
         """
@@ -75,6 +86,12 @@ class RapidAlertDetector:
             'execution_ms': 0
         }
 
+        # Skip alerts before 9:25 AM (market opening volatility)
+        current_time = datetime.now().time()
+        if current_time < self.alert_start_time:
+            logger.debug(f"RapidAlertDetector: Skipping - before {self.alert_start_time.strftime('%H:%M')} AM")
+            return stats
+
         if not current_quotes:
             logger.warning("RapidAlertDetector: No current quotes provided")
             return stats
@@ -82,30 +99,49 @@ class RapidAlertDetector:
         # Get symbols from current quotes
         symbols = list(current_quotes.keys())
 
-        # Batch query: Get prices from 5 minutes ago for all symbols in ONE query
-        prices_5min_ago = self.db.get_stock_prices_at_batch(symbols, minutes_ago=5)
+        # Batch query: Get prices AND volumes from 5 minutes ago for all symbols in ONE query
+        quotes_5min_ago = self.db.get_stock_quotes_at_batch(symbols, minutes_ago=5)
 
-        if not prices_5min_ago:
-            logger.debug("RapidAlertDetector: No 5-min-ago prices found (likely first 5 mins of collection)")
+        if not quotes_5min_ago:
+            logger.debug("RapidAlertDetector: No 5-min-ago data found (likely first 5 mins of collection)")
             return stats
 
-        # Check each stock for 5-min drop
+        # Check each stock for 5-min drop/rise WITH volume spike
         for symbol, quote_data in current_quotes.items():
             try:
                 stats['stocks_checked'] += 1
 
                 current_price = quote_data.get('price')
+                current_volume = quote_data.get('volume', 0)
                 if not current_price or current_price <= 0:
                     continue
 
-                price_5min_ago = prices_5min_ago.get(symbol)
+                prev_data = quotes_5min_ago.get(symbol)
+                if not prev_data:
+                    continue
+
+                price_5min_ago = prev_data.get('price')
+                volume_5min_ago = prev_data.get('volume', 0)
+
                 if not price_5min_ago or price_5min_ago <= 0:
+                    continue
+
+                # Check for VOLUME SPIKE (required for all alerts)
+                # Volume spike = current_volume > volume_5min_ago * 2.5
+                has_volume_spike = False
+                volume_multiplier = 0
+                if volume_5min_ago > 0 and current_volume > 0:
+                    volume_multiplier = current_volume / volume_5min_ago
+                    has_volume_spike = current_volume > (volume_5min_ago * self.volume_spike_multiplier)
+
+                if not has_volume_spike:
+                    # No volume spike - skip this stock (don't even count as detected)
                     continue
 
                 # Calculate drop percentage
                 drop_pct = ((price_5min_ago - current_price) / price_5min_ago) * 100
 
-                # Check if drop exceeds threshold
+                # Check if drop exceeds threshold (volume spike already confirmed)
                 if drop_pct >= self.drop_threshold:
                     stats['drops_detected'] += 1
 
@@ -121,7 +157,9 @@ class RapidAlertDetector:
                             drop_pct=drop_pct,
                             current_price=current_price,
                             price_5min_ago=price_5min_ago,
-                            volume=quote_data.get('volume', 0),
+                            current_volume=current_volume,
+                            volume_5min_ago=volume_5min_ago,
+                            volume_multiplier=volume_multiplier,
                             alert_count=alert_count,
                             direction_arrows=direction_arrows
                         )
@@ -129,9 +167,10 @@ class RapidAlertDetector:
                         if success:
                             stats['alerts_sent'] += 1
                             logger.info(f"RAPID DROP ALERT: {symbol} dropped {drop_pct:.2f}% "
-                                       f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+                                       f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
+                                       f"VOL: {volume_multiplier:.1f}x spike")
 
-                # Check for 5-min RISE (trending stocks)
+                # Check for 5-min RISE (trending stocks) - volume spike already confirmed
                 if self.enable_rise_alerts:
                     rise_pct = ((current_price - price_5min_ago) / price_5min_ago) * 100
 
@@ -150,7 +189,9 @@ class RapidAlertDetector:
                                 rise_pct=rise_pct,
                                 current_price=current_price,
                                 price_5min_ago=price_5min_ago,
-                                volume=quote_data.get('volume', 0),
+                                current_volume=current_volume,
+                                volume_5min_ago=volume_5min_ago,
+                                volume_multiplier=volume_multiplier,
                                 alert_count=alert_count,
                                 direction_arrows=direction_arrows
                             )
@@ -158,7 +199,8 @@ class RapidAlertDetector:
                             if success:
                                 stats['rise_alerts_sent'] += 1
                                 logger.info(f"RAPID RISE ALERT: {symbol} rose {rise_pct:.2f}% "
-                                           f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f})")
+                                           f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
+                                           f"VOL: {volume_multiplier:.1f}x spike")
 
             except Exception as e:
                 logger.error(f"RapidAlertDetector: Error checking {symbol}: {e}")
@@ -183,7 +225,9 @@ class RapidAlertDetector:
         drop_pct: float,
         current_price: float,
         price_5min_ago: float,
-        volume: int = 0,
+        current_volume: int = 0,
+        volume_5min_ago: int = 0,
+        volume_multiplier: float = 0,
         alert_count: int = None,
         direction_arrows: str = None
     ) -> bool:
@@ -195,7 +239,9 @@ class RapidAlertDetector:
             drop_pct: Drop percentage
             current_price: Current price
             price_5min_ago: Price 5 minutes ago
-            volume: Current volume (optional)
+            current_volume: Current volume
+            volume_5min_ago: Volume 5 minutes ago
+            volume_multiplier: Current volume / previous volume ratio
             alert_count: Count of how many times this stock has alerted today
             direction_arrows: Direction history arrows (e.g., "↓ ↑ ↓")
 
@@ -203,12 +249,12 @@ class RapidAlertDetector:
             True if alert sent successfully, False otherwise
         """
         try:
-            # Prepare volume data (minimal, just current volume)
+            # Prepare volume data with spike info
             volume_data = {
-                'current_volume': volume,
-                'avg_volume': 0,
-                'volume_spike': False
-            } if volume > 0 else None
+                'current_volume': current_volume,
+                'avg_volume': volume_5min_ago,
+                'volume_spike': True  # We only call this if spike detected
+            } if current_volume > 0 else None
 
             # Send alert via TelegramNotifier
             success = self.telegram.send_alert(
@@ -226,6 +272,22 @@ class RapidAlertDetector:
                 direction_arrows=direction_arrows
             )
 
+            # Log to Excel for tracking
+            if self.excel_logger:
+                try:
+                    self.excel_logger.log_alert(
+                        symbol=symbol,
+                        alert_type="5min",
+                        drop_percent=drop_pct,
+                        current_price=current_price,
+                        previous_price=price_5min_ago,
+                        volume_data=volume_data,
+                        market_cap_cr=None,
+                        telegram_sent=success
+                    )
+                except Exception as e:
+                    logger.error(f"RapidAlertDetector: Failed to log drop alert to Excel for {symbol}: {e}")
+
             return success
 
         except Exception as e:
@@ -238,7 +300,9 @@ class RapidAlertDetector:
         rise_pct: float,
         current_price: float,
         price_5min_ago: float,
-        volume: int = 0,
+        current_volume: int = 0,
+        volume_5min_ago: int = 0,
+        volume_multiplier: float = 0,
         alert_count: int = None,
         direction_arrows: str = None
     ) -> bool:
@@ -250,7 +314,9 @@ class RapidAlertDetector:
             rise_pct: Rise percentage
             current_price: Current price
             price_5min_ago: Price 5 minutes ago
-            volume: Current volume (optional)
+            current_volume: Current volume
+            volume_5min_ago: Volume 5 minutes ago
+            volume_multiplier: Current volume / previous volume ratio
             alert_count: Count of how many times this stock has alerted today
             direction_arrows: Direction history arrows (e.g., "↓ ↑ ↓")
 
@@ -258,12 +324,12 @@ class RapidAlertDetector:
             True if alert sent successfully, False otherwise
         """
         try:
-            # Prepare volume data (minimal, just current volume)
+            # Prepare volume data with spike info
             volume_data = {
-                'current_volume': volume,
-                'avg_volume': 0,
-                'volume_spike': False
-            } if volume > 0 else None
+                'current_volume': current_volume,
+                'avg_volume': volume_5min_ago,
+                'volume_spike': True  # We only call this if spike detected
+            } if current_volume > 0 else None
 
             # Send alert via TelegramNotifier (uses same interface, alert_type differentiates)
             success = self.telegram.send_alert(
@@ -280,6 +346,22 @@ class RapidAlertDetector:
                 alert_count=alert_count,
                 direction_arrows=direction_arrows
             )
+
+            # Log to Excel for tracking
+            if self.excel_logger:
+                try:
+                    self.excel_logger.log_alert(
+                        symbol=symbol,
+                        alert_type="5min_rise",
+                        drop_percent=rise_pct,
+                        current_price=current_price,
+                        previous_price=price_5min_ago,
+                        volume_data=volume_data,
+                        market_cap_cr=None,
+                        telegram_sent=success
+                    )
+                except Exception as e:
+                    logger.error(f"RapidAlertDetector: Failed to log rise alert to Excel for {symbol}: {e}")
 
             return success
 
