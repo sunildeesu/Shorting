@@ -39,7 +39,7 @@ def backfill_alerts(days: int = 15, dry_run: bool = False):
     drop_threshold = config.DROP_THRESHOLD_5MIN  # 1.25%
     rise_threshold = config.RISE_THRESHOLD_5MIN  # 1.25%
     cooldown_minutes = 10
-    volume_spike_multiplier = 1.8  # Require current_volume > prev_volume * 1.8
+    volume_spike_multiplier = 1.25  # Require current_volume > prev_volume * 1.25
 
     logger.info(f"Backfill settings: drop>={drop_threshold}%, rise>={rise_threshold}%, "
                 f"volume_spike>={volume_spike_multiplier}x, cooldown={cooldown_minutes}min")

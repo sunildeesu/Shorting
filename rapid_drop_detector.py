@@ -54,7 +54,7 @@ class RapidAlertDetector:
         self.rise_threshold = config.RISE_THRESHOLD_5MIN  # Default: 1.25%
         self.enable_rise_alerts = config.ENABLE_RISE_ALERTS  # Default: True
         self.cooldown_minutes = 10  # 10-minute cooldown for rapid alerts
-        self.volume_spike_multiplier = 1.8  # Require current_volume > prev_volume * 1.8
+        self.volume_spike_multiplier = 1.25  # Require current_volume > prev_volume * 1.25
 
         # Alert start time: 9:25 AM (from config)
         self.alert_start_time = dt_time(config.MARKET_START_HOUR, config.MARKET_START_MINUTE)
