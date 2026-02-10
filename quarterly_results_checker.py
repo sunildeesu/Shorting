@@ -332,6 +332,128 @@ class QuarterlyResultsChecker:
         else:
             return "❌ NSE API down - no cached schedule"
 
+    def get_fno_stocks_with_results_today(self, fno_stocks: List[str]) -> List[str]:
+        """
+        Get F&O stocks that have results scheduled today.
+
+        Args:
+            fno_stocks: List of F&O stock symbols
+
+        Returns:
+            List of F&O stocks with results today
+        """
+        self.refresh_if_needed()
+        fno_set = {s.upper() for s in fno_stocks}
+        return sorted([s for s in self._results_today if s in fno_set])
+
+    def get_fno_stocks_with_upcoming_results(self, fno_stocks: List[str]) -> Dict[str, str]:
+        """
+        Get F&O stocks with upcoming results (next 7 days).
+
+        Args:
+            fno_stocks: List of F&O stock symbols
+
+        Returns:
+            Dict of {symbol: date} for F&O stocks with upcoming results
+        """
+        self.refresh_if_needed()
+        fno_set = {s.upper() for s in fno_stocks}
+        return {s: d for s, d in self._results_upcoming.items() if s in fno_set}
+
+
+def load_fno_stocks() -> List[str]:
+    """Load F&O stocks from config file."""
+    import config
+    try:
+        stock_file = config.STOCK_LIST_FILE
+        if os.path.exists(stock_file):
+            with open(stock_file, 'r') as f:
+                data = json.load(f)
+                return data.get('stocks', [])
+    except Exception as e:
+        logger.warning(f"Failed to load F&O stocks: {e}")
+    return []
+
+
+def send_morning_results_alert(telegram_notifier) -> bool:
+    """
+    Send 9:15 AM alert for F&O stocks with quarterly results today.
+
+    Args:
+        telegram_notifier: TelegramNotifier instance
+
+    Returns:
+        True if alert sent successfully
+    """
+    try:
+        checker = get_results_checker()
+        fno_stocks = load_fno_stocks()
+
+        if not fno_stocks:
+            logger.warning("No F&O stocks loaded for results alert")
+            return False
+
+        # Get F&O stocks with results today
+        results_today = checker.get_fno_stocks_with_results_today(fno_stocks)
+        upcoming_results = checker.get_fno_stocks_with_upcoming_results(fno_stocks)
+
+        # Build message
+        today_str = datetime.now().strftime('%d-%b-%Y')
+
+        if not results_today and not upcoming_results:
+            # No results scheduled - send brief message
+            message = (
+                f"📊 <b>QUARTERLY RESULTS - {today_str}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"No F&O stocks have results scheduled today.\n\n"
+                f"<i>{checker.get_status()}</i>"
+            )
+        else:
+            message = (
+                f"📊 <b>QUARTERLY RESULTS - {today_str}</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            )
+
+            if results_today:
+                message += f"🔴 <b>RESULTS TODAY ({len(results_today)} F&O stocks):</b>\n"
+                for symbol in results_today:
+                    message += f"   • {symbol}\n"
+                message += "\n⚠️ <i>Expect high volatility in these stocks!</i>\n\n"
+
+            if upcoming_results:
+                message += f"📅 <b>UPCOMING RESULTS:</b>\n"
+                # Group by date
+                by_date = {}
+                for symbol, date in upcoming_results.items():
+                    if date not in by_date:
+                        by_date[date] = []
+                    by_date[date].append(symbol)
+
+                for date in sorted(by_date.keys()):
+                    symbols = by_date[date]
+                    message += f"   {date}: {', '.join(sorted(symbols))}\n"
+
+            message += f"\n<i>{checker.get_status()}</i>"
+
+        # Send via Telegram
+        import requests
+        url = f"https://api.telegram.org/bot{telegram_notifier.bot_token}/sendMessage"
+        payload = {
+            "chat_id": telegram_notifier.channel_id,
+            "text": message,
+            "parse_mode": "HTML"
+        }
+
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+
+        logger.info(f"Sent morning results alert: {len(results_today)} today, {len(upcoming_results)} upcoming")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send morning results alert: {e}")
+        return False
+
 
 # Global instance for easy access
 _checker_instance: Optional[QuarterlyResultsChecker] = None

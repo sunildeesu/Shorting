@@ -23,6 +23,7 @@ from alert_history_manager import AlertHistoryManager
 from telegram_notifier import TelegramNotifier
 from rapid_drop_detector import RapidAlertDetector
 from early_warning_detector import EarlyWarningDetector
+from quarterly_results_checker import send_morning_results_alert, get_results_checker
 import config
 
 logging.basicConfig(
@@ -117,6 +118,19 @@ def main():
         logger.error(f"⚠️ Detector init failed (collection will continue): {e}")
         rapid_detector = None
         early_warning = None
+
+    # Send 9:15 AM quarterly results alert
+    try:
+        logger.info("Checking for quarterly results today...")
+        results_checker = get_results_checker()
+        results_checker.fetch_from_nse()  # Fetch latest schedule
+        logger.info(f"Results check: {results_checker.get_status()}")
+
+        if telegram:
+            send_morning_results_alert(telegram)
+            logger.info("✅ Morning results alert sent")
+    except Exception as e:
+        logger.error(f"⚠️ Failed to send morning results alert: {e}")
 
     # Continuous collection loop
     cycle_count = 0
