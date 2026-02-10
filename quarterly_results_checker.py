@@ -24,16 +24,21 @@ class QuarterlyResultsChecker:
     Checks if stocks have quarterly results scheduled.
 
     Fetches data from NSE and caches it locally for the day.
+    Falls back to manual file if API fails.
     """
 
     def __init__(self, cache_dir: str = "data/results_cache"):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
 
+        # Manual results file path
+        self.manual_file = os.path.join(cache_dir, "manual_results.json")
+
         # In-memory cache for quick lookups
         self._results_today: Set[str] = set()  # Symbols with results TODAY
         self._results_upcoming: Dict[str, str] = {}  # Symbol -> date (next 7 days)
         self._last_fetch: Optional[datetime] = None
+        self._api_failed: bool = False  # Track if API failed
 
         # NSE API settings
         self.headers = {
@@ -42,8 +47,78 @@ class QuarterlyResultsChecker:
             'Accept-Language': 'en-US,en;q=0.9',
         }
 
+        # Create manual file template if doesn't exist
+        self._ensure_manual_file()
+
         # Load cached data if available
         self._load_cache()
+
+    def _ensure_manual_file(self):
+        """Create manual results file template if it doesn't exist."""
+        if not os.path.exists(self.manual_file):
+            template = {
+                "_comment": "Add stocks with quarterly results here. Format: SYMBOL: DD-MMM-YYYY",
+                "_example": "RELIANCE: 15-Feb-2026",
+                "_updated": datetime.now().strftime('%Y-%m-%d'),
+                "results": {
+                    # Example entries - user can edit this file
+                }
+            }
+            try:
+                with open(self.manual_file, 'w') as f:
+                    json.dump(template, f, indent=2)
+                logger.info(f"Created manual results file: {self.manual_file}")
+            except Exception as e:
+                logger.warning(f"Failed to create manual results file: {e}")
+
+    def _load_manual_results(self) -> Dict[str, str]:
+        """Load manually entered results from file."""
+        if not os.path.exists(self.manual_file):
+            return {}
+
+        try:
+            with open(self.manual_file, 'r') as f:
+                data = json.load(f)
+                return data.get('results', {})
+        except Exception as e:
+            logger.warning(f"Failed to load manual results: {e}")
+            return {}
+
+    def add_manual_result(self, symbol: str, date: str):
+        """
+        Add a stock to the manual results file.
+
+        Args:
+            symbol: Stock symbol (e.g., 'RELIANCE')
+            date: Results date (e.g., '15-Feb-2026' or 'TODAY')
+        """
+        try:
+            data = {"results": {}}
+            if os.path.exists(self.manual_file):
+                with open(self.manual_file, 'r') as f:
+                    data = json.load(f)
+
+            if 'results' not in data:
+                data['results'] = {}
+
+            data['results'][symbol.upper()] = date
+            data['_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+            with open(self.manual_file, 'w') as f:
+                json.dump(data, f, indent=2)
+
+            # Update in-memory cache
+            symbol = symbol.upper()
+            if date.upper() == 'TODAY':
+                self._results_today.add(symbol)
+            else:
+                self._results_upcoming[symbol] = date
+
+            logger.info(f"Added manual result: {symbol} -> {date}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to add manual result: {e}")
+            return False
 
     def _get_cache_path(self, date_str: str = None) -> str:
         """Get cache file path for a date."""
@@ -167,17 +242,81 @@ class QuarterlyResultsChecker:
                     if 'financial result' in desc or 'quarterly result' in desc:
                         self._results_today.add(symbol)
 
+            self._api_failed = False
+            self._merge_manual_data()
             self._last_fetch = datetime.now()
             self._save_cache()
 
             logger.info(f"Fetched results data: {len(self._results_today)} today, "
-                       f"{len(self._results_upcoming)} upcoming")
+                       f"{len(self._results_upcoming)} upcoming (API + manual)")
 
             return True
 
         except Exception as e:
             logger.error(f"Failed to fetch NSE results data: {e}")
+            self._api_failed = True
+            # Fall back to manual data only
+            self._load_manual_only()
             return False
+
+    def _merge_manual_data(self):
+        """Merge manual results with API data."""
+        manual = self._load_manual_results()
+        today = datetime.now().strftime('%d-%b-%Y')
+
+        for symbol, date in manual.items():
+            symbol = symbol.upper()
+            if date.upper() == 'TODAY' or date == today:
+                self._results_today.add(symbol)
+            else:
+                # Check if date is within 7 days
+                try:
+                    result_dt = datetime.strptime(date, '%d-%b-%Y')
+                    days_away = (result_dt - datetime.now()).days
+                    if 0 <= days_away <= 7:
+                        self._results_upcoming[symbol] = date
+                except:
+                    # Try alternate format
+                    try:
+                        result_dt = datetime.strptime(date, '%Y-%m-%d')
+                        days_away = (result_dt - datetime.now()).days
+                        if 0 <= days_away <= 7:
+                            self._results_upcoming[symbol] = result_dt.strftime('%d-%b-%Y')
+                    except:
+                        pass
+
+    def _load_manual_only(self):
+        """Load only manual data when API fails."""
+        self._results_today.clear()
+        self._results_upcoming.clear()
+
+        manual = self._load_manual_results()
+        today = datetime.now().strftime('%d-%b-%Y')
+
+        for symbol, date in manual.items():
+            symbol = symbol.upper()
+            if date.upper() == 'TODAY' or date == today:
+                self._results_today.add(symbol)
+            else:
+                try:
+                    result_dt = datetime.strptime(date, '%d-%b-%Y')
+                    days_away = (result_dt - datetime.now()).days
+                    if 0 <= days_away <= 7:
+                        self._results_upcoming[symbol] = date
+                except:
+                    try:
+                        result_dt = datetime.strptime(date, '%Y-%m-%d')
+                        days_away = (result_dt - datetime.now()).days
+                        if 0 <= days_away <= 7:
+                            self._results_upcoming[symbol] = result_dt.strftime('%d-%b-%Y')
+                    except:
+                        pass
+
+        self._last_fetch = datetime.now()
+
+        if self._results_today or self._results_upcoming:
+            logger.info(f"Loaded manual results: {len(self._results_today)} today, "
+                       f"{len(self._results_upcoming)} upcoming (API failed, using manual only)")
 
     def refresh_if_needed(self):
         """Refresh data if stale (older than 2 hours or new day)."""
@@ -289,40 +428,68 @@ if __name__ == "__main__":
 
     checker = QuarterlyResultsChecker()
 
-    print("\nFetching results data from NSE...")
+    print(f"\n{'='*60}")
+    print("QUARTERLY RESULTS CHECKER")
+    print(f"{'='*60}")
+    print(f"\nManual file: {checker.manual_file}")
+    print("(Edit this file to add results if NSE API fails)\n")
+
+    print("Fetching results data from NSE...")
     success = checker.fetch_from_nse()
 
     if success:
-        print(f"\n{'='*60}")
-        print("STOCKS WITH RESULTS TODAY")
-        print(f"{'='*60}")
+        print("✅ NSE API successful")
+    else:
+        print("❌ NSE API failed - using manual data only")
 
-        today_results = checker.get_all_results_today()
-        if today_results:
-            for symbol in today_results:
-                print(f"  📊 {symbol}")
+    print(f"\n{'='*60}")
+    print("STOCKS WITH RESULTS TODAY")
+    print(f"{'='*60}")
+
+    today_results = checker.get_all_results_today()
+    if today_results:
+        for symbol in today_results:
+            print(f"  📊 {symbol}")
+    else:
+        print("  No results scheduled for today")
+
+    print(f"\n{'='*60}")
+    print("UPCOMING RESULTS (Next 7 Days)")
+    print(f"{'='*60}")
+
+    upcoming = checker.get_all_upcoming_results()
+    if upcoming:
+        for symbol, date in sorted(upcoming.items(), key=lambda x: x[1]):
+            print(f"  {date}: {symbol}")
+    else:
+        print("  No upcoming results found")
+
+    print(f"\n{'='*60}")
+
+    # Test specific symbols
+    test_symbols = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK']
+    print("\nTesting specific symbols:")
+    for sym in test_symbols:
+        info = checker.get_results_info(sym)
+        if info['has_results']:
+            print(f"  {sym}: {info['label']}")
         else:
-            print("  No results scheduled for today")
+            print(f"  {sym}: No results scheduled")
 
-        print(f"\n{'='*60}")
-        print("UPCOMING RESULTS (Next 7 Days)")
-        print(f"{'='*60}")
+    print(f"\n{'='*60}")
+    print("MANUAL FILE FORMAT")
+    print(f"{'='*60}")
+    print("""
+To add results manually, edit: data/results_cache/manual_results.json
 
-        upcoming = checker.get_all_upcoming_results()
-        if upcoming:
-            for symbol, date in sorted(upcoming.items(), key=lambda x: x[1]):
-                print(f"  {date}: {symbol}")
-        else:
-            print("  No upcoming results found")
+Example format:
+{
+  "results": {
+    "RELIANCE": "15-Feb-2026",
+    "TCS": "TODAY",
+    "INFY": "20-Feb-2026"
+  }
+}
 
-        print(f"\n{'='*60}")
-
-        # Test specific symbols
-        test_symbols = ['RELIANCE', 'TCS', 'INFY', 'HDFCBANK']
-        print("\nTesting specific symbols:")
-        for sym in test_symbols:
-            info = checker.get_results_info(sym)
-            if info['has_results']:
-                print(f"  {sym}: {info['label']}")
-            else:
-                print(f"  {sym}: No results scheduled")
+Use "TODAY" for stocks with results today.
+""")
