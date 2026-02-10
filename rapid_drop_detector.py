@@ -22,6 +22,7 @@ from typing import Dict, Optional
 
 import config
 from alert_excel_logger import AlertExcelLogger
+from quarterly_results_checker import get_results_label
 
 logger = logging.getLogger(__name__)
 

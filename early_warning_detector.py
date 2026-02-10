@@ -26,6 +26,7 @@ from datetime import datetime, time as dt_time, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 import config
+from quarterly_results_checker import get_results_checker, get_results_label
 
 logger = logging.getLogger(__name__)
 
@@ -660,10 +661,15 @@ class EarlyWarningDetector:
             confirm_str = " | ".join(confirmations) if confirmations else ""
             confirm_line = f"🎯 {confirm_str}\n" if confirm_str else ""
 
+            # Check for quarterly results
+            results_label = get_results_label(symbol)
+            results_line = f"<b>{results_label}</b>\n" if results_label else ""
+
             # Build message (keep it short - this is a pre-alert)
             message = (
                 f"⚠️ <b>PRE-ALERT: {symbol}</b> ⚠️\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{results_line}"
                 f"{emoji} Early {direction} Signal\n"
                 f"{arrow} <b>{change_pct:.2f}%</b> in {self.lookback_minutes} min\n\n"
                 f"💰 {prev_price_str} → {price_str}\n"

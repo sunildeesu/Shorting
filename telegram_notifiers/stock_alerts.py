@@ -3,6 +3,7 @@ import logging
 import config
 from .base_notifier import BaseNotifier
 from .formatting_helpers import format_rsi_section, format_oi_section, format_sector_context
+from quarterly_results_checker import get_results_label
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,13 @@ class StockAlertNotifier(BaseNotifier):
                 message += f"🔔 <b>{_ordinal(alert_count)} Alert</b> for {display_symbol} today\n\n"
 
         message += f"📊 <b>Stock:</b> {display_symbol}\n"
-        message += f"⏰ <b>Alert Time:</b> {time_str}\n\n"
+        message += f"⏰ <b>Alert Time:</b> {time_str}\n"
+
+        # Add quarterly results indicator if applicable
+        results_label = get_results_label(display_symbol)
+        if results_label:
+            message += f"<b>{results_label}</b>\n"
+        message += "\n"
 
         # Price section
         message += "💰 <b>PRICE:</b>\n"
@@ -334,6 +341,11 @@ class StockAlertNotifier(BaseNotifier):
             message += f"📊 <b>Stock: {display_symbol}</b>\n⏰ Alert Time: {time_str}\n"
         else:
             message += f"📊 Stock: {display_symbol}\n⏰ Alert Time: {time_str}\n"
+
+        # Add quarterly results indicator if applicable
+        results_label = get_results_label(display_symbol)
+        if results_label:
+            message += f"<b>{results_label}</b>\n"
 
         # Add market cap if available
         if market_cap_cr:
