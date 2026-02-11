@@ -24,6 +24,7 @@ from telegram_notifier import TelegramNotifier
 from rapid_drop_detector import RapidAlertDetector
 from early_warning_detector import EarlyWarningDetector
 from quarterly_results_checker import send_morning_results_alert, get_results_checker
+from auto_trader import get_auto_trader
 import config
 
 logging.basicConfig(
@@ -97,14 +98,22 @@ def main():
     # Initialize rapid alert detector (error-isolated - collection continues if this fails)
     rapid_detector = None
     early_warning = None
+    auto_trader = None
     try:
         logger.info("Initializing alert detectors...")
         alert_history = AlertHistoryManager()
         telegram = TelegramNotifier()
         detection_db = get_central_db(mode="reader")
 
-        # 5-minute alert detector
-        rapid_detector = RapidAlertDetector(detection_db, alert_history, telegram)
+        # Initialize auto-trader if enabled (uses collector's Kite client)
+        if config.ENABLE_AUTO_TRADING:
+            auto_trader = get_auto_trader(collector.kite)
+            if auto_trader:
+                mode = "PAPER" if auto_trader.paper_mode else "LIVE"
+                logger.info(f"✅ Auto-trader initialized ({mode} mode)")
+
+        # 5-minute alert detector (with optional auto-trader)
+        rapid_detector = RapidAlertDetector(detection_db, alert_history, telegram, auto_trader)
         logger.info("✅ Rapid alert detector initialized (5-min drop + rise alerts)")
 
         # Early warning detector (pre-alerts)
@@ -185,6 +194,40 @@ def main():
                                            f"{detection_stats.get('rise_alerts_sent', 0)} rise alerts")
                         except Exception as e:
                             logger.error(f"⚠️ Rapid detection failed: {e}")
+
+                    # Check for auto-trade exits
+                    if auto_trader and auto_trader.positions:
+                        try:
+                            exits = auto_trader.check_exits(stock_quotes)
+                            for exit_info in exits:
+                                mode_emoji = "📝" if exit_info.get('paper_mode') else "🤖"
+                                mode_text = "PAPER " if exit_info.get('paper_mode') else ""
+                                pnl = exit_info.get('pnl')
+                                pnl_pct = exit_info.get('pnl_pct')
+
+                                if pnl is not None:
+                                    pnl_emoji = "✅" if pnl >= 0 else "❌"
+                                    telegram.send_message(
+                                        f"{mode_emoji} <b>{mode_text}AUTO-TRADE EXIT</b>\n\n"
+                                        f"{'🔻' if exit_info['direction'] == 'DROP' else '🔺'} {exit_info['symbol']} "
+                                        f"({exit_info['direction']})\n"
+                                        f"Entry: ₹{exit_info['entry_price']:.2f}\n"
+                                        f"Exit: ₹{exit_info.get('exit_price', 0):.2f}\n"
+                                        f"Qty: {exit_info['quantity']}\n\n"
+                                        f"{pnl_emoji} <b>P&L: ₹{pnl:+,.2f} ({pnl_pct:+.2f}%)</b>"
+                                    )
+                                    logger.info(f"🤖 Auto-trade exit: {exit_info['symbol']} P&L: ₹{pnl:+,.2f}")
+                                else:
+                                    telegram.send_message(
+                                        f"{mode_emoji} <b>{mode_text}AUTO-TRADE EXIT</b>\n\n"
+                                        f"{'🔻' if exit_info['direction'] == 'DROP' else '🔺'} {exit_info['symbol']} "
+                                        f"({exit_info['direction']})\n"
+                                        f"Entry: ₹{exit_info['entry_price']:.2f}\n"
+                                        f"Qty: {exit_info['quantity']}\n"
+                                        f"Hold time: {exit_info['hold_time']} min"
+                                    )
+                        except Exception as e:
+                            logger.error(f"⚠️ Auto-trade exit check failed: {e}")
 
             # Sleep until next minute
             # Sleep logic: If current time is 10:30:15, sleep until 10:31:00

@@ -18,11 +18,14 @@ Updated: 2026-01-30 - Added rise detection for trending stocks
 import logging
 import time
 from datetime import datetime, time as dt_time
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 
 import config
 from alert_excel_logger import AlertExcelLogger
 from quarterly_results_checker import get_results_label
+
+if TYPE_CHECKING:
+    from auto_trader import AutoTrader
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +37,7 @@ class RapidAlertDetector:
     Runs in central_data_collector_continuous.py after each collect_and_store() cycle.
     """
 
-    def __init__(self, central_db, alert_history, telegram):
+    def __init__(self, central_db, alert_history, telegram, auto_trader: Optional['AutoTrader'] = None):
         """
         Initialize detector with shared components.
 
@@ -42,10 +45,12 @@ class RapidAlertDetector:
             central_db: CentralQuoteDB instance (reader mode)
             alert_history: AlertHistoryManager instance
             telegram: TelegramNotifier instance
+            auto_trader: Optional AutoTrader instance for auto-trading on alerts
         """
         self.db = central_db
         self.alert_history = alert_history
         self.telegram = telegram
+        self.auto_trader = auto_trader
 
         # Initialize Excel logger for tracking
         self.excel_logger = AlertExcelLogger(config.ALERT_EXCEL_PATH) if config.ENABLE_EXCEL_LOGGING else None
@@ -60,11 +65,13 @@ class RapidAlertDetector:
         # Alert start time: 9:25 AM (from config)
         self.alert_start_time = dt_time(config.MARKET_START_HOUR, config.MARKET_START_MINUTE)
 
+        auto_trade_status = "enabled" if auto_trader else "disabled"
         logger.info(f"RapidAlertDetector initialized (drop: {self.drop_threshold}%, rise: {self.rise_threshold}%, "
                    f"volume_spike: {self.volume_spike_multiplier}x, "
                    f"rise_alerts: {self.enable_rise_alerts}, cooldown: {self.cooldown_minutes}min, "
                    f"start_time: {self.alert_start_time.strftime('%H:%M')}, "
-                   f"excel_logging: {self.excel_logger is not None})")
+                   f"excel_logging: {self.excel_logger is not None}, "
+                   f"auto_trading: {auto_trade_status})")
 
     def detect_all(self, current_quotes: Dict[str, Dict]) -> Dict:
         """
@@ -171,6 +178,10 @@ class RapidAlertDetector:
                                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                        f"VOL: {volume_multiplier:.1f}x spike")
 
+                            # Execute auto-trade if enabled (first alert only)
+                            if self.auto_trader:
+                                self._try_auto_trade(symbol, 'DROP', current_price, alert_count)
+
                 # Check for 5-min RISE (trending stocks) - volume spike already confirmed
                 if self.enable_rise_alerts:
                     rise_pct = ((current_price - price_5min_ago) / price_5min_ago) * 100
@@ -202,6 +213,10 @@ class RapidAlertDetector:
                                 logger.info(f"RAPID RISE ALERT: {symbol} rose {rise_pct:.2f}% "
                                            f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                            f"VOL: {volume_multiplier:.1f}x spike")
+
+                                # Execute auto-trade if enabled (first alert only)
+                                if self.auto_trader:
+                                    self._try_auto_trade(symbol, 'RISE', current_price, alert_count)
 
             except Exception as e:
                 logger.error(f"RapidAlertDetector: Error checking {symbol}: {e}")
@@ -369,3 +384,49 @@ class RapidAlertDetector:
         except Exception as e:
             logger.error(f"RapidAlertDetector: Failed to send rise alert for {symbol}: {e}")
             return False
+
+    def _try_auto_trade(self, symbol: str, direction: str, current_price: float, alert_count: int) -> None:
+        """
+        Try to execute auto-trade for the given alert.
+
+        Only trades on FIRST alert of the day for each stock (alert_count == 1).
+
+        Args:
+            symbol: Stock symbol
+            direction: 'DROP' or 'RISE'
+            current_price: Current price of the stock
+            alert_count: Number of alerts today for this stock
+        """
+        # Only trade on first alert of the day
+        if alert_count != 1:
+            logger.debug(f"AutoTrade: Skipping {symbol} - not first alert today (count: {alert_count})")
+            return
+
+        should_trade, reason = self.auto_trader.should_trade(symbol, direction)
+
+        if not should_trade:
+            logger.debug(f"AutoTrade: Skipping {symbol} - {reason}")
+            return
+
+        try:
+            trade = self.auto_trader.execute_trade(symbol, direction, current_price)
+
+            if trade:
+                action = "SHORT" if direction == 'DROP' else "LONG"
+                mode_emoji = "📝" if trade['paper_mode'] else "🤖"
+                mode_text = "PAPER " if trade['paper_mode'] else ""
+
+                logger.info(f"AUTO-TRADE: {action} {symbol} x{trade['quantity']} @ ₹{current_price:.2f}")
+
+                # Send Telegram notification
+                exit_time = trade['exit_at'].strftime('%H:%M')
+                self.telegram.send_message(
+                    f"{mode_emoji} <b>{mode_text}AUTO-TRADE EXECUTED</b>\n\n"
+                    f"{'🔻' if direction == 'DROP' else '🔺'} <b>{action} {symbol}</b>\n"
+                    f"Qty: {trade['quantity']}\n"
+                    f"Entry: ₹{current_price:.2f}\n"
+                    f"Exit at: {exit_time} ({config.AUTO_TRADE_EXIT_MINUTES} min)"
+                )
+
+        except Exception as e:
+            logger.error(f"AutoTrade: Failed to execute trade for {symbol}: {e}")
