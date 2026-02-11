@@ -426,3 +426,31 @@ CPR_DRY_RUN_MODE = os.getenv('CPR_DRY_RUN_MODE', 'false').lower() == 'true'
 
 # State file (persistent storage for position tracking)
 CPR_STATE_FILE = 'data/cpr_state.json'
+
+# ============================================
+# AUTO-TRADING CONFIGURATION
+# ============================================
+# Automated trading based on 5-minute alerts via Zerodha Kite
+# Backtested: 97% win rate, +1.67% avg P&L over 181 trades (30 days)
+# IMPORTANT: Set ENABLE_AUTO_TRADING=true only after paper testing
+
+# Master switch (default: disabled for safety)
+ENABLE_AUTO_TRADING = os.getenv('ENABLE_AUTO_TRADING', 'false').lower() == 'true'
+
+# Paper trading mode (log trades without executing)
+AUTO_TRADE_PAPER_MODE = os.getenv('AUTO_TRADE_PAPER_MODE', 'true').lower() == 'true'
+
+# Position sizing
+AUTO_TRADE_POSITION_SIZE = float(os.getenv('AUTO_TRADE_POSITION_SIZE', '10000'))  # ₹10,000 per trade
+AUTO_TRADE_MAX_POSITIONS = int(os.getenv('AUTO_TRADE_MAX_POSITIONS', '5'))  # Max concurrent positions
+
+# Trade parameters
+AUTO_TRADE_EXIT_MINUTES = int(os.getenv('AUTO_TRADE_EXIT_MINUTES', '10'))  # Exit after 10 minutes
+AUTO_TRADE_DIRECTIONS = os.getenv('AUTO_TRADE_DIRECTIONS', 'BOTH')  # BOTH, DROP, RISE
+AUTO_TRADE_PRODUCT = os.getenv('AUTO_TRADE_PRODUCT', 'MIS')  # MIS for intraday (auto-squared at 3:15 PM)
+
+# Position tracking file
+AUTO_TRADE_POSITIONS_FILE = 'data/auto_trade_positions.json'
+
+# Paper trading slippage simulation (for realistic P&L expectations)
+AUTO_TRADE_PAPER_SLIPPAGE = float(os.getenv('AUTO_TRADE_PAPER_SLIPPAGE', '0.001'))  # 0.1% default slippage

@@ -35,6 +35,11 @@ class QuarterlyResultsChecker:
         # Schedule file - auto-updated when API works
         self.schedule_file = os.path.join(cache_dir, "results_schedule.json")
 
+        # Daily schedule file - saved by date for morning alerts
+        # Key insight: NSE removes today's events from API once day starts
+        # So we need to save each day's schedule the evening before
+        self.daily_schedule_file = os.path.join(cache_dir, "daily_results_{date}.json")
+
         # In-memory cache for quick lookups
         self._results_today: Set[str] = set()
         self._results_upcoming: Dict[str, str] = {}  # Symbol -> date
@@ -51,6 +56,46 @@ class QuarterlyResultsChecker:
 
         # Load saved schedule on startup
         self._load_saved_schedule()
+
+        # Also load today's pre-saved schedule (from evening fetch)
+        self._load_daily_schedule()
+
+    def _load_daily_schedule(self):
+        """Load today's pre-saved schedule (saved the evening before)."""
+        today = datetime.now().strftime('%Y-%m-%d')
+        daily_file = self.daily_schedule_file.format(date=today)
+
+        if not os.path.exists(daily_file):
+            return
+
+        try:
+            with open(daily_file, 'r') as f:
+                data = json.load(f)
+
+            symbols = data.get('symbols', [])
+            if symbols:
+                for symbol in symbols:
+                    self._results_today.add(symbol.upper())
+                logger.info(f"Loaded pre-saved schedule for {today}: {len(symbols)} stocks with results")
+
+        except Exception as e:
+            logger.warning(f"Failed to load daily schedule: {e}")
+
+    def _save_daily_schedule(self, date_str: str, symbols: List[str]):
+        """Save scheduled results for a specific date (for morning alert next day)."""
+        try:
+            daily_file = self.daily_schedule_file.format(date=date_str)
+            data = {
+                'date': date_str,
+                'symbols': sorted(symbols),
+                'saved_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'source': 'NSE event-calendar'
+            }
+            with open(daily_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Saved schedule for {date_str}: {len(symbols)} stocks")
+        except Exception as e:
+            logger.warning(f"Failed to save daily schedule: {e}")
 
     def _get_today_cache_path(self) -> str:
         """Get daily cache file path."""
@@ -197,17 +242,33 @@ class QuarterlyResultsChecker:
                 symbol = ann.get('symbol', '').strip().upper()
                 desc = ann.get('desc', '').lower()
                 ann_date = ann.get('an_dt', '')
+                attchmnt_text = ann.get('attchmntText', '').lower()
 
                 if not symbol:
                     continue
 
-                if today_alt in ann_date or today.replace('-', ' ').lower() in ann_date.lower():
-                    if 'financial result' in desc or 'quarterly result' in desc:
+                # Check if announcement is from today (format: "11-Feb-2026 12:38:31")
+                if today in ann_date or today_alt in ann_date:
+                    # Check for results-related announcements
+                    is_results = (
+                        'financial result' in desc or
+                        'quarterly result' in desc or
+                        'outcome of board meeting' in desc or  # Common for results announcements
+                        'financial result' in attchmnt_text or
+                        'quarterly' in attchmnt_text or
+                        'q3' in attchmnt_text or 'q2' in attchmnt_text or
+                        'q1' in attchmnt_text or 'q4' in attchmnt_text
+                    )
+                    if is_results:
                         self._results_today.add(symbol)
                         all_results[symbol] = today
 
             # Save schedule for future use
             self._save_schedule(all_results)
+
+            # Also fetch and save upcoming schedules from event-calendar
+            # This ensures we have schedules saved for morning alerts
+            self.fetch_and_save_upcoming_days()
 
             self._api_working = True
             self._using_cached_schedule = False
@@ -234,6 +295,93 @@ class QuarterlyResultsChecker:
                 logger.warning("⚠️ No cached schedule available")
 
             return False
+
+    def fetch_and_save_upcoming_days(self) -> Dict[str, List[str]]:
+        """
+        Fetch from event-calendar and save schedules for upcoming days.
+
+        NSE removes today's events once the day starts, so we need to
+        fetch and save schedules in advance for morning alerts.
+
+        Call this in the evening (after 6 PM) to save tomorrow's schedule.
+
+        Returns:
+            Dict of {date: [symbols]} for saved dates
+        """
+        try:
+            session = requests.Session()
+            session.get('https://www.nseindia.com', headers=self.headers, timeout=10)
+
+            # Fetch event calendar - has comprehensive results data
+            url = 'https://www.nseindia.com/api/event-calendar'
+            response = session.get(url, headers=self.headers, timeout=15)
+
+            if response.status_code != 200:
+                raise Exception(f"Event calendar API returned {response.status_code}")
+
+            events = response.json()
+
+            # Group by date
+            by_date: Dict[str, List[str]] = {}
+
+            for event in events:
+                symbol = event.get('symbol', '').strip().upper()
+                date = event.get('date', '')
+                purpose = event.get('purpose', '').lower()
+                desc = event.get('bm_desc', '').lower()
+
+                if not symbol or not date:
+                    continue
+
+                # Check if results-related
+                is_results = (
+                    'financial result' in purpose or
+                    'financial result' in desc or
+                    'quarterly' in desc or
+                    'quarter ended' in desc or
+                    'q3' in desc or 'q2' in desc or 'q1' in desc or 'q4' in desc
+                )
+
+                if not is_results:
+                    continue
+
+                # Convert date format (11-Feb-2026 -> 2026-02-11)
+                try:
+                    dt = datetime.strptime(date, '%d-%b-%Y')
+                    date_key = dt.strftime('%Y-%m-%d')
+
+                    if date_key not in by_date:
+                        by_date[date_key] = []
+                    if symbol not in by_date[date_key]:
+                        by_date[date_key].append(symbol)
+                except:
+                    pass
+
+            # Save each day's schedule
+            for date_key, symbols in by_date.items():
+                self._save_daily_schedule(date_key, symbols)
+
+            # Also update upcoming in memory
+            today = datetime.now().date()
+            for date_key, symbols in by_date.items():
+                try:
+                    dt = datetime.strptime(date_key, '%Y-%m-%d').date()
+                    days_away = (dt - today).days
+                    if days_away == 0:
+                        for s in symbols:
+                            self._results_today.add(s)
+                    elif 0 < days_away <= 7:
+                        for s in symbols:
+                            self._results_upcoming[s] = dt.strftime('%d-%b-%Y')
+                except:
+                    pass
+
+            logger.info(f"✅ Saved schedules for {len(by_date)} upcoming dates from event-calendar")
+            return by_date
+
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch event-calendar: {e}")
+            return {}
 
     def refresh_if_needed(self):
         """Refresh data if stale (older than 2 hours or new day)."""
