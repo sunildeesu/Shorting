@@ -1519,12 +1519,13 @@ class StockMonitor:
         Check if current time is end-of-day (market close at 3:25 PM)
 
         Returns:
-            True if it's EOD time (15:25), False otherwise
+            True if it's EOD time (15:20-15:27), False otherwise
         """
         now = datetime.now()
-        # EOD time is 15:25 (3:25 PM) - 5 minutes before market close at 15:30
-        # Allow 1-minute window (15:25-15:26)
-        return now.hour == 15 and now.minute == 25
+        # EOD time window: 15:20 to 15:27 (expanded from exact 15:25)
+        # This ensures the EOD summary is sent even if the 5-min cycle
+        # doesn't land exactly at 15:25 (cycles might hit 15:24 or 15:29)
+        return now.hour == 15 and 20 <= now.minute <= 27
 
     # Track whether EOD summary has been sent today
     _eod_summary_sent_date: Optional[date] = None

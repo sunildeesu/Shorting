@@ -86,7 +86,7 @@ VOLUME_MIN_HISTORY = int(os.getenv('VOLUME_MIN_HISTORY', '3'))  # Min snapshots 
 # Strategy: Entry on breakout when volatility is contracting (ATR(20) < ATR(30))
 ATR_PERIOD_SHORT = int(os.getenv('ATR_PERIOD_SHORT', '20'))  # Short-term ATR period
 ATR_PERIOD_LONG = int(os.getenv('ATR_PERIOD_LONG', '30'))  # Long-term ATR period
-ATR_ENTRY_MULTIPLIER = float(os.getenv('ATR_ENTRY_MULTIPLIER', '2.5'))  # Entry: Open + (2.5 × ATR) - ORIGINAL (proven profitable)
+ATR_ENTRY_MULTIPLIER = float(os.getenv('ATR_ENTRY_MULTIPLIER', '1.5'))  # Entry: Open + (1.5 × ATR) - Lowered from 2.5 for more alerts (~3-5x more)
 ATR_STOP_MULTIPLIER = float(os.getenv('ATR_STOP_MULTIPLIER', '0.5'))  # Stop: Entry - (0.5 × ATR)
 ATR_FILTER_CONTRACTION = os.getenv('ATR_FILTER_CONTRACTION', 'true').lower() == 'true'  # Require ATR(20) < ATR(30)
 ATR_FRIDAY_EXIT = os.getenv('ATR_FRIDAY_EXIT', 'true').lower() == 'true'  # Close positions on Friday

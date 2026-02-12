@@ -95,6 +95,20 @@ def main():
         logger.error(f"❌ Failed to initialize collector: {e}", exc_info=True)
         return
 
+    # Run backfill to fill any missing historical data (e.g., from network downtime)
+    try:
+        from central_data_backfill import CentralDataBackfill
+        logger.info("🔄 Checking for missing historical data...")
+        backfill = CentralDataBackfill(collector.kite)
+        backfill_stats = backfill.run_backfill()
+        if backfill_stats['days_backfilled'] > 0:
+            logger.info(f"✅ Backfill complete: {backfill_stats['stock_records']} stock records, "
+                       f"{backfill_stats['nifty_records']} NIFTY, {backfill_stats['vix_records']} VIX")
+        else:
+            logger.info("✅ Data is up to date - no backfill needed")
+    except Exception as e:
+        logger.warning(f"⚠️ Backfill check failed (continuing with live collection): {e}")
+
     # Initialize rapid alert detector (error-isolated - collection continues if this fails)
     rapid_detector = None
     early_warning = None
