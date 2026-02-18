@@ -586,8 +586,12 @@ class EarlyWarningDetector:
             return False
 
         # Check if 5-min alert was sent in last 5 minutes (avoid noise after main alert)
+        # IMPORTANT: Use read-only check (get_last_alert_time) instead of should_send_alert,
+        # because should_send_alert has a side effect of recording the current time,
+        # which would poison the cooldown for the actual 5-min rapid alert detector.
         five_min_type = "5min" if direction == "drop" else "5min_rise"
-        if not self.alert_history.should_send_alert(symbol, five_min_type, cooldown_minutes=5):
+        last_5min_alert = self.alert_history.get_last_alert_time(symbol, five_min_type)
+        if last_5min_alert and (now - last_5min_alert) < timedelta(minutes=5):
             logger.debug(f"Skipping pre-alert for {symbol} - recent 5-min alert")
             return False
 

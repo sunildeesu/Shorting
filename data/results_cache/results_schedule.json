@@ -1,21 +1,10 @@
 {
   "schedule": {
-    "OLAELEC": "13-Feb-2026",
-    "SEJALLTD": "16-Feb-2026",
-    "GUJRAFFIA": "13-Feb-2026",
-    "RACLGEAR": "13-Feb-2026",
-    "AKASH": "14-Feb-2026",
-    "ESSARSHPNG": "13-Feb-2026",
-    "CREATIVEYE": "17-Feb-2026",
-    "GTLINFRA": "11-Feb-2026",
-    "GKWLIMITED": "11-Feb-2026",
-    "FINKURVE": "11-Feb-2026",
-    "DIVISLAB": "11-Feb-2026",
-    "TECILCHEM": "11-Feb-2026",
-    "RELCHEMQ": "11-Feb-2026",
-    "HBSL": "11-Feb-2026",
-    "ALPA": "11-Feb-2026"
+    "DICIND": "24-Feb-2026",
+    "SANOFICONR": "25-Feb-2026",
+    "BFUTILITIE": "23-Feb-2026",
+    "MIDWESTLTD": "18-Feb-2026"
   },
-  "last_updated": "2026-02-11 12:52:11",
+  "last_updated": "2026-02-18 17:18:44",
   "source": "NSE API"
 }
