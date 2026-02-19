@@ -115,10 +115,15 @@ class SectorAnalyzer:
                 stocks = self.sector_manager.get_stocks_in_sector(sector)
                 all_stocks.update(stocks)
 
+            all_stocks_list = list(all_stocks)
+
             # Get latest quotes for all stocks
-            latest_quotes = self.central_db.get_latest_stock_quotes(symbols=list(all_stocks))
+            latest_quotes = self.central_db.get_latest_stock_quotes(symbols=all_stocks_list)
             if not latest_quotes:
                 return {}
+
+            # Get day open prices in batch for full-day change calculation
+            day_open_prices = self.central_db.get_stock_day_open_prices_batch(all_stocks_list)
 
             # Build price cache structure
             price_cache = {}
@@ -141,6 +146,9 @@ class SectorAnalyzer:
                 history = self.central_db.get_stock_history(symbol, minutes=30)
                 volumes = [h.get('volume', 0) for h in history if h.get('volume', 0) > 0]
 
+                # Day open price for full-day change
+                day_open = day_open_prices.get(symbol)
+
                 # Build structure compatible with existing analyze_sectors logic
                 price_cache[symbol] = {
                     'current': {
@@ -162,7 +170,10 @@ class SectorAnalyzer:
                         'price': price_30min,
                         'volume': volumes[0] if volumes else 0,
                         'timestamp': (now - timedelta(minutes=30)).isoformat()
-                    } if price_30min else None
+                    } if price_30min else None,
+                    'day_open': {
+                        'price': day_open,
+                    } if day_open else None
                 }
 
             return price_cache
@@ -210,6 +221,7 @@ class SectorAnalyzer:
                 'weighted_price_change_5min': 0,
                 'weighted_price_change_10min': 0,
                 'weighted_price_change_30min': 0,
+                'weighted_price_change_day': 0,
                 'total_volume_current': 0,
                 'total_volume_avg': 0,
                 'stocks_up_5min': 0,
@@ -218,6 +230,8 @@ class SectorAnalyzer:
                 'stocks_down_10min': 0,
                 'stocks_up_30min': 0,
                 'stocks_down_30min': 0,
+                'stocks_up_day': 0,
+                'stocks_down_day': 0,
                 'market_cap_weights': []
             })
 
@@ -247,10 +261,14 @@ class SectorAnalyzer:
                 prev2 = snapshots.get('previous2')  # 10 min ago
                 prev6 = snapshots.get('previous6')  # 30 min ago
 
+                # Get day open snapshot
+                day_open = snapshots.get('day_open')
+
                 # Calculate price changes
                 price_change_5min = 0
                 price_change_10min = 0
                 price_change_30min = 0
+                price_change_day = 0
 
                 if prev and prev.get('price'):
                     price_change_5min = ((current_price - prev['price']) / prev['price']) * 100
@@ -260,6 +278,9 @@ class SectorAnalyzer:
 
                 if prev6 and prev6.get('price'):
                     price_change_30min = ((current_price - prev6['price']) / prev6['price']) * 100
+
+                if day_open and day_open.get('price'):
+                    price_change_day = ((current_price - day_open['price']) / day_open['price']) * 100
 
                 # Calculate average volume from previous snapshots
                 volumes = []
@@ -280,6 +301,7 @@ class SectorAnalyzer:
                     'price_change_5min': round(price_change_5min, 2),
                     'price_change_10min': round(price_change_10min, 2),
                     'price_change_30min': round(price_change_30min, 2),
+                    'price_change_day': round(price_change_day, 2),
                     'volume': current_volume,
                     'avg_volume': avg_volume,
                     'volume_ratio': round(current_volume / avg_volume, 2) if avg_volume > 0 else 1.0,
@@ -295,6 +317,7 @@ class SectorAnalyzer:
                     sector_data[sector]['weighted_price_change_5min'] += price_change_5min * market_cap
                     sector_data[sector]['weighted_price_change_10min'] += price_change_10min * market_cap
                     sector_data[sector]['weighted_price_change_30min'] += price_change_30min * market_cap
+                    sector_data[sector]['weighted_price_change_day'] += price_change_day * market_cap
                     sector_data[sector]['market_cap_weights'].append(market_cap)
 
                 # Count stocks up/down
@@ -313,6 +336,11 @@ class SectorAnalyzer:
                 elif price_change_30min < 0:
                     sector_data[sector]['stocks_down_30min'] += 1
 
+                if price_change_day > 0:
+                    sector_data[sector]['stocks_up_day'] += 1
+                elif price_change_day < 0:
+                    sector_data[sector]['stocks_down_day'] += 1
+
             # Calculate final sector metrics
             result = {
                 'timestamp': datetime.now().isoformat(),
@@ -327,6 +355,7 @@ class SectorAnalyzer:
                 mc_weighted_5min = data['weighted_price_change_5min'] / data['total_market_cap']
                 mc_weighted_10min = data['weighted_price_change_10min'] / data['total_market_cap']
                 mc_weighted_30min = data['weighted_price_change_30min'] / data['total_market_cap']
+                mc_weighted_day = data['weighted_price_change_day'] / data['total_market_cap']
 
                 # Calculate volume ratio
                 volume_ratio = (data['total_volume_current'] / data['total_volume_avg']) if data['total_volume_avg'] > 0 else 1.0
@@ -345,6 +374,7 @@ class SectorAnalyzer:
                     'price_change_5min': round(mc_weighted_5min, 2),
                     'price_change_10min': round(mc_weighted_10min, 2),
                     'price_change_30min': round(mc_weighted_30min, 2),
+                    'price_change_day': round(mc_weighted_day, 2),
                     'volume_ratio': round(volume_ratio, 2),
                     'momentum_score_5min': round(momentum_5min, 2),
                     'momentum_score_10min': round(momentum_10min, 2),
@@ -355,6 +385,8 @@ class SectorAnalyzer:
                     'stocks_down_10min': data['stocks_down_10min'],
                     'stocks_up_30min': data['stocks_up_30min'],
                     'stocks_down_30min': data['stocks_down_30min'],
+                    'stocks_up_day': data['stocks_up_day'],
+                    'stocks_down_day': data['stocks_down_day'],
                     'total_stocks': total_stocks,
                     'participation_pct': round(participation_5min, 1),
                     'total_market_cap_cr': round(data['total_market_cap'], 2),

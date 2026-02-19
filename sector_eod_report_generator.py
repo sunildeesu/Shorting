@@ -97,7 +97,7 @@ class SectorEODReportGenerator:
 
         # Headers
         headers = [
-            "Rank", "Sector", "10-Min Change %", "30-Min Change %",
+            "Rank", "Sector", "Day Change %", "10-Min Change %", "30-Min Change %",
             "Momentum Score", "Volume Ratio", "Market Cap (Cr)",
             "Stocks Up", "Stocks Down", "Total Stocks", "Breadth %", "Status"
         ]
@@ -115,11 +115,11 @@ class SectorEODReportGenerator:
                 bottom=Side(style='thin')
             )
 
-        # Sort sectors by 10-min performance
+        # Sort sectors by full-day performance
         sectors = sector_analysis.get('sectors', {})
         sorted_sectors = sorted(
             sectors.items(),
-            key=lambda x: x[1].get('price_change_10min', 0),
+            key=lambda x: x[1].get('price_change_day', 0),
             reverse=True
         )
 
@@ -127,24 +127,25 @@ class SectorEODReportGenerator:
         row = header_row + 1
         for rank, (sector, data) in enumerate(sorted_sectors, 1):
             sector_name = sector.replace('_', ' ').title()
+            price_change_day = data.get('price_change_day', 0)
             price_change_10min = data.get('price_change_10min', 0)
             price_change_30min = data.get('price_change_30min', 0)
             momentum = data.get('momentum_score_10min', 0)
             volume_ratio = data.get('volume_ratio', 1.0)
             market_cap = data.get('total_market_cap_cr', 0)
-            stocks_up = data.get('stocks_up_10min', 0)
-            stocks_down = data.get('stocks_down_10min', 0)
+            stocks_up = data.get('stocks_up_day', 0)
+            stocks_down = data.get('stocks_down_day', 0)
             total_stocks = data.get('total_stocks', 0)
             breadth_pct = (stocks_up / total_stocks * 100) if total_stocks > 0 else 0
 
-            # Determine status
-            if price_change_10min > 0.5:
+            # Determine status based on day change
+            if price_change_day > 0.5:
                 status = "Strong Inflow"
                 status_color = "00B050"
-            elif price_change_10min > 0:
+            elif price_change_day > 0:
                 status = "Inflow"
                 status_color = "92D050"
-            elif price_change_10min > -0.5:
+            elif price_change_day > -0.5:
                 status = "Outflow"
                 status_color = "FFC000"
             else:
@@ -154,35 +155,37 @@ class SectorEODReportGenerator:
             # Write data
             ws.cell(row=row, column=1, value=rank)
             ws.cell(row=row, column=2, value=sector_name)
-            ws.cell(row=row, column=3, value=price_change_10min)
-            ws.cell(row=row, column=4, value=price_change_30min)
-            ws.cell(row=row, column=5, value=momentum)
-            ws.cell(row=row, column=6, value=volume_ratio)
-            ws.cell(row=row, column=7, value=market_cap)
-            ws.cell(row=row, column=8, value=stocks_up)
-            ws.cell(row=row, column=9, value=stocks_down)
-            ws.cell(row=row, column=10, value=total_stocks)
-            ws.cell(row=row, column=11, value=breadth_pct)
-            ws.cell(row=row, column=12, value=status)
+            ws.cell(row=row, column=3, value=price_change_day)
+            ws.cell(row=row, column=4, value=price_change_10min)
+            ws.cell(row=row, column=5, value=price_change_30min)
+            ws.cell(row=row, column=6, value=momentum)
+            ws.cell(row=row, column=7, value=volume_ratio)
+            ws.cell(row=row, column=8, value=market_cap)
+            ws.cell(row=row, column=9, value=stocks_up)
+            ws.cell(row=row, column=10, value=stocks_down)
+            ws.cell(row=row, column=11, value=total_stocks)
+            ws.cell(row=row, column=12, value=breadth_pct)
+            ws.cell(row=row, column=13, value=status)
 
             # Format numbers
             ws.cell(row=row, column=3).number_format = '0.00'
             ws.cell(row=row, column=4).number_format = '0.00'
             ws.cell(row=row, column=5).number_format = '0.00'
             ws.cell(row=row, column=6).number_format = '0.00'
-            ws.cell(row=row, column=7).number_format = '#,##0'
-            ws.cell(row=row, column=11).number_format = '0.0'
+            ws.cell(row=row, column=7).number_format = '0.00'
+            ws.cell(row=row, column=8).number_format = '#,##0'
+            ws.cell(row=row, column=12).number_format = '0.0'
 
             # Color status cell
-            ws.cell(row=row, column=12).fill = PatternFill(
+            ws.cell(row=row, column=13).fill = PatternFill(
                 start_color=status_color, end_color=status_color, fill_type="solid"
             )
-            ws.cell(row=row, column=12).font = Font(bold=True, color="FFFFFF")
+            ws.cell(row=row, column=13).font = Font(bold=True, color="FFFFFF")
 
-            # Color price change cells
-            if price_change_10min > 0:
+            # Color day change cells
+            if price_change_day > 0:
                 ws.cell(row=row, column=3).font = Font(color="00B050", bold=True)
-            elif price_change_10min < 0:
+            elif price_change_day < 0:
                 ws.cell(row=row, column=3).font = Font(color="FF0000", bold=True)
 
             row += 1
@@ -193,13 +196,14 @@ class SectorEODReportGenerator:
         ws.column_dimensions['C'].width = 15
         ws.column_dimensions['D'].width = 15
         ws.column_dimensions['E'].width = 15
-        ws.column_dimensions['F'].width = 12
-        ws.column_dimensions['G'].width = 15
-        ws.column_dimensions['H'].width = 10
-        ws.column_dimensions['I'].width = 12
+        ws.column_dimensions['F'].width = 15
+        ws.column_dimensions['G'].width = 12
+        ws.column_dimensions['H'].width = 15
+        ws.column_dimensions['I'].width = 10
         ws.column_dimensions['J'].width = 12
-        ws.column_dimensions['K'].width = 10
-        ws.column_dimensions['L'].width = 15
+        ws.column_dimensions['K'].width = 12
+        ws.column_dimensions['L'].width = 10
+        ws.column_dimensions['M'].width = 15
 
     def _create_detailed_metrics_sheet(self, wb: openpyxl.Workbook, sector_analysis: Dict):
         """Create detailed metrics sheet with all timeframes"""
@@ -212,7 +216,7 @@ class SectorEODReportGenerator:
         # Headers
         headers = [
             "Sector",
-            "5-Min Change %", "10-Min Change %", "30-Min Change %",
+            "Day Change %", "5-Min Change %", "10-Min Change %", "30-Min Change %",
             "5-Min Momentum", "10-Min Momentum", "30-Min Momentum",
             "Volume (Current)", "Volume (Avg)", "Volume Ratio",
             "Market Cap (Cr)", "Total Stocks", "Participation %"
@@ -235,31 +239,32 @@ class SectorEODReportGenerator:
             sector_name = sector.replace('_', ' ').title()
 
             ws.cell(row=row, column=1, value=sector_name)
-            ws.cell(row=row, column=2, value=data.get('price_change_5min', 0))
-            ws.cell(row=row, column=3, value=data.get('price_change_10min', 0))
-            ws.cell(row=row, column=4, value=data.get('price_change_30min', 0))
-            ws.cell(row=row, column=5, value=data.get('momentum_score_5min', 0))
-            ws.cell(row=row, column=6, value=data.get('momentum_score_10min', 0))
-            ws.cell(row=row, column=7, value=data.get('momentum_score_30min', 0))
-            ws.cell(row=row, column=8, value=data.get('total_volume', 0))
-            ws.cell(row=row, column=9, value=data.get('total_volume', 0) / data.get('volume_ratio', 1.0) if data.get('volume_ratio', 1.0) != 0 else 0)
-            ws.cell(row=row, column=10, value=data.get('volume_ratio', 1.0))
-            ws.cell(row=row, column=11, value=data.get('total_market_cap_cr', 0))
-            ws.cell(row=row, column=12, value=data.get('total_stocks', 0))
-            ws.cell(row=row, column=13, value=data.get('participation_pct', 0))
+            ws.cell(row=row, column=2, value=data.get('price_change_day', 0))
+            ws.cell(row=row, column=3, value=data.get('price_change_5min', 0))
+            ws.cell(row=row, column=4, value=data.get('price_change_10min', 0))
+            ws.cell(row=row, column=5, value=data.get('price_change_30min', 0))
+            ws.cell(row=row, column=6, value=data.get('momentum_score_5min', 0))
+            ws.cell(row=row, column=7, value=data.get('momentum_score_10min', 0))
+            ws.cell(row=row, column=8, value=data.get('momentum_score_30min', 0))
+            ws.cell(row=row, column=9, value=data.get('total_volume', 0))
+            ws.cell(row=row, column=10, value=data.get('total_volume', 0) / data.get('volume_ratio', 1.0) if data.get('volume_ratio', 1.0) != 0 else 0)
+            ws.cell(row=row, column=11, value=data.get('volume_ratio', 1.0))
+            ws.cell(row=row, column=12, value=data.get('total_market_cap_cr', 0))
+            ws.cell(row=row, column=13, value=data.get('total_stocks', 0))
+            ws.cell(row=row, column=14, value=data.get('participation_pct', 0))
 
             # Format numbers
-            for col in [2, 3, 4, 5, 6, 7]:
+            for col in [2, 3, 4, 5, 6, 7, 8]:
                 ws.cell(row=row, column=col).number_format = '0.00'
-            for col in [8, 9, 11]:
+            for col in [9, 10, 12]:
                 ws.cell(row=row, column=col).number_format = '#,##0'
-            ws.cell(row=row, column=10).number_format = '0.00'
-            ws.cell(row=row, column=13).number_format = '0.0'
+            ws.cell(row=row, column=11).number_format = '0.00'
+            ws.cell(row=row, column=14).number_format = '0.0'
 
             row += 1
 
         # Adjust column widths
-        for col in range(1, 14):
+        for col in range(1, 15):
             ws.column_dimensions[get_column_letter(col)].width = 15
 
     def _create_fund_flow_sheet(self, wb: openpyxl.Workbook, sector_analysis: Dict):
@@ -384,7 +389,7 @@ class SectorEODReportGenerator:
 
         # Headers
         headers = [
-            "Sector", "Stock", "Price", "5-Min %", "10-Min %", "30-Min %",
+            "Sector", "Stock", "Price", "Day %", "5-Min %", "10-Min %", "30-Min %",
             "Volume", "Avg Volume", "Volume Ratio", "Market Cap (Cr)"
         ]
 
@@ -420,26 +425,28 @@ class SectorEODReportGenerator:
                 ws.cell(row=row, column=1, value=sector_name)
                 ws.cell(row=row, column=2, value=stock_data.get('symbol', ''))
                 ws.cell(row=row, column=3, value=stock_data.get('price', 0))
-                ws.cell(row=row, column=4, value=stock_data.get('price_change_5min', 0))
-                ws.cell(row=row, column=5, value=stock_data.get('price_change_10min', 0))
-                ws.cell(row=row, column=6, value=stock_data.get('price_change_30min', 0))
-                ws.cell(row=row, column=7, value=stock_data.get('volume', 0))
-                ws.cell(row=row, column=8, value=stock_data.get('avg_volume', 0))
-                ws.cell(row=row, column=9, value=stock_data.get('volume_ratio', 1.0))
-                ws.cell(row=row, column=10, value=stock_data.get('market_cap_cr', 0))
+                ws.cell(row=row, column=4, value=stock_data.get('price_change_day', 0))
+                ws.cell(row=row, column=5, value=stock_data.get('price_change_5min', 0))
+                ws.cell(row=row, column=6, value=stock_data.get('price_change_10min', 0))
+                ws.cell(row=row, column=7, value=stock_data.get('price_change_30min', 0))
+                ws.cell(row=row, column=8, value=stock_data.get('volume', 0))
+                ws.cell(row=row, column=9, value=stock_data.get('avg_volume', 0))
+                ws.cell(row=row, column=10, value=stock_data.get('volume_ratio', 1.0))
+                ws.cell(row=row, column=11, value=stock_data.get('market_cap_cr', 0))
 
                 # Format numbers
                 ws.cell(row=row, column=3).number_format = '0.00'
                 ws.cell(row=row, column=4).number_format = '0.00'
                 ws.cell(row=row, column=5).number_format = '0.00'
                 ws.cell(row=row, column=6).number_format = '0.00'
-                ws.cell(row=row, column=7).number_format = '#,##0'
+                ws.cell(row=row, column=7).number_format = '0.00'
                 ws.cell(row=row, column=8).number_format = '#,##0'
-                ws.cell(row=row, column=9).number_format = '0.00'
-                ws.cell(row=row, column=10).number_format = '#,##0'
+                ws.cell(row=row, column=9).number_format = '#,##0'
+                ws.cell(row=row, column=10).number_format = '0.00'
+                ws.cell(row=row, column=11).number_format = '#,##0'
 
                 # Color-code price changes
-                for col in [4, 5, 6]:  # 5-min, 10-min, 30-min columns
+                for col in [4, 5, 6, 7]:  # Day, 5-min, 10-min, 30-min columns
                     price_change = ws.cell(row=row, column=col).value
                     if price_change and price_change > 0:
                         ws.cell(row=row, column=col).font = Font(color="00B050", bold=True)
@@ -447,7 +454,7 @@ class SectorEODReportGenerator:
                         ws.cell(row=row, column=col).font = Font(color="FF0000", bold=True)
 
                 # Add borders
-                for col in range(1, 11):
+                for col in range(1, 12):
                     ws.cell(row=row, column=col).border = Border(
                         left=Side(style='thin'),
                         right=Side(style='thin'),
@@ -461,13 +468,14 @@ class SectorEODReportGenerator:
         ws.column_dimensions['A'].width = 20  # Sector
         ws.column_dimensions['B'].width = 15  # Stock
         ws.column_dimensions['C'].width = 12  # Price
-        ws.column_dimensions['D'].width = 12  # 5-Min %
-        ws.column_dimensions['E'].width = 12  # 10-Min %
-        ws.column_dimensions['F'].width = 12  # 30-Min %
-        ws.column_dimensions['G'].width = 15  # Volume
-        ws.column_dimensions['H'].width = 15  # Avg Volume
-        ws.column_dimensions['I'].width = 12  # Volume Ratio
-        ws.column_dimensions['J'].width = 15  # Market Cap
+        ws.column_dimensions['D'].width = 12  # Day %
+        ws.column_dimensions['E'].width = 12  # 5-Min %
+        ws.column_dimensions['F'].width = 12  # 10-Min %
+        ws.column_dimensions['G'].width = 12  # 30-Min %
+        ws.column_dimensions['H'].width = 15  # Volume
+        ws.column_dimensions['I'].width = 15  # Avg Volume
+        ws.column_dimensions['J'].width = 12  # Volume Ratio
+        ws.column_dimensions['K'].width = 15  # Market Cap
 
     def _upload_to_dropbox(self, excel_path: str) -> Optional[str]:
         """

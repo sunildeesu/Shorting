@@ -143,16 +143,16 @@ class SectorAlertNotifier(BaseNotifier):
             "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n\n"
         )
 
-        # Sort sectors by 10-min performance
+        # Sort sectors by full-day performance
         sorted_sectors = sorted(
             sectors.items(),
-            key=lambda x: x[1].get('price_change_10min', 0),
+            key=lambda x: x[1].get('price_change_day', 0),
             reverse=True
         )
 
-        # Calculate overall market sentiment
-        total_up = sum(s[1].get('stocks_up_10min', 0) for s in sorted_sectors)
-        total_down = sum(s[1].get('stocks_down_10min', 0) for s in sorted_sectors)
+        # Calculate overall market sentiment (full day)
+        total_up = sum(s[1].get('stocks_up_day', 0) for s in sorted_sectors)
+        total_down = sum(s[1].get('stocks_down_day', 0) for s in sorted_sectors)
         total_stocks = sum(s[1].get('total_stocks', 0) for s in sorted_sectors)
 
         if total_stocks > 0:
@@ -169,17 +169,15 @@ class SectorAlertNotifier(BaseNotifier):
         message += "🟢 <b>TOP 3 GAINING SECTORS:</b>\n"
         for i, (sector, data) in enumerate(sorted_sectors[:3], 1):
             sector_name = sector.replace('_', ' ').title()
-            price_change = data.get('price_change_10min', 0)
-            momentum = data.get('momentum_score_10min', 0)
+            price_change = data.get('price_change_day', 0)
             volume_ratio = data.get('volume_ratio', 1.0)
-            stocks_up = data.get('stocks_up_10min', 0)
+            stocks_up = data.get('stocks_up_day', 0)
             total = data.get('total_stocks', 0)
 
             emoji = "🚀" if price_change > 1.0 else "📈"
             message += (
                 f"{i}. <b>{sector_name}</b> {emoji}\n"
-                f"   • Change: <b>{price_change:+.2f}%</b>\n"
-                f"   • Momentum: {momentum:+.2f}\n"
+                f"   • Day Change: <b>{price_change:+.2f}%</b>\n"
                 f"   • Volume: {volume_ratio:.2f}x\n"
                 f"   • Breadth: {stocks_up}/{total} up\n"
             )
@@ -189,17 +187,15 @@ class SectorAlertNotifier(BaseNotifier):
         message += "🔴 <b>TOP 3 LOSING SECTORS:</b>\n"
         for i, (sector, data) in enumerate(reversed(sorted_sectors[-3:]), 1):
             sector_name = sector.replace('_', ' ').title()
-            price_change = data.get('price_change_10min', 0)
-            momentum = data.get('momentum_score_10min', 0)
+            price_change = data.get('price_change_day', 0)
             volume_ratio = data.get('volume_ratio', 1.0)
-            stocks_down = data.get('stocks_down_10min', 0)
+            stocks_down = data.get('stocks_down_day', 0)
             total = data.get('total_stocks', 0)
 
             emoji = "🔻" if price_change < -1.0 else "📉"
             message += (
                 f"{i}. <b>{sector_name}</b> {emoji}\n"
-                f"   • Change: <b>{price_change:+.2f}%</b>\n"
-                f"   • Momentum: {momentum:+.2f}\n"
+                f"   • Day Change: <b>{price_change:+.2f}%</b>\n"
                 f"   • Volume: {volume_ratio:.2f}x\n"
                 f"   • Breadth: {stocks_down}/{total} down\n"
             )
@@ -209,7 +205,7 @@ class SectorAlertNotifier(BaseNotifier):
         message += "📋 <b>ALL SECTORS RANKED:</b>\n"
         for i, (sector, data) in enumerate(sorted_sectors, 1):
             sector_name = sector.replace('_', ' ').title()
-            price_change = data.get('price_change_10min', 0)
+            price_change = data.get('price_change_day', 0)
 
             if price_change > 0:
                 emoji = "🟢"
@@ -224,7 +220,7 @@ class SectorAlertNotifier(BaseNotifier):
         message += (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "💡 <b>Day Summary Complete</b>\n"
-            "📊 Analysis based on 10-min price changes"
+            "📊 Full day change (open to close)"
         )
 
         return message

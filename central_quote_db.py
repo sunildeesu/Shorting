@@ -551,6 +551,47 @@ class CentralQuoteDB:
 
         return result
 
+    def get_stock_day_open_prices_batch(self, symbols: List[str]) -> Dict[str, float]:
+        """
+        Get the first recorded price of the day for multiple stocks in ONE query.
+        Used for calculating full-day price change in EOD reports.
+
+        Args:
+            symbols: List of stock symbols
+
+        Returns:
+            Dict mapping symbol to opening price, e.g., {'RELIANCE': 2450.50, ...}
+        """
+        if not symbols:
+            return {}
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        cursor = self.conn.cursor()
+
+        placeholders = ','.join('?' * len(symbols))
+        query = f"""
+            SELECT sq.symbol, sq.price
+            FROM stock_quotes sq
+            INNER JOIN (
+                SELECT symbol, MIN(timestamp) as first_ts
+                FROM stock_quotes
+                WHERE symbol IN ({placeholders})
+                AND timestamp >= ?
+                GROUP BY symbol
+            ) first ON sq.symbol = first.symbol AND sq.timestamp = first.first_ts
+        """
+
+        params = list(symbols) + [today_str]
+        cursor.execute(query, params)
+
+        result = {}
+        for row in cursor.fetchall():
+            symbol, price = row
+            if price and price > 0:
+                result[symbol] = price
+
+        return result
+
     def get_nifty_latest(self) -> Optional[Dict]:
         """
         Get latest NIFTY quote.
