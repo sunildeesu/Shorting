@@ -191,6 +191,11 @@ class QuarterlyResultsChecker:
             ann_response = session.get(ann_url, headers=self.headers, timeout=15)
             announcements = ann_response.json() if ann_response.status_code == 200 else []
 
+            # Preserve daily schedule entries before clearing
+            # NSE removes today's events from API once day starts,
+            # so we must keep entries loaded from daily_results files
+            daily_schedule_symbols = set(self._results_today)
+
             # Process data
             today = datetime.now().strftime('%d-%b-%Y')
             today_alt = datetime.now().strftime('%Y-%m-%d')
@@ -263,6 +268,13 @@ class QuarterlyResultsChecker:
                         self._results_today.add(symbol)
                         all_results[symbol] = today
 
+            # Restore daily schedule entries that API may have dropped
+            # (NSE removes today's events from board-meetings API once day starts)
+            for symbol in daily_schedule_symbols:
+                if symbol not in self._results_today:
+                    self._results_today.add(symbol)
+                    logger.debug(f"Restored {symbol} from daily schedule (not in API response)")
+
             # Save schedule for future use
             self._save_schedule(all_results)
 
@@ -284,8 +296,16 @@ class QuarterlyResultsChecker:
             self._api_working = False
             self._using_cached_schedule = True
 
+            # Preserve daily schedule entries before loading saved schedule
+            daily_schedule_symbols = set(self._results_today)
+
             # Load from saved schedule
             self._load_saved_schedule()
+
+            # Restore daily schedule entries
+            for symbol in daily_schedule_symbols:
+                self._results_today.add(symbol)
+
             self._last_fetch = datetime.now()
 
             if self._results_today or self._results_upcoming:
