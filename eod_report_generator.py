@@ -100,6 +100,8 @@ class EODReportGenerator:
         # Save report
         report_path = self.get_report_path(analysis_date)
         wb.save(report_path)
+        from google_drive_sync import sync_to_drive
+        sync_to_drive(report_path, "EODReports")
 
         logger.info(f"Report generated: {report_path} ({len(findings)} stocks with findings)")
 

@@ -461,6 +461,29 @@ class CentralQuoteDB:
         row = cursor.fetchone()
         return row[0] if row else None
 
+    def get_stock_price_at_time(self, symbol: str, timestamp_str: str) -> Optional[float]:
+        """
+        Get stock price at an absolute timestamp.
+
+        Unlike get_stock_price_at(minutes_ago) which is relative to now,
+        this queries by an absolute timestamp string.
+
+        Args:
+            symbol: Stock symbol
+            timestamp_str: Timestamp in format 'YYYY-MM-DD HH:MM:00'
+
+        Returns:
+            Price at that time, or None if not found
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT price FROM stock_quotes
+            WHERE symbol = ? AND timestamp = ?
+        """, (symbol, timestamp_str))
+
+        row = cursor.fetchone()
+        return row[0] if row else None
+
     def get_stock_prices_at_batch(self, symbols: List[str], minutes_ago: int) -> Dict[str, float]:
         """
         Get prices for multiple stocks N minutes ago in ONE query.
@@ -591,6 +614,119 @@ class CentralQuoteDB:
                 result[symbol] = price
 
         return result
+
+    def get_stock_day_aggregates_batch(self, symbols: List[str]) -> Dict[str, Dict]:
+        """
+        Get day aggregates for multiple stocks in ONE query.
+        Returns total_volume, day_high, day_low, candle_count per stock for today.
+
+        Args:
+            symbols: List of stock symbols
+
+        Returns:
+            Dict mapping symbol to {total_volume, day_high, day_low, candle_count}
+        """
+        if not symbols:
+            return {}
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        cursor = self.conn.cursor()
+
+        placeholders = ','.join('?' * len(symbols))
+        query = f"""
+            SELECT symbol, MAX(volume) as total_volume, MAX(price) as day_high,
+                   MIN(price) as day_low, COUNT(*) as candle_count
+            FROM stock_quotes
+            WHERE symbol IN ({placeholders})
+            AND timestamp >= ?
+            GROUP BY symbol
+        """
+
+        params = list(symbols) + [today_str]
+        cursor.execute(query, params)
+
+        result = {}
+        for row in cursor.fetchall():
+            symbol, total_volume, day_high, day_low, candle_count = row
+            result[symbol] = {
+                'total_volume': total_volume or 0,
+                'day_high': day_high or 0,
+                'day_low': day_low or 0,
+                'candle_count': candle_count or 0
+            }
+
+        return result
+
+    def get_stock_history_since_batch(self, symbols: List[str], since_time_str: str) -> Dict[str, List[Dict]]:
+        """
+        Get minute-by-minute history for multiple stocks since a given time in ONE query.
+        Avoids N+1 queries (one get_stock_history() per stock).
+
+        Args:
+            symbols: List of stock symbols
+            since_time_str: Time string in format 'YYYY-MM-DD HH:MM:00'
+
+        Returns:
+            Dict mapping symbol to list of {timestamp, price, volume}
+        """
+        if not symbols:
+            return {}
+
+        cursor = self.conn.cursor()
+
+        placeholders = ','.join('?' * len(symbols))
+        query = f"""
+            SELECT symbol, timestamp, price, volume
+            FROM stock_quotes
+            WHERE symbol IN ({placeholders})
+            AND timestamp >= ?
+            ORDER BY symbol, timestamp ASC
+        """
+
+        params = list(symbols) + [since_time_str]
+        cursor.execute(query, params)
+
+        result: Dict[str, List[Dict]] = {}
+        for row in cursor.fetchall():
+            symbol, timestamp, price, volume = row
+            if symbol not in result:
+                result[symbol] = []
+            result[symbol].append({
+                'timestamp': timestamp,
+                'price': price,
+                'volume': volume or 0
+            })
+
+        return result
+
+    def get_nifty_history_since(self, since_time_str: str) -> List[Dict]:
+        """
+        Get NIFTY historical data since a given time.
+
+        Args:
+            since_time_str: Time string in format 'YYYY-MM-DD HH:MM:00'
+
+        Returns:
+            List of {timestamp, price, volume} ordered by timestamp ASC
+        """
+        cursor = self.conn.cursor()
+
+        cursor.execute("""
+            SELECT timestamp, price, volume
+            FROM nifty_quotes
+            WHERE timestamp >= ?
+            ORDER BY timestamp ASC
+        """, (since_time_str,))
+
+        history = []
+        for row in cursor.fetchall():
+            history.append({
+                'timestamp': row[0],
+                'price': row[1],
+                'volume': row[2]
+            })
+
+        return history
 
     def get_nifty_latest(self) -> Optional[Dict]:
         """

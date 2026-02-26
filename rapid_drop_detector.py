@@ -91,7 +91,8 @@ class RapidAlertDetector:
             'rise_alerts_sent': 0,  # rise alerts
             'rises_detected': 0,
             'stocks_checked': 0,
-            'execution_ms': 0
+            'execution_ms': 0,
+            'alerted_symbols': []   # for P&L tracker
         }
 
         # Skip alerts before 9:25 AM (market opening volatility)
@@ -174,6 +175,11 @@ class RapidAlertDetector:
 
                         if success:
                             stats['alerts_sent'] += 1
+                            stats['alerted_symbols'].append({
+                                'symbol': symbol, 'direction': 'drop',
+                                'price': current_price, 'time': datetime.now().isoformat(),
+                                'alert_type': '5min', 'alert_count': alert_count
+                            })
                             logger.info(f"RAPID DROP ALERT: {symbol} dropped {drop_pct:.2f}% "
                                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                        f"VOL: {volume_multiplier:.1f}x spike")
@@ -210,6 +216,11 @@ class RapidAlertDetector:
 
                             if success:
                                 stats['rise_alerts_sent'] += 1
+                                stats['alerted_symbols'].append({
+                                    'symbol': symbol, 'direction': 'rise',
+                                    'price': current_price, 'time': datetime.now().isoformat(),
+                                    'alert_type': '5min', 'alert_count': alert_count
+                                })
                                 logger.info(f"RAPID RISE ALERT: {symbol} rose {rise_pct:.2f}% "
                                            f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                            f"VOL: {volume_multiplier:.1f}x spike")

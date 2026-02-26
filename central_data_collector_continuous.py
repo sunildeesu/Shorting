@@ -23,6 +23,7 @@ from alert_history_manager import AlertHistoryManager
 from telegram_notifier import TelegramNotifier
 from rapid_drop_detector import RapidAlertDetector
 from early_warning_detector import EarlyWarningDetector
+from closing_window_detector import ClosingWindowDetector
 from quarterly_results_checker import send_morning_results_alert, get_results_checker
 from auto_trader import get_auto_trader
 import config
@@ -112,7 +113,10 @@ def main():
     # Initialize rapid alert detector (error-isolated - collection continues if this fails)
     rapid_detector = None
     early_warning = None
+    closing_window_detector = None
     auto_trader = None
+    telegram = None
+    detection_db = None
     try:
         logger.info("Initializing alert detectors...")
         alert_history = AlertHistoryManager()
@@ -137,10 +141,29 @@ def main():
         else:
             logger.info("ℹ️ Early warning detector disabled in config")
 
+        # Institutional closing window detector (3:10-3:25 PM)
+        if config.ENABLE_CLOSING_WINDOW_MONITOR:
+            closing_window_detector = ClosingWindowDetector(detection_db, alert_history, telegram)
+            logger.info("✅ Closing window detector initialized (3:10-3:25 PM institutional activity)")
+        else:
+            logger.info("ℹ️ Closing window detector disabled in config")
+
     except Exception as e:
         logger.error(f"⚠️ Detector init failed (collection will continue): {e}")
         rapid_detector = None
         early_warning = None
+        closing_window_detector = None
+
+    # Initialize Alert P&L Tracker (error-isolated, guarded import)
+    pnl_tracker = None
+    try:
+        if config.ENABLE_ALERT_PNL_TRACKER and detection_db and telegram:
+            from alert_pnl_tracker import AlertPnLTracker
+            pnl_tracker = AlertPnLTracker(detection_db, telegram, collector.kite)
+            logger.info("✅ Alert P&L Tracker initialized (futures simulation)")
+    except Exception as e:
+        logger.warning(f"⚠️ P&L Tracker init failed (continuing without): {e}")
+        pnl_tracker = None
 
     # Send 9:15 AM quarterly results alert
     try:
@@ -190,6 +213,9 @@ def main():
             if stats.get('stocks_stored', stats.get('stocks_fetched', 0)) > 0:
                 stock_quotes = stats.get('stock_quotes', {})
                 if stock_quotes:
+                    ew_stats = None
+                    detection_stats = None
+
                     # Early warning detection (pre-alerts for 5-min moves)
                     if early_warning:
                         try:
@@ -208,6 +234,25 @@ def main():
                                            f"{detection_stats.get('rise_alerts_sent', 0)} rise alerts")
                         except Exception as e:
                             logger.error(f"⚠️ Rapid detection failed: {e}")
+
+                    # Closing window detection (3:10-3:25 PM institutional activity)
+                    if closing_window_detector:
+                        try:
+                            cw_stats = closing_window_detector.detect_all(stock_quotes)
+                            if cw_stats['alerts_sent'] > 0:
+                                logger.info(f"🏛 Closing window: {cw_stats['alerts_sent']} institutional alerts")
+                        except Exception as e:
+                            logger.error(f"⚠️ Closing window detection failed: {e}")
+
+                    # Feed alerts to P&L tracker
+                    if pnl_tracker:
+                        try:
+                            if ew_stats and ew_stats.get('alerted_symbols'):
+                                pnl_tracker.record_alerts(ew_stats['alerted_symbols'])
+                            if detection_stats and detection_stats.get('alerted_symbols'):
+                                pnl_tracker.record_alerts(detection_stats['alerted_symbols'])
+                        except Exception as e:
+                            logger.error(f"⚠️ P&L tracker alert recording failed: {e}")
 
                     # Check for auto-trade exits
                     if auto_trader and auto_trader.positions:
@@ -243,6 +288,13 @@ def main():
                         except Exception as e:
                             logger.error(f"⚠️ Auto-trade exit check failed: {e}")
 
+            # Process pending P&L trades (runs every cycle regardless of quote collection)
+            if pnl_tracker:
+                try:
+                    pnl_tracker.process_pending_prices()
+                except Exception as e:
+                    logger.error(f"⚠️ P&L tracker price processing failed: {e}")
+
             # Sleep until next minute
             # Sleep logic: If current time is 10:30:15, sleep until 10:31:00
             now = datetime.now()
@@ -259,6 +311,13 @@ def main():
             logger.error(f"❌ Cycle {cycle_count} error: {e}", exc_info=True)
             logger.info("⏸️  Waiting 60s before retry...")
             time.sleep(60)
+
+    # Send EOD P&L report after market close
+    if pnl_tracker:
+        try:
+            pnl_tracker.send_eod_report()
+        except Exception as e:
+            logger.error(f"⚠️ P&L tracker EOD report failed: {e}")
 
     # Final summary
     logger.info("\n" + "=" * 80)

@@ -1358,6 +1358,8 @@ class StockValueScreener:
 
         # Save workbook
         wb.save(filepath)
+        from google_drive_sync import sync_to_drive
+        sync_to_drive(filepath, "ScreenerResults")
         logger.info(f"✓ Excel report saved: {filepath}")
 
         return filepath

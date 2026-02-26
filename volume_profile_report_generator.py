@@ -79,6 +79,8 @@ class VolumeProfileReportGenerator:
 
         # Save workbook
         wb.save(file_path)
+        from google_drive_sync import sync_to_drive
+        sync_to_drive(file_path, "VolumeProfile")
         logger.info(f"Report saved: {file_path}")
 
         return file_path

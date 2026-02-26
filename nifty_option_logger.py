@@ -297,6 +297,8 @@ class NiftyOptionLogger:
 
             # Save workbook
             wb.save(filepath)
+            from google_drive_sync import sync_to_drive
+            sync_to_drive(filepath, "NiftyOptions")
             logger.info(f"NIFTY option analysis logged: {signal} (Score: {total_score:.1f}) to {filepath}")
 
             return True

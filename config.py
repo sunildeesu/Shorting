@@ -78,6 +78,24 @@ EARLY_WARNING_REQUIRE_OI = os.getenv('EARLY_WARNING_REQUIRE_OI', 'false').lower(
 EARLY_WARNING_REQUIRE_RSI = os.getenv('EARLY_WARNING_REQUIRE_RSI', 'false').lower() == 'true' # RSI (disabled - hurts precision)
 EARLY_WARNING_REQUIRE_VWAP = os.getenv('EARLY_WARNING_REQUIRE_VWAP', 'true').lower() == 'true' # VWAP position filter
 
+# ============================================
+# INSTITUTIONAL CLOSING WINDOW (3:10-3:25 PM)
+# ============================================
+# Detects unusual price acceleration + volume surges in the closing window
+# Institutional orders often cause sharp directional moves before 3:30 PM close
+
+ENABLE_CLOSING_WINDOW_MONITOR = os.getenv('ENABLE_CLOSING_WINDOW_MONITOR', 'true').lower() == 'true'
+CLOSING_WINDOW_MIN_SCORE = int(os.getenv('CLOSING_WINDOW_MIN_SCORE', '65'))
+CLOSING_WINDOW_SEND_SUMMARY = os.getenv('CLOSING_WINDOW_SEND_SUMMARY', 'true').lower() == 'true'
+
+# ============================================
+# ALERT P&L TRACKER (FUTURES SIMULATION)
+# ============================================
+# Simulates futures trades on alerts to track P&L with real prices
+# Entry at T+2 min, exits at T+15 and T+30 min
+ENABLE_ALERT_PNL_TRACKER = os.getenv('ENABLE_ALERT_PNL_TRACKER', 'true').lower() == 'true'
+ALERT_PNL_EXCEL_PATH = 'data/alerts/alert_pnl_tracker.xlsx'
+
 # Volume Spike Configuration
 VOLUME_SPIKE_MULTIPLIER = float(os.getenv('VOLUME_SPIKE_MULTIPLIER', '2.5'))  # 2.5x average = spike (priority alert)
 VOLUME_MIN_HISTORY = int(os.getenv('VOLUME_MIN_HISTORY', '3'))  # Min snapshots needed for avg
@@ -454,3 +472,9 @@ AUTO_TRADE_POSITIONS_FILE = 'data/auto_trade_positions.json'
 
 # Paper trading slippage simulation (for realistic P&L expectations)
 AUTO_TRADE_PAPER_SLIPPAGE = float(os.getenv('AUTO_TRADE_PAPER_SLIPPAGE', '0.001'))  # 0.1% default slippage
+
+# ============================================
+# GOOGLE DRIVE SYNC (ALL REPORTS)
+# ============================================
+ENABLE_GOOGLE_DRIVE_SYNC = os.getenv('ENABLE_GOOGLE_DRIVE_SYNC', 'false').lower() == 'true'
+GOOGLE_DRIVE_SYNC_PATH = os.getenv('GOOGLE_DRIVE_SYNC_PATH', '')  # e.g. ~/Library/CloudStorage/GoogleDrive-user@gmail.com/My Drive/ShortIndicator

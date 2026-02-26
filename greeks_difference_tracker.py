@@ -339,6 +339,8 @@ class GreeksDifferenceTracker:
             filename = f"greeks_diff_{today.strftime('%Y%m%d')}.xlsx"
             filepath = os.path.join(year_month_dir, filename)
             wb.save(filepath)
+            from google_drive_sync import sync_to_drive
+            sync_to_drive(filepath, "GreeksDifference")
 
             logger.info(f"✓ Excel exported: {filepath}")
             return filepath

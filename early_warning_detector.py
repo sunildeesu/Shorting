@@ -400,7 +400,8 @@ class EarlyWarningDetector:
             'prealerts_sent': 0,
             'signals_detected': 0,
             'stocks_checked': 0,
-            'execution_ms': 0
+            'execution_ms': 0,
+            'alerted_symbols': []  # for P&L tracker
         }
 
         # Skip before market stabilization
@@ -504,6 +505,11 @@ class EarlyWarningDetector:
                         )
                         if success:
                             stats['prealerts_sent'] += 1
+                            stats['alerted_symbols'].append({
+                                'symbol': symbol, 'direction': 'drop',
+                                'price': current_price, 'time': now.isoformat(),
+                                'alert_type': 'prealert', 'alert_count': 1
+                            })
                             self._record_prealert(symbol, "drop", now)
 
                 # Check for RISE pre-alert
@@ -557,6 +563,11 @@ class EarlyWarningDetector:
                         )
                         if success:
                             stats['prealerts_sent'] += 1
+                            stats['alerted_symbols'].append({
+                                'symbol': symbol, 'direction': 'rise',
+                                'price': current_price, 'time': now.isoformat(),
+                                'alert_type': 'prealert', 'alert_count': 1
+                            })
                             self._record_prealert(symbol, "rise", now)
 
             except Exception as e:

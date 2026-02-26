@@ -69,6 +69,8 @@ class SectorEODReportGenerator:
 
             # Save workbook
             wb.save(filepath)
+            from google_drive_sync import sync_to_drive
+            sync_to_drive(filepath, "SectorEOD")
             logger.info(f"Sector EOD report generated: {filepath}")
 
             # Upload to Dropbox (if enabled)

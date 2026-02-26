@@ -674,6 +674,8 @@ class AlertExcelLogger:
                 finally:
                     # Release lock
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            from google_drive_sync import sync_to_drive
+            sync_to_drive(self.excel_path, "AlertTracking")
         except Exception as e:
             logger.error(f"Error saving workbook: {e}", exc_info=True)
             raise
