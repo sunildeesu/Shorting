@@ -120,6 +120,46 @@ def check_daily_reminder():
     except Exception as e:
         return False
 
+def check_vwap_monitor_service():
+    """Check if VWAP mover monitor launchd service is registered and running."""
+    try:
+        result = subprocess.run(['launchctl', 'list'], capture_output=True, text=True)
+        lines = result.stdout.split('\n')
+        for line in lines:
+            if 'com.shortindicator.vwapmovermonitor' in line:
+                parts = line.split('\t')
+                # parts: [PID or '-', last_exit_code, label]
+                pid = parts[0].strip() if len(parts) >= 1 else '-'
+                exit_code = parts[1].strip() if len(parts) >= 2 else '?'
+                is_running = pid != '-' and pid != ''
+                return True, is_running, pid, exit_code
+        return False, False, None, None
+    except Exception as e:
+        return False, False, None, str(e)
+
+def check_vwap_monitor_process():
+    """Check if vwap_mover_monitor.py Python process is currently running."""
+    try:
+        result = subprocess.run(['pgrep', '-f', 'vwap_mover_monitor.py'], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            return True, pids
+        return False, []
+    except Exception as e:
+        return False, []
+
+def get_vwap_monitor_last_log():
+    """Get last few lines from today's VWAP monitor log."""
+    today = datetime.now().strftime('%Y%m%d')
+    log_file = f'logs/vwap_mover_monitor_{today}.log'
+    if os.path.exists(log_file):
+        try:
+            result = subprocess.run(['tail', '-5', log_file], capture_output=True, text=True)
+            return log_file, result.stdout.strip()
+        except Exception:
+            return log_file, None
+    return log_file, None
+
 def get_recent_errors():
     """Get recent errors from log"""
     log_file = 'logs/stock_monitor.log'
@@ -248,6 +288,38 @@ def main():
     else:
         logger.info("⚪ Daily reminder: NOT INSTALLED")
         logger.info("   Run: ./setup_token_reminder.sh to install")
+
+    logger.info("")
+
+    # === VWAP MOVER MONITOR ===
+    logger.info("📊 VWAP MOVER MONITOR (LaunchAgent — 9:12 AM Mon–Fri)")
+    logger.info("-" * 70)
+
+    svc_registered, svc_running, svc_pid, svc_exit = check_vwap_monitor_service()
+    proc_running, proc_pids = check_vwap_monitor_process()
+
+    if not svc_registered:
+        logger.info("❌ LaunchAgent: NOT REGISTERED")
+        logger.info("   Run: launchctl load ~/Library/LaunchAgents/com.shortindicator.vwapmovermonitor.plist")
+    elif svc_running:
+        logger.info(f"✅ LaunchAgent: REGISTERED + RUNNING (PID: {svc_pid})")
+    else:
+        last_exit = f", last exit={svc_exit}" if svc_exit and svc_exit != '0' else ""
+        logger.info(f"✅ LaunchAgent: REGISTERED (idle{last_exit})")
+        logger.info("   Fires at 9:12 AM on market days")
+
+    if proc_running:
+        logger.info(f"✅ Monitor process: RUNNING (PID: {', '.join(proc_pids)})")
+    else:
+        logger.info("⚪ Monitor process: Not currently running")
+
+    log_path, log_tail = get_vwap_monitor_last_log()
+    if log_tail:
+        logger.info(f"📄 Today's log ({log_path}):")
+        for line in log_tail.split('\n'):
+            logger.info(f"   {line}")
+    else:
+        logger.info(f"⚪ Today's log: {log_path} (not found)")
 
     logger.info("")
 

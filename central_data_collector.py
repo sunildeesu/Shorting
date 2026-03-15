@@ -77,6 +77,7 @@ class CentralDataCollector:
         self._total_failures = 0
         self._total_successes = 0
         self._last_successful_collection = None
+        self._prev_close_stored = False  # Store prev_close only once per session
 
         # NOTE: Market hour checks removed from here.
         # When used via central_data_collector_continuous.py (the normal case),
@@ -238,9 +239,23 @@ class CentralDataCollector:
 
             # Fetch F&O stock quotes
             logger.info(f"Fetching quotes for {len(self.stocks)} stocks...")
-            stock_quotes = self._fetch_stock_quotes()
+            stock_quotes, all_quotes_raw, instrument_map_raw = self._fetch_stock_quotes()
             collection_stats['stocks_fetched'] = len(stock_quotes)
             collection_stats['stock_quotes'] = stock_quotes  # Include for rapid_drop_detector
+
+            # Store prev_close once at startup (ohlc.close = previous day's official close)
+            if not self._prev_close_stored and all_quotes_raw:
+                prev_close_map = {}
+                for instrument, quote in all_quotes_raw.items():
+                    if instrument.startswith("NSE:"):
+                        symbol = instrument_map_raw.get(instrument)
+                        close = quote.get('ohlc', {}).get('close')
+                        if symbol and close:
+                            prev_close_map[symbol] = close
+                if prev_close_map:
+                    self.db.store_prev_close_prices_batch(prev_close_map)
+                    logger.info(f"Stored prev_close for {len(prev_close_map)} symbols")
+                    self._prev_close_stored = True
 
             # Fetch NIFTY spot data
             logger.info("Fetching NIFTY 50 quote...")
@@ -438,7 +453,7 @@ class CentralDataCollector:
 
         return successful_quotes, failed_instruments
 
-    def _fetch_stock_quotes(self) -> Dict[str, Dict]:
+    def _fetch_stock_quotes(self) -> Tuple[Dict[str, Dict], Dict, Dict]:
         """
         Fetch F&O stock quotes in batches (equity + futures for OI).
 
@@ -449,10 +464,13 @@ class CentralDataCollector:
         - Continue with partial data rather than complete failure
 
         Returns:
-            Dict of {symbol: {price, volume, oi, oi_day_high, oi_day_low}}
+            Tuple of (stock_data, all_raw_quotes, instrument_map)
+            - stock_data: {symbol: {price, volume, oi, oi_day_high, oi_day_low}}
+            - all_raw_quotes: raw Kite quotes (for ohlc.close extraction)
+            - instrument_map: {instrument_str: symbol}
         """
         if not self.stocks:
-            return {}
+            return {}, {}, {}
 
         stock_data = {}
         batch_size = 200  # Kite supports 500, using 200 for safety
@@ -543,7 +561,7 @@ class CentralDataCollector:
                 stock_data[symbol]['oi_day_high'] = 0
                 stock_data[symbol]['oi_day_low'] = 0
 
-        return stock_data
+        return stock_data, all_quotes, instrument_map
 
     def _fetch_nifty_quote(self) -> Optional[Dict]:
         """

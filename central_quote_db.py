@@ -224,6 +224,15 @@ class CentralQuoteDB:
             )
         """)
 
+        # Table 5: Previous day close prices (for % change from prev close)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS prev_close_prices (
+                symbol      TEXT PRIMARY KEY,
+                prev_close  REAL NOT NULL,
+                updated_at  TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
         logger.info("Database tables and indexes created successfully")
 
@@ -331,6 +340,50 @@ class CentralQuoteDB:
 
         self.conn.commit()
         logger.debug(f"Stored VIX quote at {ts_str}: {vix_value:.2f}")
+
+    def store_prev_close_prices_batch(self, prices: Dict[str, float]) -> None:
+        """
+        Upsert previous-day close prices. Call once at collector startup.
+
+        Args:
+            prices: Dict of {symbol: prev_close_price}
+        """
+        if not prices:
+            return
+
+        cursor = self.conn.cursor()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        rows = [(symbol, close, now_str) for symbol, close in prices.items()]
+        cursor.executemany("""
+            INSERT OR REPLACE INTO prev_close_prices (symbol, prev_close, updated_at)
+            VALUES (?, ?, ?)
+        """, rows)
+
+        self.conn.commit()
+        logger.info(f"Stored prev_close for {len(rows)} symbols")
+
+    def get_prev_close_prices_batch(self, symbols: List[str]) -> Dict[str, float]:
+        """
+        Return {symbol: prev_close} for given symbols from prev_close_prices table.
+
+        Args:
+            symbols: List of stock symbols
+
+        Returns:
+            Dict mapping symbol to previous day's close price
+        """
+        if not symbols:
+            return {}
+
+        cursor = self.conn.cursor()
+        placeholders = ','.join('?' * len(symbols))
+        cursor.execute(f"""
+            SELECT symbol, prev_close FROM prev_close_prices
+            WHERE symbol IN ({placeholders})
+        """, symbols)
+
+        return {row[0]: row[1] for row in cursor.fetchall()}
 
     def update_metadata(self, key: str, value: str):
         """
@@ -753,6 +806,27 @@ class CentralQuoteDB:
                 'low': row[4],
                 'volume': row[5]
             }
+        return None
+
+    def get_nifty_candle_at(self, timestamp_str: str) -> Optional[Dict]:
+        """
+        Get NIFTY candle at an exact timestamp (includes open for H3 bias).
+
+        Args:
+            timestamp_str: e.g. '2026-03-15 09:15:00'
+
+        Returns:
+            Dict with {timestamp, price, open, volume} or None
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT timestamp, price, open, volume
+            FROM nifty_quotes
+            WHERE timestamp = ?
+        """, (timestamp_str,))
+        row = cursor.fetchone()
+        if row:
+            return {'timestamp': row[0], 'price': row[1], 'open': row[2], 'volume': row[3]}
         return None
 
     def get_nifty_history(self, minutes: int = 30) -> List[Dict]:
