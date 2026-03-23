@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-VWAP Mover Monitor — Top 10 F&O Movers VWAP Alert System
+VWAP Mover Monitor — Top 20 F&O Movers VWAP Alert System
 =========================================================
 Improvements from backtesting research (34 days, Jan–Mar 2026):
 
 1. H3 Nifty 1st-candle bias  — only LONG on BULL days, SHORT on BEAR days
 2. Alert start time 10:00 AM — skip opening noise window
-3. Max 1 alert per stock/day — no repeat entries
+3. Max 2 alerts per stock/day — 15-min cooldown between signals
 4. LONG/SHORT + SL ₹ in alert — actionable, risk-aware messages
 5. Nifty bias in alert header — day context always visible
 6. Trailing SL exit tracker   — follow-up alert on SL hit or EOD exit
 7. EOD P&L summary at 3:25 PM — daily recap via Telegram
+8. T+2 confirmation candle    — enter only if T+2 close confirms direction vs VWAP
 
 Strategy (trend-following):
-  - Top 10 F&O movers by % from prev day close
-  - Enter LONG if stock is UP, SHORT if DOWN — at VWAP touch
+  - Top 20 F&O movers by % from prev day close
+  - Signal at VWAP touch (within 0.15%); enter only if T+2 candle confirms direction
   - H3 Nifty bias: shown in alert as context (BULL/BEAR day) — no trades are blocked
   - Trailing SL 0.5% from peak/trough
   - EOD exit at 3:20 PM
@@ -28,7 +29,7 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import config
 from central_quote_db import get_central_db_reader
@@ -45,7 +46,10 @@ ALERT_START_TIME = "10:00"        # no alerts before this (improvement #2)
 EXIT_TIME        = "15:20"        # trailing SL positions close here
 EOD_SUMMARY_TIME = "15:25"        # EOD P&L summary sent here
 
-TRAILING_SL_PCT  = 0.50           # 0.5% trailing SL (best config from backtest)
+TRAILING_SL_PCT        = 0.50    # 0.5% trailing SL (best config from backtest)
+CONFIRM_OFFSET         = 2       # enter at T+2 candle if it confirms direction (#8)
+MAX_TRADES_PER_STOCK   = 2       # max trades per stock per day
+ALERT_COOLDOWN_MINUTES = 15      # min gap between signals on the same stock
 
 LOT_SIZES_FILE   = "data/lot_sizes.json"
 # ────────────────────────────────────────────────────────────────────────────
@@ -61,6 +65,30 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+# ── Redis signal publisher (best-effort, never raises) ───────────────────────
+_redis_pub = None
+
+
+def _redis_publish(payload: dict) -> None:
+    """Publish *payload* to 'vwap:signals'. Silently skips on any error."""
+    global _redis_pub
+    try:
+        import redis as _redis_mod
+        if _redis_pub is None:
+            _redis_pub = _redis_mod.Redis(
+                host=os.getenv("REDIS_HOST", "localhost"),
+                port=int(os.getenv("REDIS_PORT", 6379)),
+                db=int(os.getenv("REDIS_DB", 0)),
+                password=os.getenv("REDIS_PASS") or None,
+                decode_responses=True,
+                socket_connect_timeout=1,
+            )
+        _redis_pub.publish("vwap:signals", json.dumps(payload))
+    except Exception as exc:
+        logger.warning("[Redis] vwap:signals publish failed: %s", exc)
+        _redis_pub = None   # reset so next call retries the connection
 
 
 # ── Data class for a tracked trade ──────────────────────────────────────────
@@ -119,12 +147,15 @@ class VWAPMoverMonitor:
         self.fo_symbols  = self._load_fo_symbols()
         self.lot_sizes   = self._load_lot_sizes()
         self.prev_close: Dict[str, float] = {}
+        self.prev_close_loaded_date: Optional[str] = None   # date when prev_close was refreshed from collector
 
         # Day state — reset each morning
         self.current_date   = datetime.now().strftime('%Y-%m-%d')
         self.market_bias: Optional[str] = None   # "LONG" | "SHORT" | None
         self.bias_determined = False
-        self.alerted_today: Set[str] = set()     # improvement #3: max 1/stock/day
+        self.trade_count: Dict[str, int] = {}           # trades entered per symbol today
+        self.pending_signals: Dict[str, Dict] = {}      # signals queued for T+2 confirm
+        self.cooldown_until: Dict[str, datetime] = {}   # symbol → when cooldown expires
         self.active_trades: Dict[str, ActiveTrade] = {}
         self.eod_summary_sent = False
         self.last_top10: List[str] = []
@@ -132,6 +163,14 @@ class VWAPMoverMonitor:
 
         logger.info(f"Loaded {len(self.fo_symbols)} F&O symbols, "
                     f"{len(self.lot_sizes)} lot size entries")
+        self.notifier.send_debug(
+            f"🚀 <b>VWAP Monitor Started</b>\n"
+            f"📅 {datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
+            f"Symbols: {len(self.fo_symbols)}  |  Lots loaded: {len(self.lot_sizes)}\n"
+            f"Alert start: {ALERT_START_TIME}  |  Exit: {EXIT_TIME}  |  TSL: {TRAILING_SL_PCT}%\n"
+            f"Confirm: T+{CONFIRM_OFFSET}  |  Max trades/stock: {MAX_TRADES_PER_STOCK}  |  "
+            f"Cooldown: {ALERT_COOLDOWN_MINUTES}min"
+        )
 
     # ── Loaders ─────────────────────────────────────────────────────────────
 
@@ -153,20 +192,37 @@ class VWAPMoverMonitor:
 
     def _load_prev_close(self):
         self.prev_close = self.db.get_prev_close_prices_batch(self.fo_symbols)
-        logger.info(f"Loaded prev_close for {len(self.prev_close)} symbols")
+        # Track the date of the most recent DB update so we can detect stale loads
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute("SELECT MAX(updated_at) FROM prev_close_prices")
+            row = cursor.fetchone()
+            if row and row[0]:
+                self.prev_close_loaded_date = row[0][:10]   # 'YYYY-MM-DD'
+            else:
+                self.prev_close_loaded_date = None
+        except Exception:
+            self.prev_close_loaded_date = None
+        logger.info(f"Loaded prev_close for {len(self.prev_close)} symbols "
+                    f"(DB updated_at date: {self.prev_close_loaded_date})")
         if len(self.prev_close) < len(self.fo_symbols) * 0.5:
             logger.warning(
                 f"Only {len(self.prev_close)}/{len(self.fo_symbols)} symbols have prev_close. "
                 "Ensure central_data_collector.py ran today."
             )
+            self.notifier.send_debug(
+                f"⚠️ <b>prev_close Warning</b>\n"
+                f"Only {len(self.prev_close)}/{len(self.fo_symbols)} symbols have prev_close.\n"
+                f"DB updated_at: {self.prev_close_loaded_date}\n"
+                f"Ensure central_data_collector.py is running."
+            )
 
-    # ── H3 Nifty bias (improvement #1) ──────────────────────────────────────
+    # ── H3 Nifty bias ────────────────────────────────────────────────────────
 
     def _determine_market_bias(self) -> Optional[str]:
         """
-        H3: Compare Nifty 9:15 candle close vs open.
-        close >= open  → BULL (only LONG trades)
-        close <  open  → BEAR (only SHORT trades)
+        H3: Compare Nifty 9:15 candle close vs open. Set once, fixed for the day.
+        close >= open → LONG   |   close < open → SHORT
         Returns "LONG", "SHORT", or None if data unavailable.
         """
         today  = datetime.now().strftime('%Y-%m-%d')
@@ -174,8 +230,6 @@ class VWAPMoverMonitor:
         candle = self.db.get_nifty_candle_at(ts_915)
 
         if candle is None:
-            # Fallback: use first available candle today vs its own open
-            since     = f"{today} 09:00:00"
             nifty_now = self.db.get_nifty_latest()
             if nifty_now and nifty_now['open'] and nifty_now['open'] > 0:
                 bias = "LONG" if nifty_now['price'] >= nifty_now['open'] else "SHORT"
@@ -201,14 +255,21 @@ class VWAPMoverMonitor:
         today = datetime.now().strftime('%Y-%m-%d')
         if today != self.current_date:
             logger.info(f"New day detected ({today}) — resetting daily state")
-            self.current_date    = today
-            self.market_bias     = None
-            self.bias_determined = False
-            self.alerted_today   = set()
-            self.active_trades   = {}
-            self.eod_summary_sent = False
-            self.last_top10      = []
-            self.day_trade_log   = []
+            self.notifier.send_debug(
+                f"📅 <b>New Trading Day: {today}</b>\n"
+                f"Daily state reset. Waiting for collector to update prev_close after 9:15 AM."
+            )
+            self.current_date         = today
+            self.market_bias          = None
+            self.bias_determined      = False
+            self.trade_count          = {}
+            self.pending_signals      = {}
+            self.cooldown_until       = {}
+            self.active_trades        = {}
+            self.eod_summary_sent     = False
+            self.last_top10           = []
+            self.day_trade_log        = []
+            self.prev_close_loaded_date = None   # force reload after collector runs
             self._load_prev_close()
 
     # ── VWAP ─────────────────────────────────────────────────────────────────
@@ -245,7 +306,8 @@ class VWAPMoverMonitor:
         symbol: str, rank: int, pct_change: float, price: float,
         vwap: float, distance_pct: float, candle_count: int,
         direction: str, lot: int, sl_price: float,
-        top10: List[Tuple[str, float, float]]
+        top10: List[Tuple[str, float, float]],
+        confirmed: bool = False,
     ) -> str:
         dir_icon  = "📈 BUY (LONG)"   if direction == "LONG" else "📉 SELL SHORT"
         pct_icon  = "📈" if pct_change >= 0 else "📉"
@@ -270,8 +332,9 @@ class VWAPMoverMonitor:
             marker = " ← ENTRY" if sym == symbol else ""
             top10_lines.append(f"{i}. {sym}  {s}{pct:.1f}%{marker}")
 
+        header = "✅ <b>VWAP CONFIRMED ENTRY (T+2)</b>" if confirmed else "📊 <b>VWAP TOUCH ALERT</b>"
         return (
-            f"📊 <b>VWAP TOUCH ALERT</b>\n"
+            f"{header}\n"
             f"{bias_line}\n"
             f"🏆 #{rank} Top Mover: <b>{symbol}</b>\n"
             f"{pct_icon} Change: {sign}{pct_change:.2f}% | ₹{price:.2f}\n"
@@ -376,6 +439,11 @@ class VWAPMoverMonitor:
                 logger.info(f"EXIT {reason}: {sym} {trade.direction} "
                             f"entry={trade.entry_price:.2f} exit={exit_price:.2f} "
                             f"P&L=₹{gross:+,.0f}")
+                _redis_publish({
+                    "type": "EXIT", "symbol": sym, "direction": trade.direction,
+                    "reason": reason, "entry": trade.entry_price,
+                    "exit": exit_price, "pnl": int(gross), "ts": time.time(),
+                })
             else:
                 logger.error(f"Failed to send exit alert for {sym}")
 
@@ -401,7 +469,22 @@ class VWAPMoverMonitor:
         now     = datetime.now()
         now_str = now.strftime("%H:%M")
 
-        # Try to determine H3 bias (improvement #1)
+        # Reload prev_close if the collector has updated it since our last load
+        # (fixes race: monitor loads at midnight before collector runs at 9:15)
+        today = now.strftime('%Y-%m-%d')
+        if now_str >= "09:20" and self.prev_close_loaded_date != today:
+            logger.info(
+                f"prev_close was loaded from {self.prev_close_loaded_date}, "
+                f"collector has since updated it — reloading"
+            )
+            self._load_prev_close()
+            self.notifier.send_debug(
+                f"🔄 <b>prev_close Reloaded</b>\n"
+                f"Stale data ({self.prev_close_loaded_date or 'unknown'}) replaced with today's values.\n"
+                f"Symbols loaded: {len(self.prev_close)}"
+            )
+
+        # H3 bias — determined once at 9:16 AM, fixed for the day
         if not self.bias_determined and now_str >= "09:16":
             bias = self._determine_market_bias()
             if bias:
@@ -409,7 +492,11 @@ class VWAPMoverMonitor:
                 self.bias_determined = True
                 bias_icon = "🟢" if bias == "LONG" else "🔴"
                 logger.info(f"Market bias set: {bias_icon} {bias} — "
-                            f"will only send {'LONG' if bias=='LONG' else 'SHORT'} alerts today")
+                            f"will only send {bias} alerts today")
+                self.notifier.send_debug(
+                    f"{bias_icon} <b>Market Bias Set: {bias}</b>  (H3 9:15 candle)\n"
+                    f"Only <b>{bias}</b> alerts will fire today."
+                )
 
         # Latest quotes
         latest = self.db.get_latest_stock_quotes()
@@ -433,7 +520,78 @@ class VWAPMoverMonitor:
         if now_str >= EXIT_TIME:
             return
 
-        # Top movers
+        # ── Process pending confirmation signals (improvement #8) ────────────
+        for sym in list(self.pending_signals.keys()):
+            sig = self.pending_signals[sym]
+            sig['elapsed'] += 1
+            if sig['elapsed'] < CONFIRM_OFFSET:
+                continue   # not yet at T+CONFIRM_OFFSET
+
+            # One-shot: check at exactly T+CONFIRM_OFFSET, then discard
+            q = latest.get(sym)
+            confirmed = False
+            if q:
+                price_now = q.get('price', 0)
+                direction = sig['direction']
+                confirmed = (
+                    (direction == "LONG"  and price_now > sig['vwap']) or
+                    (direction == "SHORT" and price_now < sig['vwap'])
+                )
+                can_enter = (
+                    confirmed
+                    and sym not in self.active_trades
+                    and self.trade_count.get(sym, 0) < MAX_TRADES_PER_STOCK
+                )
+                if can_enter:
+                    lot      = self.lot_sizes.get(sym, 1)
+                    sl_price = (price_now * (1 - TRAILING_SL_PCT / 100)
+                                if direction == "LONG"
+                                else price_now * (1 + TRAILING_SL_PCT / 100))
+                    dist_pct = abs(price_now - sig['vwap']) / sig['vwap'] * 100
+
+                    logger.info(
+                        f"CONFIRM ENTRY (T+{CONFIRM_OFFSET}): {sym} | {direction} | "
+                        f"price={price_now:.2f} vwap={sig['vwap']:.2f} sl={sl_price:.2f}"
+                    )
+                    _redis_publish({
+                        "type": "ENTRY", "symbol": sym, "direction": direction,
+                        "price": price_now, "vwap": sig["vwap"], "sl": sl_price,
+                        "ts": time.time(),
+                    })
+
+                    msg = self._format_entry_alert(
+                        symbol=sym, rank=sig['rank'], pct_change=sig['pct_change'],
+                        price=price_now, vwap=sig['vwap'], distance_pct=dist_pct,
+                        candle_count=sig['candle_count'],
+                        direction=direction, lot=lot, sl_price=sl_price,
+                        top10=self._get_top_movers(latest),
+                        confirmed=True,
+                    )
+                    if self.notifier._send_message(msg):
+                        self.trade_count[sym] = self.trade_count.get(sym, 0) + 1
+                        self.active_trades[sym] = ActiveTrade(
+                            symbol=sym, direction=direction, entry_price=price_now,
+                            vwap=sig['vwap'], lot=lot, entry_time=now.strftime("%H:%M"),
+                            rank=sig['rank'], pct_change=sig['pct_change'],
+                        )
+                        logger.info(f"  ✓ Confirmed entry & tracking: {sym} {direction} "
+                                    f"SL={sl_price:.2f} lot={lot} "
+                                    f"trades_today={self.trade_count[sym]}")
+                        _redis_publish({
+                            "type": "LOT", "symbol": sym, "direction": direction,
+                            "lot": lot, "sl": sl_price, "ts": time.time(),
+                        })
+                    else:
+                        logger.error(f"Failed to send confirmed entry alert for {sym}")
+                else:
+                    logger.info(f"CONFIRM REJECTED (T+{CONFIRM_OFFSET}): {sym} "
+                                f"confirmed={confirmed} price={price_now:.2f} vwap={sig['vwap']:.2f}")
+            else:
+                logger.info(f"CONFIRM SKIPPED: {sym} — no latest quote available")
+
+            del self.pending_signals[sym]  # always remove after one-shot check
+
+        # ── Top movers ────────────────────────────────────────────────────────
         top10 = self._get_top_movers(latest)
         if not top10:
             logger.warning("No movers — prev_close may be missing")
@@ -451,8 +609,15 @@ class VWAPMoverMonitor:
         history = self.db.get_stock_history_since_batch(top10_symbols, market_open_str)
 
         for rank, (symbol, pct_change, price) in enumerate(top10, 1):
-            # Improvement #3: max 1 alert per stock per day
-            if symbol in self.alerted_today:
+            # Skip if already at max trades, in pending, or in an active trade
+            if self.trade_count.get(symbol, 0) >= MAX_TRADES_PER_STOCK:
+                continue
+            if symbol in self.pending_signals:
+                continue
+            if symbol in self.active_trades:
+                continue
+            # 15-minute cooldown between signals on the same stock
+            if now < self.cooldown_until.get(symbol, datetime.min):
                 continue
 
             candles = history.get(symbol, [])
@@ -469,34 +634,22 @@ class VWAPMoverMonitor:
 
             # H3 bias is informational only — shown in alert, no trades blocked
 
-            lot      = self.lot_sizes.get(symbol, 1)
-            sl_price = (price * (1 - TRAILING_SL_PCT / 100)
-                        if direction == "LONG"
-                        else price * (1 + TRAILING_SL_PCT / 100))
-
             logger.info(
-                f"VWAP TOUCH: {symbol} #{rank} | {pct_change:+.2f}% | {direction} | "
-                f"price={price:.2f} vwap={vwap:.2f} dist={dist_pct:.3f}% sl={sl_price:.2f}"
+                f"VWAP TOUCH (queued T+{CONFIRM_OFFSET}): {symbol} #{rank} | "
+                f"{pct_change:+.2f}% | {direction} | "
+                f"price={price:.2f} vwap={vwap:.2f} dist={dist_pct:.3f}%"
             )
 
-            msg = self._format_entry_alert(
-                symbol=symbol, rank=rank, pct_change=pct_change, price=price,
-                vwap=vwap, distance_pct=dist_pct, candle_count=len(candles),
-                direction=direction, lot=lot, sl_price=sl_price, top10=top10,
-            )
-
-            if self.notifier._send_message(msg):
-                self.alerted_today.add(symbol)
-                # Start tracking this trade (improvement #6)
-                self.active_trades[symbol] = ActiveTrade(
-                    symbol=symbol, direction=direction, entry_price=price,
-                    vwap=vwap, lot=lot, entry_time=now.strftime("%H:%M"),
-                    rank=rank, pct_change=pct_change,
-                )
-                logger.info(f"  ✓ Alert sent & trade tracking started: {symbol} {direction} "
-                            f"SL={sl_price:.2f} lot={lot}")
-            else:
-                logger.error(f"Failed to send alert for {symbol}")
+            # Queue signal — enter only after T+CONFIRM_OFFSET confirmation
+            self.pending_signals[symbol] = {
+                'vwap':         vwap,
+                'direction':    direction,
+                'rank':         rank,
+                'pct_change':   pct_change,
+                'candle_count': len(candles),
+                'elapsed':      0,
+            }
+            self.cooldown_until[symbol] = now + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
 
     # ── Run loop ─────────────────────────────────────────────────────────────
 
@@ -526,6 +679,11 @@ class VWAPMoverMonitor:
                 self._run_cycle()
             except Exception as e:
                 logger.error(f"Cycle error: {e}", exc_info=True)
+                self.notifier.send_debug(
+                    f"❌ <b>Cycle Error</b>\n"
+                    f"{datetime.now().strftime('%I:%M %p')}\n"
+                    f"<code>{type(e).__name__}: {e}</code>"
+                )
 
             elapsed    = time.time() - cycle_start
             sleep_time = max(0, LOOP_INTERVAL_SECONDS - elapsed)
@@ -535,7 +693,24 @@ class VWAPMoverMonitor:
 
 def main():
     monitor = VWAPMoverMonitor()
-    monitor.run()
+    try:
+        monitor.run()
+    except KeyboardInterrupt:
+        logger.info("Shutting down (KeyboardInterrupt)")
+        monitor.notifier.send_debug(
+            f"🛑 <b>VWAP Monitor Stopped</b>\n"
+            f"{datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
+            f"Trades today: {len(monitor.day_trade_log)}"
+        )
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        monitor.notifier.send_debug(
+            f"💀 <b>VWAP Monitor CRASHED</b>\n"
+            f"{datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
+            f"<code>{type(e).__name__}: {e}</code>\n"
+            f"Restart required."
+        )
+        raise
 
 
 if __name__ == "__main__":

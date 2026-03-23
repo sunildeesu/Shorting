@@ -7,6 +7,8 @@ load_dotenv()
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
+TELEGRAM_DEBUG_BOT_TOKEN = os.getenv('TELEGRAM_DEBUG_BOT_TOKEN')
+TELEGRAM_DEBUG_CHANNEL_ID = os.getenv('TELEGRAM_DEBUG_CHANNEL_ID')
 
 # Market Configuration
 MARKET_TIMEZONE = 'Asia/Kolkata'

@@ -49,6 +49,15 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     log "⚠️  Warning: .env file not found. Credentials may be missing."
 fi
 
+# Kill any existing vwap_mover_monitor.py processes before starting
+EXISTING_PIDS=$(pgrep -f "vwap_mover_monitor.py" 2>/dev/null)
+if [ -n "$EXISTING_PIDS" ]; then
+    log "⚠️  Found existing vwap_mover_monitor.py process(es): $EXISTING_PIDS — killing..."
+    kill $EXISTING_PIDS 2>/dev/null
+    sleep 2
+    log "✓ Killed stale process(es)"
+fi
+
 log "✓ Launching VWAP Mover Monitor..."
 log "✓ Alerts fire after 10:00 AM, monitor exits when market closes (3:30 PM)"
 log ""

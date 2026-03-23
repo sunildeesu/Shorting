@@ -1,9 +1,5 @@
 {
-  "schedule": {
-    "OMNI": "14-Mar-2026",
-    "GAUDIUMIVF": "18-Mar-2026",
-    "WEBELSOLAR": "13-Mar-2026"
-  },
-  "last_updated": "2026-03-13 15:18:03",
+  "schedule": {},
+  "last_updated": "2026-03-23 09:15:19",
   "source": "NSE API"
 }

@@ -13,52 +13,74 @@ class BaseNotifier:
         """Initialize base notifier with Telegram credentials."""
         self.bot_token = config.TELEGRAM_BOT_TOKEN
         self.channel_id = config.TELEGRAM_CHANNEL_ID
+        self.debug_bot_token = config.TELEGRAM_DEBUG_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN
+        self.debug_channel_id = config.TELEGRAM_DEBUG_CHANNEL_ID
         self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.debug_base_url = f"https://api.telegram.org/bot{self.debug_bot_token}"
 
         if not self.bot_token or not self.channel_id:
             raise ValueError("Telegram bot token and channel ID must be set in .env file")
 
-    def _send_message(self, message: str) -> bool:
-        """
-        Send message to Telegram channel.
-
-        Args:
-            message: Message text to send
-
-        Returns:
-            True if successful, False otherwise
-        """
+    def _send_to(self, channel_id: str, message: str) -> bool:
+        """Send message to a specific Telegram channel."""
         url = f"{self.base_url}/sendMessage"
         payload = {
-            "chat_id": self.channel_id,
+            "chat_id": channel_id,
             "text": message,
             "parse_mode": "HTML"
         }
-
         try:
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info(f"Telegram message sent successfully")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send Telegram message: {e}")
+            logger.error(f"Failed to send Telegram message to {channel_id}: {e}")
+            return False
+
+    def _send_message(self, message: str) -> bool:
+        """Send message to the main stock alerts channel."""
+        ok = self._send_to(self.channel_id, message)
+        if ok:
+            logger.info("Telegram message sent to main channel")
+        return ok
+
+    def send_debug(self, message: str) -> bool:
+        """
+        Send a message to the debug/system channel using the debug bot.
+        Use for non-stock alerts: service status, errors, system events, diagnostics.
+        Falls back to main channel if debug channel is not configured.
+        """
+        if not self.debug_channel_id:
+            logger.warning("TELEGRAM_DEBUG_CHANNEL_ID not set — falling back to main channel")
+            return self._send_message(message)
+        url = f"{self.debug_base_url}/sendMessage"
+        payload = {"chat_id": self.debug_channel_id, "text": message, "parse_mode": "HTML"}
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info("Telegram message sent to debug channel")
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to send to debug channel: {e}")
             return False
 
     def send_test_message(self) -> bool:
-        """
-        Send a test message to verify Telegram integration.
-
-        Returns:
-            True if successful, False otherwise
-        """
+        """Send a test message to both channels to verify integration."""
         from datetime import datetime
-        test_message = (
-            "🧪 <b>TELEGRAM TEST MESSAGE</b> 🧪\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"✅ Telegram bot is connected and working!\n\n"
-            f"📅 Test Time: {datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}\n"
-            f"🤖 Bot: Active\n"
-            f"📢 Channel: Connected\n\n"
-            "All systems operational! 🚀"
+        now = datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')
+
+        main_msg = (
+            "🧪 <b>TELEGRAM TEST — Main Channel</b>\n"
+            f"✅ Stock alerts channel is connected\n"
+            f"📅 {now}"
         )
-        return self._send_message(test_message)
+        debug_msg = (
+            "🔧 <b>TELEGRAM TEST — Debug Channel</b>\n"
+            f"✅ Debug/system channel is connected\n"
+            f"📅 {now}\n\n"
+            "This channel receives: service status, errors, diagnostics"
+        )
+
+        ok_main = self._send_message(main_msg)
+        ok_debug = self.send_debug(debug_msg)
+        return ok_main and ok_debug
