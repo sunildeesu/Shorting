@@ -13,6 +13,7 @@ import sys
 import time
 import logging
 import os
+import threading
 from datetime import datetime, time as dt_time
 from market_utils import is_market_open, get_market_status
 from stock_monitor import StockMonitor
@@ -22,6 +23,9 @@ import config
 MONITOR_START = dt_time(9, 25)
 MONITOR_END = dt_time(15, 25)
 MONITOR_INTERVAL_SECONDS = 300  # 5 minutes
+
+CYCLE_TIMEOUT_SECONDS = 300       # abort cycle if it runs longer than 5 minutes
+SLOW_ALERT_INTERVAL_SECONDS = 900 # send at most one slow-Kite alert every 15 minutes
 
 
 def setup_logging():
@@ -120,6 +124,42 @@ def run_monitoring_cycle(monitor, logger) -> dict:
     return stats
 
 
+def run_cycle_with_timeout(monitor, logger, timeout=CYCLE_TIMEOUT_SECONDS):
+    """
+    Run a monitoring cycle in a daemon thread with a hard timeout.
+
+    Returns (stats, timed_out):
+      - stats: dict returned by monitor_all_stocks(), or None on timeout/error
+      - timed_out: True if the cycle exceeded `timeout` seconds
+    """
+    result = {"stats": None, "error": None}
+
+    def _target():
+        try:
+            result["stats"] = run_monitoring_cycle(monitor, logger)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+
+    if thread.is_alive():
+        # Thread is still running — the cycle exceeded the timeout.
+        # We intentionally do NOT join again; the daemon thread will
+        # finish (or be reaped at process exit) on its own.
+        logger.error(
+            f"Cycle exceeded {timeout}s timeout — skipping to next cycle. "
+            "Kite API may be slow or hung."
+        )
+        return None, True
+
+    if result["error"]:
+        raise result["error"]
+
+    return result["stats"], False
+
+
 def main():
     """Main continuous monitoring loop"""
     setup_logging()
@@ -163,11 +203,13 @@ def main():
     # Continuous monitoring loop
     cycle_count = 0
     total_alerts_sent = 0
+    last_slow_alert_time = None  # throttle: send at most once every 15 min
 
     logger.info("=" * 80)
     logger.info("Starting continuous monitoring loop")
     logger.info(f"Monitor hours: {MONITOR_START.strftime('%H:%M')} - {MONITOR_END.strftime('%H:%M')}")
     logger.info(f"Interval: Every {MONITOR_INTERVAL_SECONDS // 60} minutes")
+    logger.info(f"Cycle timeout: {CYCLE_TIMEOUT_SECONDS // 60} minutes")
     logger.info("=" * 80)
 
     while True:
@@ -182,16 +224,36 @@ def main():
                 break
 
             cycle_count += 1
+            cycle_start = time.time()
             logger.info("")
             logger.info(f"{'=' * 60}")
             logger.info(f"CYCLE #{cycle_count} - {datetime.now().strftime('%H:%M:%S')}")
             logger.info(f"{'=' * 60}")
 
-            # Run monitoring cycle
-            stats = run_monitoring_cycle(monitor, logger)
-            total_alerts_sent += stats['alerts_sent']
+            # Run monitoring cycle with hard 5-minute timeout
+            stats, timed_out = run_cycle_with_timeout(monitor, logger)
 
-            # Sleep until next cycle
+            if timed_out:
+                # Send a Telegram debug alert, throttled to once every 15 min
+                now = datetime.now()
+                if (last_slow_alert_time is None or
+                        (now - last_slow_alert_time).total_seconds() >= SLOW_ALERT_INTERVAL_SECONDS):
+                    try:
+                        monitor.telegram.send_debug(
+                            f"⚠️ <b>Kite API Slow — Cycle #{cycle_count} Timed Out</b>\n"
+                            f"📅 {now.strftime('%Y-%m-%d %I:%M %p')}\n"
+                            f"Cycle exceeded {CYCLE_TIMEOUT_SECONDS // 60}-min limit. "
+                            f"Kite responses are too slow. Skipping to next cycle.\n"
+                            f"Check Kite API connectivity / market open congestion."
+                        )
+                        last_slow_alert_time = now
+                    except Exception as alert_err:
+                        logger.error(f"Failed to send slow-cycle Telegram alert: {alert_err}")
+            else:
+                if stats:
+                    total_alerts_sent += stats['alerts_sent']
+
+            # Sleep until next cycle (always, whether timed out or not)
             logger.info(f"Sleeping {MONITOR_INTERVAL_SECONDS // 60} minutes until next cycle...")
             time.sleep(MONITOR_INTERVAL_SECONDS)
 

@@ -51,6 +51,13 @@ CONFIRM_OFFSET         = 2       # enter at T+2 candle if it confirms direction 
 MAX_TRADES_PER_STOCK   = 2       # max trades per stock per day
 ALERT_COOLDOWN_MINUTES = 15      # min gap between signals on the same stock
 
+# ── Volume Filter (backtest-derived: 61% win rate, avg +₹2,414/trade) ───────
+# Require C-1 (touch candle) vol ≥ 1.5× day avg  AND  C-2 vol < 1.0× day avg
+# Pattern: quiet accumulation → volume spike at VWAP touch = institutional interest
+VOLUME_FILTER_ENABLED = True
+VOLUME_C1_MIN_RATIO   = 1.5   # touch candle vol delta must be ≥ 1.5× avg
+VOLUME_C2_MAX_RATIO   = 1.0   # candle before touch must be < 1.0× avg (quiet)
+
 LOT_SIZES_FILE   = "data/lot_sizes.json"
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -61,7 +68,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(f'logs/vwap_mover_monitor_{today_str}.log'),
-        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
@@ -163,13 +169,16 @@ class VWAPMoverMonitor:
 
         logger.info(f"Loaded {len(self.fo_symbols)} F&O symbols, "
                     f"{len(self.lot_sizes)} lot size entries")
+        vol_status = (f"ON (C-1≥{VOLUME_C1_MIN_RATIO}× + C-2<{VOLUME_C2_MAX_RATIO}×)"
+                      if VOLUME_FILTER_ENABLED else "OFF")
         self.notifier.send_debug(
             f"🚀 <b>VWAP Monitor Started</b>\n"
             f"📅 {datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
             f"Symbols: {len(self.fo_symbols)}  |  Lots loaded: {len(self.lot_sizes)}\n"
             f"Alert start: {ALERT_START_TIME}  |  Exit: {EXIT_TIME}  |  TSL: {TRAILING_SL_PCT}%\n"
             f"Confirm: T+{CONFIRM_OFFSET}  |  Max trades/stock: {MAX_TRADES_PER_STOCK}  |  "
-            f"Cooldown: {ALERT_COOLDOWN_MINUTES}min"
+            f"Cooldown: {ALERT_COOLDOWN_MINUTES}min\n"
+            f"📊 Vol filter: {vol_status}"
         )
 
     # ── Loaders ─────────────────────────────────────────────────────────────
@@ -284,6 +293,33 @@ class VWAPMoverMonitor:
             cum_vol += vol_delta
         return cum_pv / cum_vol if cum_vol > 0 else None
 
+    def _check_volume_filter(self, candles: List[Dict]) -> Tuple[bool, float, float]:
+        """
+        Returns (passes, c1_ratio, c2_ratio).
+        C-1 = touch candle vol delta vs day avg.
+        C-2 = candle just before touch vs day avg.
+        Pass condition: C-1 >= VOLUME_C1_MIN_RATIO  AND  C-2 < VOLUME_C2_MAX_RATIO
+        Always passes (True) if filter disabled or insufficient candle history.
+        """
+        if not VOLUME_FILTER_ENABLED or len(candles) < 3:
+            return True, 0.0, 0.0
+
+        deltas = []
+        for i, c in enumerate(candles):
+            deltas.append(float(c['volume'] if i == 0
+                                else max(0, c['volume'] - candles[i-1]['volume'])))
+
+        # Baseline avg = all candles except the last 2 (C-1 and C-2)
+        baseline = deltas[:-2]
+        avg = sum(baseline) / len(baseline) if baseline else 0
+        if avg <= 0:
+            return True, 0.0, 0.0
+
+        c1_ratio = deltas[-1] / avg
+        c2_ratio = deltas[-2] / avg
+        passes   = (c1_ratio >= VOLUME_C1_MIN_RATIO) and (c2_ratio < VOLUME_C2_MAX_RATIO)
+        return passes, round(c1_ratio, 2), round(c2_ratio, 2)
+
     # ── Top movers ───────────────────────────────────────────────────────────
 
     def _get_top_movers(self, latest: Dict[str, Dict]) -> List[Tuple[str, float, float]]:
@@ -308,6 +344,7 @@ class VWAPMoverMonitor:
         direction: str, lot: int, sl_price: float,
         top10: List[Tuple[str, float, float]],
         confirmed: bool = False,
+        c1_ratio: float = 0.0, c2_ratio: float = 0.0,
     ) -> str:
         dir_icon  = "📈 BUY (LONG)"   if direction == "LONG" else "📉 SELL SHORT"
         pct_icon  = "📈" if pct_change >= 0 else "📉"
@@ -326,6 +363,12 @@ class VWAPMoverMonitor:
         sl_dist_pct = abs(price - sl_price) / price * 100
         sl_loss_rs  = sl_dist_pct / 100 * price * lot
 
+        # Volume filter line
+        if VOLUME_FILTER_ENABLED and c1_ratio > 0:
+            vol_line = f"📊 Vol: C-1={c1_ratio:.2f}× C-2={c2_ratio:.2f}× (quiet→spike ✅)\n"
+        else:
+            vol_line = ""
+
         top10_lines = []
         for i, (sym, pct, _) in enumerate(top10, 1):
             s      = "+" if pct >= 0 else ""
@@ -339,7 +382,8 @@ class VWAPMoverMonitor:
             f"🏆 #{rank} Top Mover: <b>{symbol}</b>\n"
             f"{pct_icon} Change: {sign}{pct_change:.2f}% | ₹{price:.2f}\n"
             f"🎯 VWAP: ₹{vwap:.2f}  (dist: {distance_pct:.2f}%)\n"
-            f"⏱️ Time: {now_str}  |  Candles: {candle_count}\n\n"
+            f"⏱️ Time: {now_str}  |  Candles: {candle_count}\n"
+            f"{vol_line}\n"
             f"<b>➡️ Action: {dir_icon}</b>\n"
             f"📦 Lot size: {lot}\n"
             f"🛑 SL: ₹{sl_price:.2f}  ({sl_dist_pct:.2f}% = ₹{sl_loss_rs:,.0f} risk/lot)\n\n"
@@ -566,6 +610,8 @@ class VWAPMoverMonitor:
                         direction=direction, lot=lot, sl_price=sl_price,
                         top10=self._get_top_movers(latest),
                         confirmed=True,
+                        c1_ratio=sig.get('c1_ratio', 0.0),
+                        c2_ratio=sig.get('c2_ratio', 0.0),
                     )
                     if self.notifier._send_message(msg):
                         self.trade_count[sym] = self.trade_count.get(sym, 0) + 1
@@ -634,10 +680,20 @@ class VWAPMoverMonitor:
 
             # H3 bias is informational only — shown in alert, no trades blocked
 
+            # ── Volume filter: C-1 ≥ 1.5× avg AND C-2 < 1.0× avg ─────────
+            vol_ok, c1_ratio, c2_ratio = self._check_volume_filter(candles)
+            if not vol_ok:
+                logger.debug(
+                    f"  VOL FILTER rejected {symbol}: C-1={c1_ratio:.2f}× C-2={c2_ratio:.2f}× "
+                    f"(need C-1≥{VOLUME_C1_MIN_RATIO} AND C-2<{VOLUME_C2_MAX_RATIO})"
+                )
+                continue
+
             logger.info(
                 f"VWAP TOUCH (queued T+{CONFIRM_OFFSET}): {symbol} #{rank} | "
                 f"{pct_change:+.2f}% | {direction} | "
-                f"price={price:.2f} vwap={vwap:.2f} dist={dist_pct:.3f}%"
+                f"price={price:.2f} vwap={vwap:.2f} dist={dist_pct:.3f}% | "
+                f"vol C-1={c1_ratio:.2f}× C-2={c2_ratio:.2f}×"
             )
 
             # Queue signal — enter only after T+CONFIRM_OFFSET confirmation
@@ -648,6 +704,8 @@ class VWAPMoverMonitor:
                 'pct_change':   pct_change,
                 'candle_count': len(candles),
                 'elapsed':      0,
+                'c1_ratio':     c1_ratio,
+                'c2_ratio':     c2_ratio,
             }
             self.cooldown_until[symbol] = now + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
 
@@ -670,6 +728,9 @@ class VWAPMoverMonitor:
             self._check_day_reset()
 
             if not is_market_open():
+                # Still try to send EOD summary even after market closes
+                # (handles the race where market closes at exactly 15:25)
+                self._maybe_send_eod_summary()
                 logger.info("Market closed — sleeping 60s")
                 time.sleep(60)
                 continue

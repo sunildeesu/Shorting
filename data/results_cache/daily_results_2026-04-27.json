@@ -1,8 +1,17 @@
 {
   "date": "2026-04-27",
   "symbols": [
+    "ATGL",
+    "BAJAJHFL",
+    "COALINDIA",
+    "CRAMC",
+    "GRSE",
+    "MHRIL",
+    "NAM-INDIA",
+    "RALLIS",
+    "TMB",
     "ULTRACEMCO"
   ],
-  "saved_at": "2026-03-23 09:15:19",
+  "saved_at": "2026-04-15 09:32:38",
   "source": "NSE event-calendar"
 }

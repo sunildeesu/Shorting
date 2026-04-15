@@ -1,10 +1,11 @@
 {
-  "date": "2026-04-25",
+  "date": "2026-05-05",
   "symbols": [
-    "IDFCFIRSTB",
-    "INDIACEM",
-    "SANGINITA",
-    "SBFC"
+    "COFORGE",
+    "GHCL",
+    "M&M",
+    "POONAWALLA",
+    "UBL"
   ],
   "saved_at": "2026-04-15 09:32:38",
   "source": "NSE event-calendar"

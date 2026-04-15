@@ -1,5 +1,14 @@
 {
-  "schedule": {},
-  "last_updated": "2026-03-23 09:15:19",
+  "schedule": {
+    "RALLIS": "27-Apr-2026",
+    "POWERICA": "21-Apr-2026",
+    "SUNTECK": "21-Apr-2026",
+    "TARIL": "21-Apr-2026",
+    "MUTHOOTMF": "06-May-2026",
+    "GROWW": "20-Apr-2026",
+    "SHREDIGCEM": "29-Apr-2026",
+    "LTF": "24-Apr-2026"
+  },
+  "last_updated": "2026-04-15 09:32:37",
   "source": "NSE API"
 }
