@@ -53,6 +53,9 @@ data/sector_eod_reports/
 data/sector_snapshots/
 data/friday_reminder_tracking.json
 
+# Historical price data cache (auto-generated)
+data/historical_cache/
+
 # OI (Open Interest) analysis cache
 data/oi_cache/
 
