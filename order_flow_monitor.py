@@ -137,16 +137,18 @@ class OrderFlowMonitor:
         """
         Compute bearish and bullish confluence scores for one stock.
 
-        Each signal contributes points. An alert only fires when the score
-        reaches ORDER_FLOW_MIN_CONFLUENCE_SCORE (default 3), requiring at
-        least 2 independent signals to agree.
-
         Scoring (bearish / bullish):
-          BAI Delta shift      : 2 pts  — strongest leading signal (momentum shift)
-          Cumulative 5-min flow: 2 pts  — sustained directional flow
-          L1 bid shrink ≥40%   : 1 pt   — support being consumed (bearish only)
-          Tick velocity high   : 1 pt   — price moving fast in direction
-          BAI absolute         : 1 pt   — extreme book imbalance
+          BAI Delta shift           : 2 pts  — order book momentum shift
+          Cash cum 5-min flow       : 2 pts  — executed trade imbalance (hard to fake)
+          FUT BAI Delta             : 2 pts  — institutional futures book shift
+          FUT cum 5-min flow        : 2 pts  — executed futures flow (only if liquid: ≥15 trades)
+          Basis divergence          : 2 pts  — futures premium/discount vs cash
+          Tick velocity             : 1 pt   — real price movement
+          BAI absolute              : 1 pt   — extreme book imbalance
+
+        Note: L1 bid shrink removed — backtest shows it predicts LOSERS (33% win rate),
+        likely because it fires on MM quote refresh rather than genuine support erosion.
+        FUT cum_delta restored but only for liquid futures (≥ ORDER_FLOW_FUT_MIN_TICK_COUNT).
 
         Returns (bearish_score, bullish_score, bearish_reasons, bullish_reasons).
         """
@@ -157,14 +159,12 @@ class OrderFlowMonitor:
         bai        = m['bai']
         bai_delta  = m.get('bai_delta', 0)
         cum_pct    = m.get('cum_delta_pct', 0)
-        bid_shrink = m.get('bid_l1_shrink_pct', 0)
         tick_vel   = m.get('tick_velocity', 0)
         price_chg  = m['price_change_pct']
-        # Futures
-        fut_bai       = m.get('fut_bai', 0)
         fut_bai_delta = m.get('fut_bai_delta', 0)
         fut_cum_pct   = m.get('fut_cum_delta_pct', 0)
         basis_pct     = m.get('basis_pct', 0)
+        fut_ticks     = m.get('fut_tick_count', 0)
 
         # Cash BAI Delta (2 pts) — leading: order book actively shifting
         if bai_delta <= config.ORDER_FLOW_BAI_DELTA_BEARISH:
@@ -174,7 +174,7 @@ class OrderFlowMonitor:
             bull_score += 2
             bull_reasons.append(f"BAI shift +{bai_delta:.3f}")
 
-        # Cash cumulative 5-min volume imbalance (2 pts)
+        # Cash cumulative 5-min volume imbalance (2 pts) — executed trades, hard to fake
         if cum_pct <= config.ORDER_FLOW_CUM_DELTA_BEARISH:
             bear_score += 2
             bear_reasons.append(f"5m flow {cum_pct*100:.0f}%")
@@ -182,14 +182,24 @@ class OrderFlowMonitor:
             bull_score += 2
             bull_reasons.append(f"5m flow +{cum_pct*100:.0f}%")
 
-        # Futures BAI Delta (2 pts) — institutional order book shifting
-        if m.get('fut_tick_count', 0) >= config.ORDER_FLOW_MIN_TICKS:
+        if fut_ticks >= config.ORDER_FLOW_MIN_TICKS:
+            # Futures BAI Delta (2 pts) — institutional order book shifting
             if fut_bai_delta <= config.ORDER_FLOW_FUT_BAI_DELTA_BEARISH:
                 bear_score += 2
                 bear_reasons.append(f"FUT BAI {fut_bai_delta:+.3f}")
             if fut_bai_delta >= config.ORDER_FLOW_FUT_BAI_DELTA_BULLISH:
                 bull_score += 2
                 bull_reasons.append(f"FUT BAI +{fut_bai_delta:.3f}")
+
+            # Futures cumulative 5-min flow (2 pts) — only for liquid futures
+            # Sparse futures (< ORDER_FLOW_FUT_MIN_TICK_COUNT) give ±100% trivially
+            if fut_ticks >= config.ORDER_FLOW_FUT_MIN_TICK_COUNT:
+                if fut_cum_pct <= config.ORDER_FLOW_FUT_CUM_DELTA_BEARISH:
+                    bear_score += 2
+                    bear_reasons.append(f"FUT 5m {fut_cum_pct*100:.0f}%")
+                if fut_cum_pct >= config.ORDER_FLOW_FUT_CUM_DELTA_BULLISH:
+                    bull_score += 2
+                    bull_reasons.append(f"FUT 5m +{fut_cum_pct*100:.0f}%")
 
             # Basis divergence (2 pts) — futures at discount = aggressive selling
             if basis_pct <= config.ORDER_FLOW_BASIS_BEARISH_PCT:
@@ -199,12 +209,7 @@ class OrderFlowMonitor:
                 bull_score += 2
                 bull_reasons.append(f"basis +{basis_pct:.2f}%")
 
-        # L1 bid shrink (1 pt — bearish only)
-        if bid_shrink >= config.ORDER_FLOW_BID_L1_SHRINK_ALERT:
-            bear_score += 1
-            bear_reasons.append(f"L1 bid -{bid_shrink*100:.0f}%")
-
-        # Tick velocity (1 pt)
+        # Tick velocity (1 pt) — real price movement, hard to fake
         if tick_vel >= config.ORDER_FLOW_TICK_VELOCITY_HIGH:
             if price_chg < 0:
                 bear_score += 1
@@ -213,7 +218,7 @@ class OrderFlowMonitor:
                 bull_score += 1
                 bull_reasons.append(f"vel ₹{tick_vel:.2f}/tick")
 
-        # Cash BAI absolute (1 pt)
+        # Cash BAI absolute (1 pt) — extreme imbalance
         if bai <= config.ORDER_FLOW_BAI_BEARISH:
             bear_score += 1
             bear_reasons.append(f"BAI {bai:.3f}")
@@ -223,29 +228,58 @@ class OrderFlowMonitor:
 
         return bear_score, bull_score, bear_reasons, bull_reasons
 
+    def _get_market_regime(self, metrics: Dict[str, dict]) -> str:
+        """
+        Compute market-wide regime from cum_delta distribution across all stocks.
+        Returns 'bullish', 'bearish', or 'neutral'.
+
+        Logic: if the majority of liquid stocks have consistent directional flow
+        it is a market-wide trend, not a stock-specific move.
+        Threshold: bull_count or bear_count must exceed 40% of liquid stocks.
+        """
+        bull_flow = 0
+        bear_flow = 0
+        liquid = 0
+        for m in metrics.values():
+            if m.get('tick_count', 0) < config.ORDER_FLOW_MIN_TICKS:
+                continue
+            liquid += 1
+            cdp = m.get('cum_delta_pct', 0)
+            if cdp >= 0.15:
+                bull_flow += 1
+            elif cdp <= -0.15:
+                bear_flow += 1
+
+        if liquid < 10:
+            return 'neutral'
+
+        bull_pct = bull_flow / liquid
+        bear_pct = bear_flow / liquid
+
+        if bull_pct >= 0.40 and bull_pct > bear_pct * 2:
+            return 'bullish'
+        if bear_pct >= 0.40 and bear_pct > bull_pct * 2:
+            return 'bearish'
+        return 'neutral'
+
     def _check_alerts(self, metrics: Dict[str, dict]):
         """
         Confluence-gated alert dispatch.
 
-        Rules to fire an alert:
-          1. Price must have moved ≥ ORDER_FLOW_MIN_PRICE_MOVE_PCT (default 0.5%)
-             in the signal direction — no alert on flat price.
-          2. Confluence score must reach ORDER_FLOW_MIN_CONFLUENCE_SCORE (default 3),
-             meaning at least 2 independent signals must agree.
-          3. One cooldown per stock per direction (BEARISH / BULLISH),
-             not per signal type — prevents the same move firing 6 times.
+        Gates (in order):
+          1. Price ≥ ORDER_FLOW_MIN_STOCK_PRICE — skip penny stocks (tick-size noise)
+          2. BAI shift gate — book must be actively moving in the signal direction
+          3. Directional execution gate — cash cum_delta must confirm direction
+             (|cum_delta_pct| ≥ ORDER_FLOW_CUM_EXECUTION_GATE, correct sign)
+          4. Confluence score ≥ ORDER_FLOW_MIN_CONFLUENCE_SCORE
+          5. Market regime gate — counter-trend alerts need higher score (≥ 6)
+             when ≥ 40% of liquid stocks show opposite flow
 
-        Walls and absorption bypass the confluence gate (they are structural signals).
+        Walls and absorption bypass all confluence gates (structural signals).
         """
-        min_score = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
-        max_per_cycle = config.ORDER_FLOW_MAX_ALERTS_PER_CYCLE
-
-        # Two-pass approach:
-        # Pass 1 — collect all candidates that pass every gate (no sending yet).
-        # Pass 2 — broad-market filter: if too many stocks fire in the same direction
-        #           it's a NIFTY/sector move, not stock-specific. Skip the whole batch.
-        bear_candidates = []   # (symbol, m, score, reasons)
-        bull_candidates = []
+        min_score    = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
+        regime       = self._get_market_regime(metrics)
+        counter_min  = 6   # score needed when alert is against the market regime
 
         for symbol, m in metrics.items():
             price        = m['last_price']
@@ -262,7 +296,7 @@ class OrderFlowMonitor:
             abs_signal   = m['absorption_signal']
             abs_strength = m['absorption_strength']
 
-            # --- Structural alerts (sent immediately — not subject to market-move filter) ---
+            # --- Structural alerts (bypass all confluence gates) ---
 
             if (wall_ratio >= config.ORDER_FLOW_WALL_ALERT_THRESHOLD
                     and wall_side and self._should_send(symbol, f'WALL_{wall_side}')):
@@ -279,7 +313,11 @@ class OrderFlowMonitor:
                 self._mark_sent(symbol, abs_signal)
                 continue
 
-            # --- Confluence-gated directional alerts (collected, not sent yet) ---
+            # Gate 1: skip penny stocks — tick size makes % moves unreliable
+            if price < config.ORDER_FLOW_MIN_STOCK_PRICE:
+                continue
+
+            # Gate 2: BAI shift — book must be actively moving
             bai_delta     = m.get('bai_delta', 0)
             fut_bai       = m.get('fut_bai', 0)
             fut_bai_delta = m.get('fut_bai_delta', 0)
@@ -296,67 +334,31 @@ class OrderFlowMonitor:
             if not (bear_bai_shift or bull_bai_shift):
                 continue
 
+            # Gate 3: directional execution gate — real money must confirm direction
             cum_pct = m.get('cum_delta_pct', 0)
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
 
-            # Directional execution gate: executed trade flow must confirm the alert direction.
-            # abs() was wrong — net buying (cum_pct > 0) should not pass a bearish gate.
-            if (bear_bai_shift and bear_score >= min_score
-                    and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE
-                    and self._should_send(symbol, 'BEARISH')):
-                bear_candidates.append((symbol, m, bear_score, bear_reasons,
-                                        bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
-            elif (bull_bai_shift and bull_score >= min_score
-                    and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE
-                    and self._should_send(symbol, 'BULLISH')):
-                bull_candidates.append((symbol, m, bull_score, bull_reasons,
-                                        bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
-
-        # Pass 2 — broad-market move filter
-        bull_blocked = len(bull_candidates) >= max_per_cycle
-        bear_blocked = len(bear_candidates) >= max_per_cycle
-
-        for direction, candidates, other_blocked in [
-            ('BEARISH', bear_candidates, bull_blocked),
-            ('BULLISH', bull_candidates, bear_blocked),
-        ]:
-            if len(candidates) >= max_per_cycle:
-                symbols = [c[0] for c in candidates]
-                logger.info(
-                    f"Broad market {direction} move — {len(candidates)} stocks triggered "
-                    f"in one cycle (>= {max_per_cycle}), skipping all: {symbols}"
-                )
-                continue
-
-            # Market-environment gate: when the broad market is rising (bull_blocked),
-            # require that bearish candidates have price actually falling (≥ 0.15% down).
-            # This prevents weak-stock noise during a rising market from being mistaken
-            # for genuine reversals.
-            filtered = candidates
-            if direction == 'BEARISH' and other_blocked:
-                filtered = [c for c in candidates if c[6] <= -0.15]  # c[6] = price_chg
-                skipped = len(candidates) - len(filtered)
-                if skipped:
-                    logger.info(
-                        f"Market-env gate: rising market — skipped {skipped} bearish candidates "
-                        f"with flat/positive price change"
-                    )
-
-            for (symbol, m, score, reasons,
-                 bai, price, price_chg, depth_ratio, buy_vol, sell_vol) in filtered:
-                label = f"{'Bearish' if direction == 'BEARISH' else 'Bullish'} ({', '.join(reasons)})"
-                if direction == 'BEARISH':
+            if bear_bai_shift and bear_score >= min_score and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE:
+                # Gate 4 & 5: regime — counter-trend bearish needs higher score
+                required = counter_min if regime == 'bullish' else min_score
+                if bear_score >= required and self._should_send(symbol, 'BEARISH'):
+                    label = f"Bearish ({', '.join(bear_reasons)})"
                     self.notifier.send_order_flow_bearish(
                         symbol, bai, price, price_chg, depth_ratio,
                         buy_vol, sell_vol, signal_label=label)
                     self._mark_sent(symbol, 'BEARISH')
-                    logger.info(f"BEARISH: {symbol} score={score} — {label}")
-                else:
+                    logger.info(f"BEARISH: {symbol} score={bear_score} — {label} [regime={regime}]")
+
+            elif bull_bai_shift and bull_score >= min_score and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE:
+                # Gate 4 & 5: regime — counter-trend bullish needs higher score
+                required = counter_min if regime == 'bearish' else min_score
+                if bull_score >= required and self._should_send(symbol, 'BULLISH'):
+                    label = f"Bullish ({', '.join(bull_reasons)})"
                     self.notifier.send_order_flow_bullish(
                         symbol, bai, price, price_chg, depth_ratio,
                         buy_vol, sell_vol, signal_label=label)
                     self._mark_sent(symbol, 'BULLISH')
-                    logger.info(f"BULLISH: {symbol} score={score} — {label}")
+                    logger.info(f"BULLISH: {symbol} score={bull_score} — {label} [regime={regime}]")
 
     # --------------------------------------------------------
     # Periodic summary
