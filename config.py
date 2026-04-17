@@ -527,7 +527,8 @@ ORDER_FLOW_CUM_EXECUTION_GATE   = float(os.getenv('ORDER_FLOW_CUM_EXECUTION_GATE
 # Confluence gate — alert only when multiple signals agree
 # No price gate: order flow fires on crowd behaviour alone, before price moves.
 # The existing 5-min rapid_drop_detector handles price-based alerts.
-ORDER_FLOW_MIN_CONFLUENCE_SCORE = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCORE', '4'))       # need ≥4 pts — requires BAI delta+cum flow, or BAI delta+2 minor signals (raised from 3)
+ORDER_FLOW_MIN_CONFLUENCE_SCORE  = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCORE', '4'))       # need ≥4 pts — requires BAI delta+cum flow, or BAI delta+2 minor signals (raised from 3)
+ORDER_FLOW_MAX_ALERTS_PER_CYCLE  = int(os.getenv('ORDER_FLOW_MAX_ALERTS_PER_CYCLE', '4'))        # if ≥N stocks fire same direction in one cycle → broad market move, skip all
 
 # Alert management
 ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '25'))          # per-stock per-direction cooldown

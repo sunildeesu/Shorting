@@ -237,7 +237,15 @@ class OrderFlowMonitor:
 
         Walls and absorption bypass the confluence gate (they are structural signals).
         """
-        min_score    = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
+        min_score = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
+        max_per_cycle = config.ORDER_FLOW_MAX_ALERTS_PER_CYCLE
+
+        # Two-pass approach:
+        # Pass 1 — collect all candidates that pass every gate (no sending yet).
+        # Pass 2 — broad-market filter: if too many stocks fire in the same direction
+        #           it's a NIFTY/sector move, not stock-specific. Skip the whole batch.
+        bear_candidates = []   # (symbol, m, score, reasons)
+        bull_candidates = []
 
         for symbol, m in metrics.items():
             price        = m['last_price']
@@ -254,7 +262,7 @@ class OrderFlowMonitor:
             abs_signal   = m['absorption_signal']
             abs_strength = m['absorption_strength']
 
-            # --- Structural alerts (no confluence gate) ---
+            # --- Structural alerts (sent immediately — not subject to market-move filter) ---
 
             if (wall_ratio >= config.ORDER_FLOW_WALL_ALERT_THRESHOLD
                     and wall_side and self._should_send(symbol, f'WALL_{wall_side}')):
@@ -271,10 +279,7 @@ class OrderFlowMonitor:
                 self._mark_sent(symbol, abs_signal)
                 continue
 
-            # --- Confluence-gated directional alerts ---
-            # Gate: at least one order book (cash OR futures) must be actively shifting
-            # in the correct direction. Current BAI must agree with direction —
-            # a shift from -0.20 to -0.01 is recovery, not a signal.
+            # --- Confluence-gated directional alerts (collected, not sent yet) ---
             bai_delta     = m.get('bai_delta', 0)
             fut_bai       = m.get('fut_bai', 0)
             fut_bai_delta = m.get('fut_bai_delta', 0)
@@ -291,29 +296,43 @@ class OrderFlowMonitor:
             if not (bear_bai_shift or bull_bai_shift):
                 continue
 
-            # Execution gate: real cash trades must confirm before alerting.
-            # BAI/BAI-delta are passive order book depth — fakeable via spoofing.
-            # cum_delta_pct is 5-min executed trade flow — cannot be faked cheaply.
             if abs(m.get('cum_delta_pct', 0)) < config.ORDER_FLOW_CUM_EXECUTION_GATE:
                 continue
 
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
 
             if bear_bai_shift and bear_score >= min_score and self._should_send(symbol, 'BEARISH'):
-                label = f"Bearish ({', '.join(bear_reasons)})"
-                self.notifier.send_order_flow_bearish(
-                    symbol, bai, price, price_chg, depth_ratio,
-                    buy_vol, sell_vol, signal_label=label)
-                self._mark_sent(symbol, 'BEARISH')
-                logger.info(f"BEARISH: {symbol} score={bear_score} — {label}")
-
+                bear_candidates.append((symbol, m, bear_score, bear_reasons,
+                                        bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
             elif bull_bai_shift and bull_score >= min_score and self._should_send(symbol, 'BULLISH'):
-                label = f"Bullish ({', '.join(bull_reasons)})"
-                self.notifier.send_order_flow_bullish(
-                    symbol, bai, price, price_chg, depth_ratio,
-                    buy_vol, sell_vol, signal_label=label)
-                self._mark_sent(symbol, 'BULLISH')
-                logger.info(f"BULLISH: {symbol} score={bull_score} — {label}")
+                bull_candidates.append((symbol, m, bull_score, bull_reasons,
+                                        bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
+
+        # Pass 2 — broad-market move filter
+        for direction, candidates in [('BEARISH', bear_candidates), ('BULLISH', bull_candidates)]:
+            if len(candidates) >= max_per_cycle:
+                symbols = [c[0] for c in candidates]
+                logger.info(
+                    f"Broad market {direction} move — {len(candidates)} stocks triggered "
+                    f"in one cycle (>= {max_per_cycle}), skipping all: {symbols}"
+                )
+                continue
+
+            for (symbol, m, score, reasons,
+                 bai, price, price_chg, depth_ratio, buy_vol, sell_vol) in candidates:
+                label = f"{'Bearish' if direction == 'BEARISH' else 'Bullish'} ({', '.join(reasons)})"
+                if direction == 'BEARISH':
+                    self.notifier.send_order_flow_bearish(
+                        symbol, bai, price, price_chg, depth_ratio,
+                        buy_vol, sell_vol, signal_label=label)
+                    self._mark_sent(symbol, 'BEARISH')
+                    logger.info(f"BEARISH: {symbol} score={score} — {label}")
+                else:
+                    self.notifier.send_order_flow_bullish(
+                        symbol, bai, price, price_chg, depth_ratio,
+                        buy_vol, sell_vol, signal_label=label)
+                    self._mark_sent(symbol, 'BULLISH')
+                    logger.info(f"BULLISH: {symbol} score={score} — {label}")
 
     # --------------------------------------------------------
     # Periodic summary
