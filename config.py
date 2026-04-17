@@ -520,8 +520,9 @@ ORDER_FLOW_BAI_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BEARISH'
 ORDER_FLOW_BAI_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BULLISH', '0.15'))     # BAI rose > 0.15 in one cycle → bullish momentum (raised from 0.10)
 ORDER_FLOW_TICK_VELOCITY_HIGH   = float(os.getenv('ORDER_FLOW_TICK_VELOCITY_HIGH', '1.5'))     # ₹/tick → price moving fast (raised from 1.0)
 ORDER_FLOW_BID_L1_SHRINK_ALERT  = float(os.getenv('ORDER_FLOW_BID_L1_SHRINK_ALERT', '0.70'))  # L1 bid dropped 70%+ → support eroding (raised from 0.40; 40% is too common from MM quote refresh)
-ORDER_FLOW_CUM_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BEARISH', '-0.30'))    # 5-min executed flow imbalance: (buy-sell)/(buy+sell) < -0.30 → sellers dominate
-ORDER_FLOW_CUM_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BULLISH', '0.30'))     # (buy-sell)/(buy+sell) > +0.30 → buyers dominate
+ORDER_FLOW_CUM_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BEARISH', '-0.35'))    # 5-min executed flow imbalance: (buy-sell)/(buy+sell) < -0.35 → sellers dominate (raised from -0.30)
+ORDER_FLOW_CUM_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BULLISH', '0.35'))     # (buy-sell)/(buy+sell) > +0.35 → buyers dominate (raised from 0.30)
+ORDER_FLOW_CUM_EXECUTION_GATE   = float(os.getenv('ORDER_FLOW_CUM_EXECUTION_GATE', '0.20'))    # mandatory gate: |cum_delta_pct| must reach 20% — real money must move before alerting
 
 # Confluence gate — alert only when multiple signals agree
 # No price gate: order flow fires on crowd behaviour alone, before price moves.
@@ -540,8 +541,8 @@ ORDER_FLOW_STALE_THRESHOLD_SEC  = int(os.getenv('ORDER_FLOW_STALE_THRESHOLD_SEC'
 # Institutional flow concentrates in futures — subscribes near-month contracts for 204 stocks.
 ORDER_FLOW_FUTURES_ENABLED       = os.getenv('ORDER_FLOW_FUTURES_ENABLED', 'true').lower() == 'true'
 ORDER_FLOW_FUTURES_TOKENS_FILE   = os.getenv('ORDER_FLOW_FUTURES_TOKENS_FILE', 'data/futures_instrument_tokens.json')
-ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEARISH', '-0.15'))
-ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.15'))
+ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEARISH', '-0.20'))  # raised from -0.15 — sustained futures book shift is harder to spoof
+ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.20'))  # raised from  0.15
 ORDER_FLOW_FUT_CUM_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BEARISH', '-0.30'))
 ORDER_FLOW_FUT_CUM_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BULLISH',  '0.30'))
 ORDER_FLOW_BASIS_BEARISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BEARISH_PCT', '-0.20'))  # futures at 0.20% discount → aggressive selling

@@ -191,14 +191,6 @@ class OrderFlowMonitor:
                 bull_score += 2
                 bull_reasons.append(f"FUT BAI +{fut_bai_delta:.3f}")
 
-            # Futures cumulative 5-min flow (2 pts)
-            if fut_cum_pct <= config.ORDER_FLOW_FUT_CUM_DELTA_BEARISH:
-                bear_score += 2
-                bear_reasons.append(f"FUT 5m {fut_cum_pct*100:.0f}%")
-            if fut_cum_pct >= config.ORDER_FLOW_FUT_CUM_DELTA_BULLISH:
-                bull_score += 2
-                bull_reasons.append(f"FUT 5m +{fut_cum_pct*100:.0f}%")
-
             # Basis divergence (2 pts) — futures at discount = aggressive selling
             if basis_pct <= config.ORDER_FLOW_BASIS_BEARISH_PCT:
                 bear_score += 2
@@ -297,6 +289,12 @@ class OrderFlowMonitor:
                 (has_fut and fut_bai_delta >= config.ORDER_FLOW_FUT_BAI_DELTA_BULLISH and fut_bai >= 0)
             )
             if not (bear_bai_shift or bull_bai_shift):
+                continue
+
+            # Execution gate: real cash trades must confirm before alerting.
+            # BAI/BAI-delta are passive order book depth — fakeable via spoofing.
+            # cum_delta_pct is 5-min executed trade flow — cannot be faked cheaply.
+            if abs(m.get('cum_delta_pct', 0)) < config.ORDER_FLOW_CUM_EXECUTION_GATE:
                 continue
 
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
