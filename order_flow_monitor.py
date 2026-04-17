@@ -296,20 +296,30 @@ class OrderFlowMonitor:
             if not (bear_bai_shift or bull_bai_shift):
                 continue
 
-            if abs(m.get('cum_delta_pct', 0)) < config.ORDER_FLOW_CUM_EXECUTION_GATE:
-                continue
-
+            cum_pct = m.get('cum_delta_pct', 0)
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
 
-            if bear_bai_shift and bear_score >= min_score and self._should_send(symbol, 'BEARISH'):
+            # Directional execution gate: executed trade flow must confirm the alert direction.
+            # abs() was wrong — net buying (cum_pct > 0) should not pass a bearish gate.
+            if (bear_bai_shift and bear_score >= min_score
+                    and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE
+                    and self._should_send(symbol, 'BEARISH')):
                 bear_candidates.append((symbol, m, bear_score, bear_reasons,
                                         bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
-            elif bull_bai_shift and bull_score >= min_score and self._should_send(symbol, 'BULLISH'):
+            elif (bull_bai_shift and bull_score >= min_score
+                    and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE
+                    and self._should_send(symbol, 'BULLISH')):
                 bull_candidates.append((symbol, m, bull_score, bull_reasons,
                                         bai, price, price_chg, depth_ratio, buy_vol, sell_vol))
 
         # Pass 2 — broad-market move filter
-        for direction, candidates in [('BEARISH', bear_candidates), ('BULLISH', bull_candidates)]:
+        bull_blocked = len(bull_candidates) >= max_per_cycle
+        bear_blocked = len(bear_candidates) >= max_per_cycle
+
+        for direction, candidates, other_blocked in [
+            ('BEARISH', bear_candidates, bull_blocked),
+            ('BULLISH', bull_candidates, bear_blocked),
+        ]:
             if len(candidates) >= max_per_cycle:
                 symbols = [c[0] for c in candidates]
                 logger.info(
@@ -318,8 +328,22 @@ class OrderFlowMonitor:
                 )
                 continue
 
+            # Market-environment gate: when the broad market is rising (bull_blocked),
+            # require that bearish candidates have price actually falling (≥ 0.15% down).
+            # This prevents weak-stock noise during a rising market from being mistaken
+            # for genuine reversals.
+            filtered = candidates
+            if direction == 'BEARISH' and other_blocked:
+                filtered = [c for c in candidates if c[6] <= -0.15]  # c[6] = price_chg
+                skipped = len(candidates) - len(filtered)
+                if skipped:
+                    logger.info(
+                        f"Market-env gate: rising market — skipped {skipped} bearish candidates "
+                        f"with flat/positive price change"
+                    )
+
             for (symbol, m, score, reasons,
-                 bai, price, price_chg, depth_ratio, buy_vol, sell_vol) in candidates:
+                 bai, price, price_chg, depth_ratio, buy_vol, sell_vol) in filtered:
                 label = f"{'Bearish' if direction == 'BEARISH' else 'Bullish'} ({', '.join(reasons)})"
                 if direction == 'BEARISH':
                     self.notifier.send_order_flow_bearish(
