@@ -2,14 +2,18 @@
   "date": "2026-04-20",
   "symbols": [
     "AXITA",
+    "E2E",
     "GROWW",
+    "INDBANK",
+    "MAHABANK",
     "NAVKARCORP",
     "NELCO",
     "PNBGILTS",
     "PNBHOUSING",
     "SMLMAH",
-    "UGROCAP"
+    "UGROCAP",
+    "WAAREEINDO"
   ],
-  "saved_at": "2026-04-15 09:32:38",
+  "saved_at": "2026-04-17 09:15:22",
   "source": "NSE event-calendar"
 }

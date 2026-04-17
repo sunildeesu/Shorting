@@ -480,3 +480,69 @@ AUTO_TRADE_PAPER_SLIPPAGE = float(os.getenv('AUTO_TRADE_PAPER_SLIPPAGE', '0.001'
 # ============================================
 ENABLE_GOOGLE_DRIVE_SYNC = os.getenv('ENABLE_GOOGLE_DRIVE_SYNC', 'false').lower() == 'true'
 GOOGLE_DRIVE_SYNC_PATH = os.getenv('GOOGLE_DRIVE_SYNC_PATH', '')  # e.g. ~/Library/CloudStorage/GoogleDrive-user@gmail.com/My Drive/ShortIndicator
+
+# ============================================
+# ORDER FLOW MONITORING (KiteTicker WebSocket)
+# ============================================
+# Real-time market depth analysis for 208 F&O stocks.
+# Runs as a separate process alongside the REST-based central_data_collector.
+# WebSocket streams all stocks simultaneously — full analysis in < 2 seconds.
+
+ENABLE_ORDER_FLOW_MONITOR = os.getenv('ENABLE_ORDER_FLOW_MONITOR', 'true').lower() == 'true'
+
+# Database
+ORDER_FLOW_DB_FILE = 'data/order_flow.db'
+
+# WebSocket tick collection
+ORDER_FLOW_TICK_BUFFER_SIZE     = int(os.getenv('ORDER_FLOW_TICK_BUFFER_SIZE', '5000'))        # in-memory deque maxlen
+ORDER_FLOW_WRITER_INTERVAL_SEC  = float(os.getenv('ORDER_FLOW_WRITER_INTERVAL_SEC', '2.0'))    # flush buffer to DB every N seconds
+ORDER_FLOW_TICK_RETENTION_MINUTES = int(os.getenv('ORDER_FLOW_TICK_RETENTION_MINUTES', '10'))  # delete ticks older than N min
+
+# Analysis
+ORDER_FLOW_ANALYSIS_WINDOW      = int(os.getenv('ORDER_FLOW_ANALYSIS_WINDOW', '30'))           # seconds per metric computation window
+ORDER_FLOW_MONITOR_INTERVAL_SEC = int(os.getenv('ORDER_FLOW_MONITOR_INTERVAL_SEC', '30'))      # main loop cadence
+ORDER_FLOW_ABSORPTION_LOOKBACK  = int(os.getenv('ORDER_FLOW_ABSORPTION_LOOKBACK', '60'))       # seconds for absorption pattern
+ORDER_FLOW_MIN_TICKS            = int(os.getenv('ORDER_FLOW_MIN_TICKS', '3'))                  # min ticks in window to compute metrics
+
+# Alert thresholds
+# NOTE: BAI on liquid F&O stocks rarely crosses ±0.65 even on sharp moves (order book
+# always has deep passive bids). Thresholds calibrated from live SUNPHARMA data (Apr 16).
+ORDER_FLOW_BAI_BULLISH          = float(os.getenv('ORDER_FLOW_BAI_BULLISH', '0.30'))           # BAI > this → bullish signal
+ORDER_FLOW_BAI_BEARISH          = float(os.getenv('ORDER_FLOW_BAI_BEARISH', '-0.30'))          # BAI < this → bearish signal
+ORDER_FLOW_DEPTH_RATIO_BULLISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BULLISH', '2.0'))    # bid/ask depth > this → bullish
+ORDER_FLOW_DEPTH_RATIO_BEARISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BEARISH', '0.5'))    # bid/ask depth < this → bearish
+ORDER_FLOW_WALL_THRESHOLD       = float(os.getenv('ORDER_FLOW_WALL_THRESHOLD', '5.0'))         # single level > 5× avg = wall (internal)
+ORDER_FLOW_WALL_ALERT_THRESHOLD = float(os.getenv('ORDER_FLOW_WALL_ALERT_THRESHOLD', '10.0'))  # > 10× avg = Telegram alert
+ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.60'))  # 0–1 scale
+
+# Leading indicator thresholds (catch drops before price fully moves)
+ORDER_FLOW_BAI_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BEARISH', '-0.15'))    # BAI dropped > 0.15 in one cycle → bearish momentum (raised from -0.10)
+ORDER_FLOW_BAI_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BULLISH', '0.15'))     # BAI rose > 0.15 in one cycle → bullish momentum (raised from 0.10)
+ORDER_FLOW_TICK_VELOCITY_HIGH   = float(os.getenv('ORDER_FLOW_TICK_VELOCITY_HIGH', '1.5'))     # ₹/tick → price moving fast (raised from 1.0)
+ORDER_FLOW_BID_L1_SHRINK_ALERT  = float(os.getenv('ORDER_FLOW_BID_L1_SHRINK_ALERT', '0.70'))  # L1 bid dropped 70%+ → support eroding (raised from 0.40; 40% is too common from MM quote refresh)
+ORDER_FLOW_CUM_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BEARISH', '-0.30'))    # 5-min executed flow imbalance: (buy-sell)/(buy+sell) < -0.30 → sellers dominate
+ORDER_FLOW_CUM_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BULLISH', '0.30'))     # (buy-sell)/(buy+sell) > +0.30 → buyers dominate
+
+# Confluence gate — alert only when multiple signals agree
+# No price gate: order flow fires on crowd behaviour alone, before price moves.
+# The existing 5-min rapid_drop_detector handles price-based alerts.
+ORDER_FLOW_MIN_CONFLUENCE_SCORE = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCORE', '4'))       # need ≥4 pts — requires BAI delta+cum flow, or BAI delta+2 minor signals (raised from 3)
+
+# Alert management
+ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '25'))          # per-stock per-direction cooldown
+ORDER_FLOW_SUMMARY_INTERVAL_MIN = int(os.getenv('ORDER_FLOW_SUMMARY_INTERVAL_MIN', '5'))       # periodic summary cadence
+ORDER_FLOW_SUMMARY_TOP_N        = int(os.getenv('ORDER_FLOW_SUMMARY_TOP_N', '5'))              # top N stocks per side in summary
+
+# Data freshness guard — skip analysis cycle if WebSocket is silent > this many seconds
+ORDER_FLOW_STALE_THRESHOLD_SEC  = int(os.getenv('ORDER_FLOW_STALE_THRESHOLD_SEC', '60'))
+
+# Stock futures order flow (additive layer on top of cash equity WebSocket)
+# Institutional flow concentrates in futures — subscribes near-month contracts for 204 stocks.
+ORDER_FLOW_FUTURES_ENABLED       = os.getenv('ORDER_FLOW_FUTURES_ENABLED', 'true').lower() == 'true'
+ORDER_FLOW_FUTURES_TOKENS_FILE   = os.getenv('ORDER_FLOW_FUTURES_TOKENS_FILE', 'data/futures_instrument_tokens.json')
+ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEARISH', '-0.15'))
+ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.15'))
+ORDER_FLOW_FUT_CUM_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BEARISH', '-0.30'))
+ORDER_FLOW_FUT_CUM_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BULLISH',  '0.30'))
+ORDER_FLOW_BASIS_BEARISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BEARISH_PCT', '-0.20'))  # futures at 0.20% discount → aggressive selling
+ORDER_FLOW_BASIS_BULLISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BULLISH_PCT',  '0.60'))  # futures at 0.60% premium → aggressive buying

@@ -7,14 +7,16 @@
     "CAPITALSFB",
     "CEMPRO",
     "FEDERALBNK",
+    "GRANULES",
     "HEG",
     "KFINTECH",
     "MPHASIS",
     "NAVINFLUOR",
     "NDTV",
     "SCHAEFFLER",
-    "SHREDIGCEM"
+    "SHREDIGCEM",
+    "SYNGENE"
   ],
-  "saved_at": "2026-04-15 09:32:38",
+  "saved_at": "2026-04-17 09:15:22",
   "source": "NSE event-calendar"
 }

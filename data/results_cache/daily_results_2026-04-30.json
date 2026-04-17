@@ -5,14 +5,18 @@
     "ADANIPORTS",
     "BAJAJFINSV",
     "CHOLAFIN",
+    "EQUITASBNK",
+    "GHCLTEXTIL",
     "GODREJAGRO",
     "HINDUNILVR",
+    "KSB",
     "KSOLVES",
     "LALPATHLAB",
     "LAURUSLABS",
     "LGBBROSLTD",
-    "PSPPROJECT"
+    "PSPPROJECT",
+    "SERVOTECH"
   ],
-  "saved_at": "2026-04-15 09:32:38",
+  "saved_at": "2026-04-17 09:15:22",
   "source": "NSE event-calendar"
 }

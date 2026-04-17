@@ -16,6 +16,7 @@ from telegram_notifiers.sector_alerts import SectorAlertNotifier
 from telegram_notifiers.price_action_alerts import PriceActionAlertNotifier
 from telegram_notifiers.nifty_option_alerts import NiftyOptionAlertNotifier
 from telegram_notifiers.volume_profile_alerts import VolumeProfileAlertNotifier
+from telegram_notifiers.order_flow_alerts import OrderFlowAlertNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class TelegramNotifier:
         self.price_action_alerts = PriceActionAlertNotifier()
         self.nifty_option_alerts = NiftyOptionAlertNotifier()
         self.volume_profile_alerts = VolumeProfileAlertNotifier()
+        self.order_flow_alerts = OrderFlowAlertNotifier()
 
         # Expose common properties for backward compatibility
         self.bot_token = self.stock_alerts.bot_token
@@ -272,6 +274,46 @@ class TelegramNotifier:
             total_analyzed=total_analyzed,
             report_path=report_path
         )
+
+    # ========================================
+    # Order Flow Alert Methods
+    # ========================================
+
+    def send_order_flow_bullish(self, symbol: str, bai: float, price: float,
+                                price_change_pct: float, depth_ratio: float,
+                                buy_volume: int, sell_volume: int,
+                                signal_label: str = 'Bullish Pressure') -> bool:
+        """Send bullish order flow alert. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_bullish_imbalance(
+            symbol, bai, price, price_change_pct, depth_ratio, buy_volume, sell_volume,
+            signal_label=signal_label)
+
+    def send_order_flow_bearish(self, symbol: str, bai: float, price: float,
+                                price_change_pct: float, depth_ratio: float,
+                                buy_volume: int, sell_volume: int,
+                                signal_label: str = 'Bearish Pressure') -> bool:
+        """Send bearish order flow alert. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_bearish_imbalance(
+            symbol, bai, price, price_change_pct, depth_ratio, buy_volume, sell_volume,
+            signal_label=signal_label)
+
+    def send_order_flow_absorption(self, symbol: str, signal_type: str, price: float,
+                                   wall_side: str, wall_qty: int, wall_price: float,
+                                   absorption_strength: float, volume_delta: int) -> bool:
+        """Send absorption signal alert. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_absorption_alert(
+            symbol, signal_type, price, wall_side, wall_qty,
+            wall_price, absorption_strength, volume_delta)
+
+    def send_order_flow_wall(self, symbol: str, wall_side: str, wall_price: float,
+                             wall_qty: int, wall_ratio: float, current_price: float) -> bool:
+        """Send massive wall detection alert. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_wall_alert(
+            symbol, wall_side, wall_price, wall_qty, wall_ratio, current_price)
+
+    def send_order_flow_summary(self, top_bullish: list, top_bearish: list) -> bool:
+        """Send periodic order flow summary. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_order_flow_summary(top_bullish, top_bearish)
 
     # ========================================
     # Utility Methods

@@ -22,20 +22,29 @@ class BaseNotifier:
             raise ValueError("Telegram bot token and channel ID must be set in .env file")
 
     def _send_to(self, channel_id: str, message: str) -> bool:
-        """Send message to a specific Telegram channel."""
+        """Send message to a specific Telegram channel. Retries once on 429."""
+        import time as _time
         url = f"{self.base_url}/sendMessage"
         payload = {
             "chat_id": channel_id,
             "text": message,
             "parse_mode": "HTML"
         }
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            response.raise_for_status()
-            return True
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send Telegram message to {channel_id}: {e}")
-            return False
+        for attempt in range(2):
+            try:
+                response = requests.post(url, json=payload, timeout=10)
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 5))
+                    logger.warning(f"Telegram rate limit — waiting {retry_after}s before retry")
+                    _time.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+                return True
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to send Telegram message to {channel_id}: {e}")
+                return False
+        logger.error(f"Telegram message dropped after rate-limit retry: {channel_id}")
+        return False
 
     def _send_message(self, message: str) -> bool:
         """Send message to the main stock alerts channel."""

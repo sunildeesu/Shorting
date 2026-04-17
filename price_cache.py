@@ -57,10 +57,12 @@ class PriceCache:
             os.makedirs(os.path.dirname(self.db_file), exist_ok=True)
 
             # Connect with increased timeout for lock contention handling
-            # Removed check_same_thread=False (services run in separate processes, not threads)
+            # check_same_thread=False is needed because main.py runs monitoring cycles
+            # in a daemon thread while PriceCache is initialized in the main thread
             self.db_conn = sqlite3.connect(
                 self.db_file,
-                timeout=config.SQLITE_TIMEOUT_SECONDS
+                timeout=config.SQLITE_TIMEOUT_SECONDS,
+                check_same_thread=False
             )
 
             # Enable WAL mode (allows concurrent reads during writes)

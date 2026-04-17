@@ -431,7 +431,7 @@ class RapidAlertDetector:
 
                 # Send Telegram notification
                 exit_time = trade['exit_at'].strftime('%H:%M')
-                self.telegram.send_message(
+                self.telegram.send_debug(
                     f"{mode_emoji} <b>{mode_text}AUTO-TRADE EXECUTED</b>\n\n"
                     f"{'🔻' if direction == 'DROP' else '🔺'} <b>{action} {symbol}</b>\n"
                     f"Qty: {trade['quantity']}\n"

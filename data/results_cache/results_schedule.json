@@ -1,14 +1,16 @@
 {
   "schedule": {
-    "RALLIS": "27-Apr-2026",
-    "POWERICA": "21-Apr-2026",
-    "SUNTECK": "21-Apr-2026",
-    "TARIL": "21-Apr-2026",
-    "MUTHOOTMF": "06-May-2026",
-    "GROWW": "20-Apr-2026",
-    "SHREDIGCEM": "29-Apr-2026",
-    "LTF": "24-Apr-2026"
+    "ABSLAMC": "23-Apr-2026",
+    "INFOBEAN": "28-Apr-2026",
+    "JAYNECOIND": "24-Apr-2026",
+    "SWSOLAR": "23-Apr-2026",
+    "HUHTAMAKI": "27-Apr-2026",
+    "DALBHARAT": "28-Apr-2026",
+    "M&MFIN": "24-Apr-2026",
+    "NDLVENTURE": "21-Apr-2026",
+    "IFCI": "28-Apr-2026",
+    "RADICO": "06-May-2026"
   },
-  "last_updated": "2026-04-15 09:32:37",
+  "last_updated": "2026-04-17 09:15:21",
   "source": "NSE API"
 }

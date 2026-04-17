@@ -4,7 +4,9 @@
     "360ONE",
     "CMPDI",
     "CYIENTDLM",
+    "DBSTOCKBRO",
     "HCLTECH",
+    "MAHEPC",
     "NESTLEIND",
     "PERSISTENT",
     "POWERICA",
@@ -14,6 +16,6 @@
     "TATAELXSI",
     "TATAINVEST"
   ],
-  "saved_at": "2026-04-15 09:32:38",
+  "saved_at": "2026-04-17 09:15:22",
   "source": "NSE event-calendar"
 }
