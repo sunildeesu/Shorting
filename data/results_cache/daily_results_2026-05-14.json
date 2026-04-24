@@ -2,12 +2,14 @@
   "date": "2026-05-14",
   "symbols": [
     "ALLCARGO",
+    "CARBORUNIV",
     "ENDURANCE",
     "JSWSTEEL",
     "JTEKTINDIA",
     "MUKANDLTD",
+    "SAILIFE",
     "TIMKEN"
   ],
-  "saved_at": "2026-04-17 09:15:22",
+  "saved_at": "2026-04-24 14:18:09",
   "source": "NSE event-calendar"
 }

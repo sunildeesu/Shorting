@@ -3,18 +3,28 @@
   "symbols": [
     "ADANIGREEN",
     "ATUL",
+    "BEPL",
+    "CANFINHOME",
     "CHENNPETRO",
     "DCBBANK",
+    "HINDZINC",
     "INDUSINDBK",
     "JAYNECOIND",
+    "KSHITIJPOL",
+    "LODHA",
     "LTF",
     "M&MFIN",
+    "MRPL",
+    "RELIANCE",
+    "RPEL",
     "SHRIRAMFIN",
     "SPLPETRO",
     "TANLA",
+    "TNPL",
     "VINYLINDIA",
-    "WENDT"
+    "WENDT",
+    "ZENSARTECH"
   ],
-  "saved_at": "2026-04-17 09:15:22",
+  "saved_at": "2026-04-23 12:37:04",
   "source": "NSE event-calendar"
 }

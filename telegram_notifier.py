@@ -311,6 +311,13 @@ class TelegramNotifier:
         return self.order_flow_alerts.send_wall_alert(
             symbol, wall_side, wall_price, wall_qty, wall_ratio, current_price)
 
+    def send_order_flow_overnight_bullish(self, symbol: str, price: float,
+                                         score: int, signals: str,
+                                         bai: float, fut_bai_delta: float) -> bool:
+        """Send overnight hold alert. Delegates to OrderFlowAlertNotifier."""
+        return self.order_flow_alerts.send_overnight_bullish(
+            symbol, price, score, signals, bai, fut_bai_delta)
+
     def send_order_flow_summary(self, top_bullish: list, top_bearish: list) -> bool:
         """Send periodic order flow summary. Delegates to OrderFlowAlertNotifier."""
         return self.order_flow_alerts.send_order_flow_summary(top_bullish, top_bearish)

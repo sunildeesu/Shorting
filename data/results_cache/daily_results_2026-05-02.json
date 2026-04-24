@@ -1,8 +1,13 @@
 {
   "date": "2026-05-02",
   "symbols": [
-    "LGBBROSLTD"
+    "CDSL",
+    "DMART",
+    "KANPRPLA",
+    "KOTAKBANK",
+    "LGBBROSLTD",
+    "NETWEB"
   ],
-  "saved_at": "2026-04-17 09:15:22",
+  "saved_at": "2026-04-24 14:18:09",
   "source": "NSE event-calendar"
 }

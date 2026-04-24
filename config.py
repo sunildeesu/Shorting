@@ -522,17 +522,25 @@ ORDER_FLOW_TICK_VELOCITY_HIGH   = float(os.getenv('ORDER_FLOW_TICK_VELOCITY_HIGH
 ORDER_FLOW_BID_L1_SHRINK_ALERT  = float(os.getenv('ORDER_FLOW_BID_L1_SHRINK_ALERT', '0.70'))  # L1 bid dropped 70%+ → support eroding (raised from 0.40; 40% is too common from MM quote refresh)
 ORDER_FLOW_CUM_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BEARISH', '-0.35'))    # 5-min executed flow imbalance: (buy-sell)/(buy+sell) < -0.35 → sellers dominate (raised from -0.30)
 ORDER_FLOW_CUM_DELTA_BULLISH    = float(os.getenv('ORDER_FLOW_CUM_DELTA_BULLISH', '0.35'))     # (buy-sell)/(buy+sell) > +0.35 → buyers dominate (raised from 0.30)
-ORDER_FLOW_CUM_EXECUTION_GATE   = float(os.getenv('ORDER_FLOW_CUM_EXECUTION_GATE', '0.20'))    # mandatory gate: |cum_delta_pct| must reach 20% — real money must move before alerting
+ORDER_FLOW_CUM_EXECUTION_GATE   = float(os.getenv('ORDER_FLOW_CUM_EXECUTION_GATE', '0.30'))    # mandatory gate: |cum_delta_pct| must reach 30% — raised from 20% to require stronger real-money confirmation
 
 # Confluence gate — alert only when multiple signals agree
-# No price gate: order flow fires on crowd behaviour alone, before price moves.
-# The existing 5-min rapid_drop_detector handles price-based alerts.
-ORDER_FLOW_MIN_CONFLUENCE_SCORE  = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCORE', '4'))       # need ≥4 pts — requires BAI delta+cum flow, or BAI delta+2 minor signals
+# Score=6 requires at least 3 different 2-pt signals (e.g. cash 5m flow + FUT BAI delta + FUT 5m flow/basis)
+# or 2 two-pt signals + tick velocity + BAI absolute. Raised from 4 to eliminate
+# the dominant noise pattern (5m flow=2pts + FUT BAI delta=2pts = 4pts was too easy to hit).
+ORDER_FLOW_MIN_CONFLUENCE_SCORE  = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCORE', '7'))       # need ≥7 pts — raised from 6: reduces BEARISH noise while keeping high-conviction signals
 ORDER_FLOW_MIN_STOCK_PRICE       = float(os.getenv('ORDER_FLOW_MIN_STOCK_PRICE', '50.0'))        # skip stocks below ₹50 — tick-size noise dominates small moves
 ORDER_FLOW_FUT_MIN_TICK_COUNT    = int(os.getenv('ORDER_FLOW_FUT_MIN_TICK_COUNT', '15'))         # min futures trades in window before trusting FUT cum_delta (< 15 = ±100% trivially)
 
+# Overnight hold alert — fires in closing window for BULLISH signals only
+# Backtest (3 days, 5 trades): 80% win rate, +0.80% avg P&L when buying EOD close, selling 9:25 AM next day
+# BEARISH overnight shorts tested at 24% win rate — do NOT use for overnight holds
+ORDER_FLOW_OVERNIGHT_SCORE_MIN     = int(os.getenv('ORDER_FLOW_OVERNIGHT_SCORE_MIN', '7'))    # ≥7 pts required (score=7 had 43% win intraday but better overnight)
+ORDER_FLOW_OVERNIGHT_WINDOW_START  = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_START', '14'))  # 2:00 PM (hour)
+ORDER_FLOW_OVERNIGHT_WINDOW_END    = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_END', '15'))    # 3:00 PM (hour, exclusive end = 3:15 PM via minute check)
+
 # Alert management
-ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '25'))          # per-stock per-direction cooldown
+ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '45'))          # per-stock per-direction cooldown — raised from 25 to prevent same stock re-firing every 25 min
 ORDER_FLOW_SUMMARY_INTERVAL_MIN = int(os.getenv('ORDER_FLOW_SUMMARY_INTERVAL_MIN', '5'))       # periodic summary cadence
 ORDER_FLOW_SUMMARY_TOP_N        = int(os.getenv('ORDER_FLOW_SUMMARY_TOP_N', '5'))              # top N stocks per side in summary
 
@@ -543,8 +551,8 @@ ORDER_FLOW_STALE_THRESHOLD_SEC  = int(os.getenv('ORDER_FLOW_STALE_THRESHOLD_SEC'
 # Institutional flow concentrates in futures — subscribes near-month contracts for 204 stocks.
 ORDER_FLOW_FUTURES_ENABLED       = os.getenv('ORDER_FLOW_FUTURES_ENABLED', 'true').lower() == 'true'
 ORDER_FLOW_FUTURES_TOKENS_FILE   = os.getenv('ORDER_FLOW_FUTURES_TOKENS_FILE', 'data/futures_instrument_tokens.json')
-ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEARISH', '-0.20'))  # raised from -0.15 — sustained futures book shift is harder to spoof
-ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.20'))  # raised from  0.15
+ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEARISH', '-0.20'))  # sustained futures book shift — kept at -0.20 (score≥6 gate handles quality)
+ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.20'))  # sustained futures book shift — kept at 0.20
 ORDER_FLOW_FUT_CUM_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BEARISH', '-0.30'))
 ORDER_FLOW_FUT_CUM_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BULLISH',  '0.30'))
 ORDER_FLOW_BASIS_BEARISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BEARISH_PCT', '-0.20'))  # futures at 0.20% discount → aggressive selling

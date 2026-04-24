@@ -119,7 +119,7 @@ class CentralDataBackfill:
             logger.error(f"Failed to get last timestamp: {e}")
             return None
 
-    def get_trading_days_to_backfill(self, last_timestamp: Optional[datetime]) -> List[datetime]:
+    def get_trading_days_to_backfill(self, last_timestamp: Optional[datetime], days: int = BACKFILL_DAYS) -> List[datetime]:
         """
         Calculate which trading days need backfilling.
 
@@ -132,11 +132,11 @@ class CentralDataBackfill:
         today = datetime.now().date()
         days_to_check = []
 
-        # Check last BACKFILL_DAYS trading days
+        # Check last `days` trading days
         check_date = today
         trading_days_found = 0
 
-        while trading_days_found < BACKFILL_DAYS:
+        while trading_days_found < days:
             # Skip weekends
             if check_date.weekday() < 5:  # Monday = 0, Friday = 4
                 # Skip NSE holidays
@@ -330,9 +330,12 @@ class CentralDataBackfill:
             logger.error(f"VIX backfill error for {date}: {e}")
             return 0
 
-    def run_backfill(self) -> Dict:
+    def run_backfill(self, days: int = BACKFILL_DAYS) -> Dict:
         """
         Run the full backfill process.
+
+        Args:
+            days: Number of trading days to look back (default: BACKFILL_DAYS)
 
         Returns:
             Dict with backfill statistics
@@ -361,8 +364,8 @@ class CentralDataBackfill:
             logger.info("No existing data in database - full backfill needed")
 
         # Get days to backfill
-        days_to_backfill = self.get_trading_days_to_backfill(last_timestamp)
-        stats['days_checked'] = BACKFILL_DAYS
+        days_to_backfill = self.get_trading_days_to_backfill(last_timestamp, days)
+        stats['days_checked'] = days
 
         if not days_to_backfill:
             logger.info("No backfill needed - data is up to date")
@@ -434,7 +437,13 @@ class CentralDataBackfill:
 
 def run_backfill_standalone():
     """Run backfill as standalone script"""
+    import argparse
     from kiteconnect import KiteConnect
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--days', type=int, default=BACKFILL_DAYS,
+                        help='Number of trading days to backfill (default: %(default)s)')
+    args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -459,7 +468,7 @@ def run_backfill_standalone():
 
     # Run backfill
     backfill = CentralDataBackfill(kite)
-    stats = backfill.run_backfill()
+    stats = backfill.run_backfill(days=args.days)
 
     print(f"\nBackfill complete: {stats}")
 

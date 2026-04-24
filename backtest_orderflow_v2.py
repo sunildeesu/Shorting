@@ -361,6 +361,21 @@ SIGNAL_FILTERS = [
          a['market_regime'] == ('bearish' if a['direction'] == 'BEARISH' else 'bullish') or
          a['score'] >= 6)
     )),
+    # v3 quality gate: score≥6 + must have directional cash flow (30% threshold proxy)
+    # Simulates the new MIN_CONFLUENCE_SCORE=6 + CUM_EXECUTION_GATE=0.30 changes
+    # (We can't check the price direction gate from log text, so proxy with directional_cash)
+    ('v3_score6_cash',    lambda a: (
+        a['score'] >= 6 and a['directional_cash'] and
+        a['symbol'] not in ('IDEA', 'YESBANK')
+    )),
+    # v3 + regime aligned: further require market regime not strongly opposed
+    ('v3_score6_regime',  lambda a: (
+        a['score'] >= 6 and a['directional_cash'] and
+        a['symbol'] not in ('IDEA', 'YESBANK') and
+        (a['market_regime'] == 'neutral' or
+         a['market_regime'] == ('bearish' if a['direction'] == 'BEARISH' else 'bullish') or
+         a['score'] >= 8)
+    )),
 ]
 
 # Time-of-day windows (start_time, label)

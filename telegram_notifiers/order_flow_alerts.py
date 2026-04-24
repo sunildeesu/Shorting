@@ -48,6 +48,26 @@ class OrderFlowAlertNotifier(BaseNotifier):
         )
         return self._send_message(msg)
 
+    def send_overnight_bullish(self, symbol: str, price: float,
+                               score: int, signals: str,
+                               bai: float, fut_bai_delta: float) -> bool:
+        """
+        Overnight Hold alert — institutional BULLISH signal in closing window.
+        Strategy: buy at today's EOD close, sell next day at 9:25 AM.
+        Backtest: 80% win rate, +0.80% avg on quality BULLISH signals after 2 PM.
+        """
+        msg = (
+            f"🌙 <b>OVERNIGHT HOLD — Institutional Buying</b>\n\n"
+            f"📌 <b>{symbol}</b>  ₹{price:,.2f}\n"
+            f"⏰ {datetime.now().strftime('%I:%M %p')} (closing window)\n\n"
+            f"📊 <b>Score:</b> {score}/12  |  <b>BAI:</b> +{bai:.3f}  |  "
+            f"<b>FUT Δ:</b> +{fut_bai_delta:.3f}\n"
+            f"🔍 <b>Signals:</b> {signals}\n\n"
+            f"💡 <b>Strategy:</b> Buy at close (~3:29 PM), sell tomorrow 9:25 AM\n"
+            f"⚠️ <b>Note:</b> Broad crash-day filter active | Use small size"
+        )
+        return self._send_message(msg)
+
     def send_absorption_alert(self, symbol: str, signal_type: str, price: float,
                               wall_side: str, wall_qty: int, wall_price: float,
                               absorption_strength: float, volume_delta: int) -> bool:

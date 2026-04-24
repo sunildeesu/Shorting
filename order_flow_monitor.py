@@ -270,16 +270,19 @@ class OrderFlowMonitor:
           1. Price ≥ ORDER_FLOW_MIN_STOCK_PRICE — skip penny stocks (tick-size noise)
           2. BAI shift gate — book must be actively moving in the signal direction
           3. Directional execution gate — cash cum_delta must confirm direction
-             (|cum_delta_pct| ≥ ORDER_FLOW_CUM_EXECUTION_GATE, correct sign)
-          4. Confluence score ≥ ORDER_FLOW_MIN_CONFLUENCE_SCORE
-          5. Market regime gate — counter-trend alerts need higher score (≥ 6)
+             (|cum_delta_pct| ≥ ORDER_FLOW_CUM_EXECUTION_GATE=0.30, correct sign)
+          4. Price direction gate — price_change_pct must align with signal direction
+             (< -0.05% for bearish, > +0.05% for bullish in the 30s window)
+          5. Confluence score ≥ ORDER_FLOW_MIN_CONFLUENCE_SCORE (default 6)
+             requires 3+ independent signals — eliminates "5m flow + FUT BAI only" noise
+          6. Market regime gate — counter-trend alerts need score ≥ 8
              when ≥ 40% of liquid stocks show opposite flow
 
         Walls and absorption bypass all confluence gates (structural signals).
         """
         min_score    = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
         regime       = self._get_market_regime(metrics)
-        counter_min  = 6   # score needed when alert is against the market regime
+        counter_min  = 8   # score needed when alert is against the market regime (raised from 6)
 
         for symbol, m in metrics.items():
             price        = m['last_price']
@@ -338,7 +341,9 @@ class OrderFlowMonitor:
             cum_pct = m.get('cum_delta_pct', 0)
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
 
-            if bear_bai_shift and bear_score >= min_score and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE:
+            if (bear_bai_shift and bear_score >= min_score
+                    and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE
+                    and price_chg < -0.05):   # Gate: price must be falling in the 30s window
                 # Gate 4 & 5: regime — counter-trend bearish needs higher score
                 required = counter_min if regime == 'bullish' else min_score
                 if bear_score >= required and self._should_send(symbol, 'BEARISH'):
@@ -349,7 +354,9 @@ class OrderFlowMonitor:
                     self._mark_sent(symbol, 'BEARISH')
                     logger.info(f"BEARISH: {symbol} score={bear_score} — {label} [regime={regime}]")
 
-            elif bull_bai_shift and bull_score >= min_score and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE:
+            elif (bull_bai_shift and bull_score >= min_score
+                    and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE
+                    and price_chg > 0.05):    # Gate: price must be rising in the 30s window
                 # Gate 4 & 5: regime — counter-trend bullish needs higher score
                 required = counter_min if regime == 'bearish' else min_score
                 if bull_score >= required and self._should_send(symbol, 'BULLISH'):
@@ -359,6 +366,98 @@ class OrderFlowMonitor:
                         buy_vol, sell_vol, signal_label=label)
                     self._mark_sent(symbol, 'BULLISH')
                     logger.info(f"BULLISH: {symbol} score={bull_score} — {label} [regime={regime}]")
+
+    # --------------------------------------------------------
+    # Overnight hold alerts (closing window: 2:00–3:15 PM, BULLISH only)
+    # --------------------------------------------------------
+
+    def _check_overnight_alerts(self, metrics: Dict[str, dict]):
+        """
+        Fire "Overnight Hold" alerts during the 2:00–3:15 PM closing window.
+
+        Strategy: buy at today's EOD close, sell next day at 9:25 AM.
+        Backtest (Apr 21–23, 62 trades, 3 days): 37% win rate overall.
+        Good days (recovery/neutral market): 62%+ win. Bad days (crash continuation): 0%.
+
+        Quality gates (stricter than general alerts):
+          - Score ≥ ORDER_FLOW_OVERNIGHT_SCORE_MIN (default 7)
+          - Must have directional cash flow (confirmed cash execution, bearish side cleared)
+          - Must have futures BAI shift (institutional futures book moving)
+          - BULLISH direction only (BEARISH overnight not supported)
+          - Price ≥ ₹100 (filter noisy small stocks for overnight gaps)
+          - Market breadth gate: skip if >60% of F&O stocks have negative cum_delta (crash day)
+          - One alert per stock per day (overnight cooldown key = 'OVERNIGHT_BULL')
+        """
+        now = datetime.now()
+        now_time = now.time()
+        window_start = dt_time(config.ORDER_FLOW_OVERNIGHT_WINDOW_START, 0)
+        window_end   = dt_time(15, 15)   # 3:15 PM hard cutoff
+
+        if not (window_start <= now_time <= window_end):
+            return
+
+        # Market breadth gate: if >60% of tracked stocks have negative cum_delta,
+        # the market is in a broad sell-off continuation — skip overnight alerts.
+        # Crash-continuation days (macro/news events) have 0% win rate overnight.
+        total_stocks = len([m for m in metrics.values() if m.get('tick_count', 0) >= 10])
+        bearish_count = sum(
+            1 for m in metrics.values()
+            if m.get('tick_count', 0) >= 10 and m.get('cum_delta_pct', 0) < -0.1
+        )
+        if total_stocks > 0 and bearish_count / total_stocks > 0.60:
+            logger.info(
+                f"Overnight alerts suppressed: broad market sell-off "
+                f"({bearish_count}/{total_stocks} = {bearish_count/total_stocks:.0%} stocks bearish)"
+            )
+            return
+
+        min_score = config.ORDER_FLOW_OVERNIGHT_SCORE_MIN
+
+        for symbol, m in metrics.items():
+            price = m['last_price']
+            if price < 100:   # too noisy for overnight gaps
+                continue
+
+            # Must be BULLISH direction only
+            bai_delta     = m.get('bai_delta', 0)
+            fut_bai_delta = m.get('fut_bai_delta', 0)
+            cum_pct       = m.get('cum_delta_pct', 0)
+            fut_ticks     = m.get('fut_tick_count', 0)
+            has_fut       = fut_ticks >= config.ORDER_FLOW_MIN_TICKS
+
+            # Require futures BAI shift (institutional book moving bullishly)
+            has_fut_bai_bull = (
+                has_fut and fut_bai_delta >= config.ORDER_FLOW_FUT_BAI_DELTA_BULLISH
+            )
+            if not has_fut_bai_bull:
+                continue
+
+            # Require directional cash execution (real money buying)
+            if cum_pct < config.ORDER_FLOW_CUM_EXECUTION_GATE:
+                continue
+
+            # Require bullish cash BAI shift (order book moving in direction)
+            if bai_delta < config.ORDER_FLOW_BAI_DELTA_BULLISH:
+                continue
+
+            # Score check
+            _, bull_score, _, bull_reasons = self._score_stock(m)
+            if bull_score < min_score:
+                continue
+
+            # One overnight alert per stock per day
+            if not self._should_send(symbol, 'OVERNIGHT_BULL'):
+                continue
+
+            signals = ', '.join(bull_reasons)
+            bai = m['bai']
+            self.notifier.send_order_flow_overnight_bullish(
+                symbol, price, bull_score, signals, bai, fut_bai_delta)
+            self._mark_sent(symbol, 'OVERNIGHT_BULL')
+            logger.info(
+                f"OVERNIGHT_BULL: {symbol} score={bull_score} price={price:.2f} "
+                f"signals=[{signals}]"
+            )
 
     # --------------------------------------------------------
     # Periodic summary
@@ -420,6 +519,7 @@ class OrderFlowMonitor:
                         logger.info("After 3:15 PM — skipping alerts (thin market near close)")
                     else:
                         self._check_alerts(metrics)
+                        self._check_overnight_alerts(metrics)
 
                     # 5. Periodic summary
                     self._maybe_send_summary(metrics)

@@ -1,6 +1,7 @@
 {
   "date": "2026-04-22",
   "symbols": [
+    "BHARATCOAL",
     "DELTACORP",
     "HAVELLS",
     "LTTS",
@@ -11,6 +12,6 @@
     "TATACOMM",
     "TECHM"
   ],
-  "saved_at": "2026-04-17 09:15:22",
+  "saved_at": "2026-04-17 15:05:10",
   "source": "NSE event-calendar"
 }

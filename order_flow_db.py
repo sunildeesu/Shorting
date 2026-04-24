@@ -352,9 +352,12 @@ class OrderFlowDB:
     def get_previous_bai_map(self) -> Tuple[Dict[str, float], Dict[str, float]]:
         """
         Return (cash_bai_map, fut_bai_map) from flow_metrics before this cycle's upsert.
-        Used by analyzer to compute BAI delta for both cash and futures.
+        Only returns rows updated within the last 5 minutes — stale rows (e.g. from a
+        mid-day restart gap) are excluded so bai_delta defaults to 0, not a 4-hour delta.
         """
-        cursor = self.conn.execute("SELECT symbol, bai, fut_bai FROM flow_metrics")
+        cutoff = (datetime.now() - timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
+        cursor = self.conn.execute(
+            "SELECT symbol, bai, fut_bai FROM flow_metrics WHERE ts >= ?", (cutoff,))
         cash_map, fut_map = {}, {}
         for row in cursor.fetchall():
             cash_map[row[0]] = row[1]

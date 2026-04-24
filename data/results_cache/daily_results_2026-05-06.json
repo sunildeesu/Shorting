@@ -1,17 +1,24 @@
 {
   "date": "2026-05-06",
   "symbols": [
+    "APCOTEXIND",
     "APTUS",
     "BAJAJ-AUTO",
     "BLUESTARCO",
+    "CANDC",
+    "CGPOWER",
+    "EMUDHRA",
+    "FSL",
     "GODREJCP",
     "HEXT",
     "KANSAINER",
     "MUTHOOTMF",
     "RADICO",
     "RML",
-    "SHREECEM"
+    "RSWM",
+    "SHREECEM",
+    "SOUTHBANK"
   ],
-  "saved_at": "2026-04-17 09:15:22",
+  "saved_at": "2026-04-24 14:18:09",
   "source": "NSE event-calendar"
 }
