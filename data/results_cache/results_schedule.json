@@ -1,17 +1,21 @@
 {
   "schedule": {
-    "HLVLTD": "12-May-2026",
-    "DIXON": "12-May-2026",
-    "VENKEYS": "14-May-2026",
-    "CLEANMAX": "12-May-2026",
-    "PFIZER": "12-May-2026",
-    "CUBEXTUB": "15-May-2026",
-    "BALMLAWRIE": "15-May-2026",
-    "AVADHSUGAR": "12-May-2026",
-    "JSWENERGY": "11-May-2026",
-    "GARUDA": "11-May-2026",
-    "GREENPOWER": "11-May-2026"
+    "MONARCH": "15-May-2026",
+    "MADRASFERT": "12-May-2026",
+    "LEEL": "11-May-2026",
+    "PFC": "13-May-2026",
+    "MEDIASSIST": "09-May-2026",
+    "PALASHSECU": "15-May-2026",
+    "PAR": "14-May-2026",
+    "HINDCON": "14-May-2026",
+    "KIMS": "15-May-2026",
+    "DYCL": "12-May-2026",
+    "GPPL": "28-May-2026",
+    "ARVINDFASN": "06-May-2026",
+    "CAPILLARY": "06-May-2026",
+    "UNIECOM": "06-May-2026",
+    "KPIGREEN": "06-May-2026"
   },
-  "last_updated": "2026-05-06 09:15:26",
+  "last_updated": "2026-05-06 12:24:07",
   "source": "NSE API"
 }
