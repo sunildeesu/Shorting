@@ -87,7 +87,7 @@ EARLY_WARNING_REQUIRE_VWAP = os.getenv('EARLY_WARNING_REQUIRE_VWAP', 'true').low
 # Institutional orders often cause sharp directional moves before 3:30 PM close
 
 ENABLE_CLOSING_WINDOW_MONITOR = os.getenv('ENABLE_CLOSING_WINDOW_MONITOR', 'true').lower() == 'true'
-CLOSING_WINDOW_MIN_SCORE = int(os.getenv('CLOSING_WINDOW_MIN_SCORE', '65'))
+CLOSING_WINDOW_MIN_SCORE = int(os.getenv('CLOSING_WINDOW_MIN_SCORE', '75'))
 CLOSING_WINDOW_SEND_SUMMARY = os.getenv('CLOSING_WINDOW_SEND_SUMMARY', 'true').lower() == 'true'
 
 # ============================================

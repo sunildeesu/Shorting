@@ -482,6 +482,7 @@ class OrderFlowMonitor:
         self.notifier.send_order_flow_summary(top_bullish, top_bearish)
         self._last_summary_time = datetime.now()
         logger.info(f"Summary sent — top bullish: {[m['symbol'] for m in top_bullish]}")
+        logger.info(f"Summary sent — top bearish: {[m['symbol'] for m in top_bearish]}")
 
     # --------------------------------------------------------
     # Main analysis loop

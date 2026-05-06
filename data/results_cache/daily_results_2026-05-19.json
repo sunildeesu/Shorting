@@ -3,9 +3,17 @@
   "symbols": [
     "BASF",
     "BOSCH-HCIL",
+    "DCMFINSERV",
+    "DREDGECORP",
+    "FINEORG",
+    "GPIL",
+    "GSFC",
+    "HCG",
     "MINDTECK",
+    "NEPHROPLUS",
+    "PTC",
     "RITES"
   ],
-  "saved_at": "2026-04-24 14:18:10",
+  "saved_at": "2026-05-06 09:15:27",
   "source": "NSE event-calendar"
 }

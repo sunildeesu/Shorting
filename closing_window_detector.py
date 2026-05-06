@@ -66,6 +66,9 @@ class ClosingWindowDetector:
         self._day_baseline: Optional[Dict] = None  # Cached at 3:10 PM
         self._nifty_window_start_price: Optional[float] = None
         self._window_scores: Dict[str, Dict] = {}  # Track all scored stocks for summary
+        self._bull_alerts_today: int = 0   # Per-direction cap to prevent flood
+        self._bear_alerts_today: int = 0
+        self._max_alerts_per_direction: int = 4
 
         logger.info(f"ClosingWindowDetector initialized (min_score: {self.min_score}, "
                     f"summary: {self.send_summary}, window: 15:10-15:25)")
@@ -78,6 +81,8 @@ class ClosingWindowDetector:
         self._day_baseline = None
         self._nifty_window_start_price = None
         self._window_scores = {}
+        self._bull_alerts_today = 0
+        self._bear_alerts_today = 0
         logger.info("ClosingWindowDetector: Daily state reset")
 
     def detect_all(self, current_quotes: Dict[str, Dict]) -> Dict:
@@ -180,15 +185,43 @@ class ClosingWindowDetector:
                     stats['stocks_scored'] += 1
                     composite_score = score_result['composite']
 
-                    # Track for summary
+                    # Quality gate: both price AND volume must contribute meaningfully.
+                    # Prevents alerts driven purely by direction/NIFTY correlation.
+                    # price_score >= 10 → at least 1.5x price acceleration (or new extreme)
+                    # volume_score >= 20 → at least 2x volume surge
+                    passes_quality_gate = (
+                        score_result['price_score'] >= 10
+                        and score_result['volume_score'] >= 20
+                    )
+
+                    # Track for summary (uses raw composite, no quality gate — summary is informational)
                     if composite_score >= self.min_score:
                         self._window_scores[symbol] = score_result
 
                     # Send real-time alert if threshold met and not already alerted
-                    if composite_score >= self.min_score and symbol not in self._alerted_today:
+                    if (composite_score >= self.min_score
+                            and passes_quality_gate
+                            and symbol not in self._alerted_today):
+                        # Per-direction cap: suppress individual alerts if too many have
+                        # already fired today (market-wide move, not institutional).
+                        # 3:25 PM summary still covers all qualifying stocks.
+                        is_buying = score_result['is_buying']
+                        dir_count = self._bull_alerts_today if is_buying else self._bear_alerts_today
+                        if dir_count >= self._max_alerts_per_direction:
+                            logger.info(
+                                f"CLOSING WINDOW: {symbol} score={composite_score} skipped — "
+                                f"{'bull' if is_buying else 'bear'} cap ({dir_count}) reached"
+                            )
+                            self._alerted_today.add(symbol)  # still mark to avoid re-check
+                            continue
+
                         success = self._send_stock_alert(symbol, score_result, nifty_change_pct, len(candles))
                         if success:
                             self._alerted_today.add(symbol)
+                            if is_buying:
+                                self._bull_alerts_today += 1
+                            else:
+                                self._bear_alerts_today += 1
                             stats['alerts_sent'] += 1
                             logger.info(f"CLOSING WINDOW ALERT: {symbol} score={composite_score}/100 "
                                        f"price={score_result['price_change_pct']:+.2f}% "

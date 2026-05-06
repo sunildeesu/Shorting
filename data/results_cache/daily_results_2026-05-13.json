@@ -1,11 +1,32 @@
 {
   "date": "2026-05-13",
   "symbols": [
+    "ACL",
+    "BALAMINES",
+    "BHARTIARTL",
+    "BHARTIHEXA",
+    "CARERATING",
     "CIPLA",
+    "CROMPTON",
+    "DCMSHRIRAM",
+    "EXPLEOSOL",
     "GLAXO",
+    "IKS",
+    "JSWDULUX",
+    "KAYNES",
+    "LICHSGFIN",
+    "MANINFRA",
     "NITCO",
-    "SMARTLINK"
+    "OIL",
+    "PFC",
+    "QPOWER",
+    "SAGCEM",
+    "SHARDACROP",
+    "SMARTLINK",
+    "TIINDIA",
+    "TMCV",
+    "TVSMOTOR"
   ],
-  "saved_at": "2026-04-24 14:18:09",
+  "saved_at": "2026-05-06 09:15:27",
   "source": "NSE event-calendar"
 }

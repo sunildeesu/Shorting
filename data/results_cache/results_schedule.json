@@ -1,19 +1,17 @@
 {
   "schedule": {
-    "APCOTEXIND": "06-May-2026",
-    "KKCL": "09-May-2026",
-    "SHANTIGEAR": "05-May-2026",
-    "GOCOLORS": "30-Apr-2026",
-    "INSPIRISYS": "08-May-2026",
-    "INDUSINVIT": "29-Apr-2026",
-    "VAKRANGEE": "29-Apr-2026",
-    "INDIAMART": "30-Apr-2026",
-    "NETWEB": "02-May-2026",
-    "HINDZINC": "24-Apr-2026",
-    "ADANIGREEN": "24-Apr-2026",
-    "ATUL": "24-Apr-2026",
-    "ICICIBANK": "24-Apr-2026"
+    "HLVLTD": "12-May-2026",
+    "DIXON": "12-May-2026",
+    "VENKEYS": "14-May-2026",
+    "CLEANMAX": "12-May-2026",
+    "PFIZER": "12-May-2026",
+    "CUBEXTUB": "15-May-2026",
+    "BALMLAWRIE": "15-May-2026",
+    "AVADHSUGAR": "12-May-2026",
+    "JSWENERGY": "11-May-2026",
+    "GARUDA": "11-May-2026",
+    "GREENPOWER": "11-May-2026"
   },
-  "last_updated": "2026-04-24 14:18:09",
+  "last_updated": "2026-05-06 09:15:26",
   "source": "NSE API"
 }
