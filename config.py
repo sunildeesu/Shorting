@@ -511,8 +511,8 @@ ORDER_FLOW_BAI_BULLISH          = float(os.getenv('ORDER_FLOW_BAI_BULLISH', '0.3
 ORDER_FLOW_BAI_BEARISH          = float(os.getenv('ORDER_FLOW_BAI_BEARISH', '-0.30'))          # BAI < this → bearish signal
 ORDER_FLOW_DEPTH_RATIO_BULLISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BULLISH', '2.0'))    # bid/ask depth > this → bullish
 ORDER_FLOW_DEPTH_RATIO_BEARISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BEARISH', '0.5'))    # bid/ask depth < this → bearish
-ORDER_FLOW_WALL_THRESHOLD       = float(os.getenv('ORDER_FLOW_WALL_THRESHOLD', '5.0'))         # single level > 5× avg = wall (internal)
-ORDER_FLOW_WALL_ALERT_THRESHOLD = float(os.getenv('ORDER_FLOW_WALL_ALERT_THRESHOLD', '10.0'))  # > 10× avg = Telegram alert
+ORDER_FLOW_WALL_THRESHOLD       = float(os.getenv('ORDER_FLOW_WALL_THRESHOLD', '5.0'))         # single level > 5× avg = wall (internal detection)
+ORDER_FLOW_WALL_ALERT_THRESHOLD = float(os.getenv('ORDER_FLOW_WALL_ALERT_THRESHOLD', '50.0'))  # > 50× avg other levels = Telegram alert (10× was set when wall detection was broken; recalibrated after fix)
 ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.60'))  # 0–1 scale
 
 # Leading indicator thresholds (catch drops before price fully moves)

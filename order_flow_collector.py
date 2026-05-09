@@ -149,7 +149,15 @@ class OrderFlowCollector:
             'ask_l3_qty': ask_qtys[2], 'ask_l4_qty': ask_qtys[3],
             'ask_l5_qty': ask_qtys[4],
             'bid_l1_price': safe_price(buys, 0),
+            'bid_l2_price': safe_price(buys, 1),
+            'bid_l3_price': safe_price(buys, 2),
+            'bid_l4_price': safe_price(buys, 3),
+            'bid_l5_price': safe_price(buys, 4),
             'ask_l1_price': safe_price(sells, 0),
+            'ask_l2_price': safe_price(sells, 1),
+            'ask_l3_price': safe_price(sells, 2),
+            'ask_l4_price': safe_price(sells, 3),
+            'ask_l5_price': safe_price(sells, 4),
         }
 
     def _parse_tick(self, raw: dict) -> Optional[dict]:

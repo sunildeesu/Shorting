@@ -80,7 +80,6 @@ class OrderFlowAnalyzer:
         depth_ratio  = self._compute_depth_ratio(cash_ticks)
         delta, buy_vol, sell_vol = self._compute_volume_delta(cash_ticks)
         tick_velocity = self._compute_tick_velocity(cash_ticks)
-        bid_l1_shrink = self._compute_bid_l1_shrink(cash_ticks)
         price_chg    = self._compute_price_change(cash_ticks)
 
         cum_buy, cum_sell = self.db.get_cumulative_volume_stats(symbol, minutes=5, asset_type='CASH')
@@ -131,7 +130,6 @@ class OrderFlowAnalyzer:
             'buy_volume':        buy_vol,
             'sell_volume':       sell_vol,
             'cum_delta_pct':     round(cum_delta_pct, 4),
-            'bid_l1_shrink_pct': round(bid_l1_shrink, 4),
             'tick_velocity':     round(tick_velocity, 4),
             'price_change_pct':  round(price_chg, 4),
             'has_bid_wall':      has_bid_wall,
@@ -257,9 +255,11 @@ class OrderFlowAnalyzer:
             qtys = [q for q, p in levels if q > 0]
             if len(qtys) < 2:
                 return False, 0.0, 0.0, 0
-            avg_qty = sum(qtys) / len(qtys)
             max_qty = max(qtys)
-            ratio = max_qty / avg_qty if avg_qty > 0 else 0.0
+            others = list(qtys)
+            others.remove(max_qty)   # exclude the candidate wall level from average
+            avg_other = sum(others) / len(others)
+            ratio = max_qty / avg_other if avg_other > 0 else 0.0
             if ratio >= config.ORDER_FLOW_WALL_THRESHOLD:
                 max_price = next((p for q, p in levels if q == max_qty), 0.0)
                 return True, ratio, max_price, max_qty

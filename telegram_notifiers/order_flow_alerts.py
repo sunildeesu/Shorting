@@ -15,7 +15,8 @@ class OrderFlowAlertNotifier(BaseNotifier):
     def send_bullish_imbalance(self, symbol: str, bai: float, price: float,
                                price_change_pct: float, depth_ratio: float,
                                buy_volume: int, sell_volume: int,
-                               signal_label: str = 'Bullish Pressure') -> bool:
+                               signal_label: str = 'Bullish Pressure',
+                               wall_context: str = '') -> bool:
         direction = "▲" if price_change_pct >= 0 else "▼"
         sign = "+" if price_change_pct >= 0 else ""
         delta = buy_volume - sell_volume
@@ -28,12 +29,15 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"📊 <b>BAI:</b> +{bai:.3f}  |  <b>Depth:</b> {depth_ratio:.1f}×\n"
             f"📦 <b>Delta:</b> {delta_str}  |  🟢 {buy_volume:,}  🔴 {sell_volume:,}"
         )
+        if wall_context:
+            msg += f"\n{wall_context}"
         return self._send_message(msg)
 
     def send_bearish_imbalance(self, symbol: str, bai: float, price: float,
                                price_change_pct: float, depth_ratio: float,
                                buy_volume: int, sell_volume: int,
-                               signal_label: str = 'Bearish Pressure') -> bool:
+                               signal_label: str = 'Bearish Pressure',
+                               wall_context: str = '') -> bool:
         direction = "▼" if price_change_pct <= 0 else "▲"
         sign = "+" if price_change_pct >= 0 else ""
         delta = buy_volume - sell_volume
@@ -46,6 +50,8 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"📊 <b>BAI:</b> {bai:.3f}  |  <b>Depth:</b> {depth_ratio:.2f}×\n"
             f"📦 <b>Delta:</b> {delta_str}  |  🟢 {buy_volume:,}  🔴 {sell_volume:,}"
         )
+        if wall_context:
+            msg += f"\n{wall_context}"
         return self._send_message(msg)
 
     def send_overnight_bullish(self, symbol: str, price: float,
@@ -130,14 +136,16 @@ class OrderFlowAlertNotifier(BaseNotifier):
 
         bullish_lines = []
         for i, m in enumerate(top_bullish, 1):
+            flow_pct = m.get('cum_delta_pct', 0) * 100
             bullish_lines.append(
-                f"  {i}. <b>{m['symbol']}</b>  BAI +{m['bai']:.2f}  ₹{m['last_price']:,.0f}"
+                f"  {i}. <b>{m['symbol']}</b>  flow +{flow_pct:.0f}%  ₹{m['last_price']:,.0f}"
             )
 
         bearish_lines = []
         for i, m in enumerate(top_bearish, 1):
+            flow_pct = m.get('cum_delta_pct', 0) * 100
             bearish_lines.append(
-                f"  {i}. <b>{m['symbol']}</b>  BAI {m['bai']:.2f}  ₹{m['last_price']:,.0f}"
+                f"  {i}. <b>{m['symbol']}</b>  flow {flow_pct:.0f}%  ₹{m['last_price']:,.0f}"
             )
 
         bullish_block = "\n".join(bullish_lines) if bullish_lines else "  —"

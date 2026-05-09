@@ -97,8 +97,22 @@ class OrderFlowDB:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=30000")
         self._create_tables(conn)
+        self._migrate_tables(conn)
         conn.close()
         logger.info(f"OrderFlowDB initialised: {self.db_path} (mode={self.mode})")
+
+    def _migrate_tables(self, conn: sqlite3.Connection):
+        """Add new columns to existing tables without losing data."""
+        new_cols = [
+            'bid_l2_price', 'bid_l3_price', 'bid_l4_price', 'bid_l5_price',
+            'ask_l2_price', 'ask_l3_price', 'ask_l4_price', 'ask_l5_price',
+        ]
+        for col in new_cols:
+            try:
+                conn.execute(f"ALTER TABLE tick_snapshots ADD COLUMN {col} REAL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        conn.commit()
 
     def _create_tables(self, conn: sqlite3.Connection):
         conn.executescript("""
@@ -128,7 +142,15 @@ class OrderFlowDB:
                 ask_l4_qty        INTEGER DEFAULT 0,
                 ask_l5_qty        INTEGER DEFAULT 0,
                 bid_l1_price      REAL    DEFAULT 0,
-                ask_l1_price      REAL    DEFAULT 0
+                bid_l2_price      REAL    DEFAULT 0,
+                bid_l3_price      REAL    DEFAULT 0,
+                bid_l4_price      REAL    DEFAULT 0,
+                bid_l5_price      REAL    DEFAULT 0,
+                ask_l1_price      REAL    DEFAULT 0,
+                ask_l2_price      REAL    DEFAULT 0,
+                ask_l3_price      REAL    DEFAULT 0,
+                ask_l4_price      REAL    DEFAULT 0,
+                ask_l5_price      REAL    DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_tick_symbol_ts
@@ -209,7 +231,12 @@ class OrderFlowDB:
                     t['bid_l4_qty'], t['bid_l5_qty'],
                     t['ask_l1_qty'], t['ask_l2_qty'], t['ask_l3_qty'],
                     t['ask_l4_qty'], t['ask_l5_qty'],
-                    t['bid_l1_price'], t['ask_l1_price'],
+                    t['bid_l1_price'], t.get('bid_l2_price', 0),
+                    t.get('bid_l3_price', 0), t.get('bid_l4_price', 0),
+                    t.get('bid_l5_price', 0),
+                    t['ask_l1_price'], t.get('ask_l2_price', 0),
+                    t.get('ask_l3_price', 0), t.get('ask_l4_price', 0),
+                    t.get('ask_l5_price', 0),
                 ))
             self.conn.executemany("""
                 INSERT INTO tick_snapshots (
@@ -220,8 +247,9 @@ class OrderFlowDB:
                     bid_depth_total, ask_depth_total,
                     bid_l1_qty, bid_l2_qty, bid_l3_qty, bid_l4_qty, bid_l5_qty,
                     ask_l1_qty, ask_l2_qty, ask_l3_qty, ask_l4_qty, ask_l5_qty,
-                    bid_l1_price, ask_l1_price
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    bid_l1_price, bid_l2_price, bid_l3_price, bid_l4_price, bid_l5_price,
+                    ask_l1_price, ask_l2_price, ask_l3_price, ask_l4_price, ask_l5_price
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, rows)
             self.conn.commit()
 
@@ -315,7 +343,8 @@ class OrderFlowDB:
                    bid_depth_total, ask_depth_total,
                    bid_l1_qty, bid_l2_qty, bid_l3_qty, bid_l4_qty, bid_l5_qty,
                    ask_l1_qty, ask_l2_qty, ask_l3_qty, ask_l4_qty, ask_l5_qty,
-                   bid_l1_price, ask_l1_price
+                   bid_l1_price, bid_l2_price, bid_l3_price, bid_l4_price, bid_l5_price,
+                   ask_l1_price, ask_l2_price, ask_l3_price, ask_l4_price, ask_l5_price
             FROM tick_snapshots
             WHERE ts >= ?
             ORDER BY symbol, asset_type, ts ASC
@@ -336,7 +365,12 @@ class OrderFlowDB:
                 'bid_l4_qty': row[15], 'bid_l5_qty': row[16],
                 'ask_l1_qty': row[17], 'ask_l2_qty': row[18], 'ask_l3_qty': row[19],
                 'ask_l4_qty': row[20], 'ask_l5_qty': row[21],
-                'bid_l1_price': row[22], 'ask_l1_price': row[23],
+                'bid_l1_price': row[22], 'bid_l2_price': row[23],
+                'bid_l3_price': row[24], 'bid_l4_price': row[25],
+                'bid_l5_price': row[26],
+                'ask_l1_price': row[27], 'ask_l2_price': row[28],
+                'ask_l3_price': row[29], 'ask_l4_price': row[30],
+                'ask_l5_price': row[31],
             })
         return result
 
@@ -368,21 +402,28 @@ class OrderFlowDB:
                                     asset_type: str = 'CASH') -> Tuple[int, int]:
         """
         Return (buy_vol, sell_vol) for executed trades over last N minutes.
-        buy_vol:  sum of qty where last_price >= best_ask (buyer-initiated)
-        sell_vol: sum of qty where last_price <= best_bid (seller-initiated)
-        Caller computes pct = (buy - sell) / (buy + sell) for normalised comparison.
-        asset_type: 'CASH' or 'FUT'
+
+        Uses LAG(volume) to compute the per-tick volume delta so that book-update
+        ticks (where last_quantity repeats the prior trade's qty) are not counted.
+        Only ticks where cumulative volume increased represent real trades.
+
+        buy_vol:  sum of vol_delta where last_price >= best_ask (buyer-initiated)
+        sell_vol: sum of vol_delta where last_price <= best_bid (seller-initiated)
         """
         cutoff = (datetime.now() - timedelta(minutes=minutes)).strftime('%Y-%m-%d %H:%M:%S')
         cursor = self.conn.execute("""
-            SELECT SUM(CASE
-                WHEN last_price >= best_ask AND best_ask > 0 AND last_quantity > 0 THEN last_quantity
-                ELSE 0 END) as buy_vol,
-                   SUM(CASE
-                WHEN last_price <= best_bid AND best_bid > 0 AND last_quantity > 0 THEN last_quantity
-                ELSE 0 END) as sell_vol
-            FROM tick_snapshots
-            WHERE symbol = ? AND ts >= ? AND asset_type = ?
+            WITH deltas AS (
+                SELECT last_price, best_ask, best_bid,
+                       volume - COALESCE(LAG(volume) OVER (ORDER BY ts), volume) AS vol_delta
+                FROM tick_snapshots
+                WHERE symbol = ? AND ts >= ? AND asset_type = ?
+            )
+            SELECT
+                SUM(CASE WHEN vol_delta > 0 AND last_price >= best_ask AND best_ask > 0
+                         THEN vol_delta ELSE 0 END) AS buy_vol,
+                SUM(CASE WHEN vol_delta > 0 AND last_price <= best_bid AND best_bid > 0
+                         THEN vol_delta ELSE 0 END) AS sell_vol
+            FROM deltas
         """, (symbol, cutoff, asset_type))
         row = cursor.fetchone()
         if row and row[0] is not None:

@@ -1,21 +1,20 @@
 {
   "schedule": {
-    "MONARCH": "15-May-2026",
-    "MADRASFERT": "12-May-2026",
-    "LEEL": "11-May-2026",
-    "PFC": "13-May-2026",
-    "MEDIASSIST": "09-May-2026",
-    "PALASHSECU": "15-May-2026",
-    "PAR": "14-May-2026",
-    "HINDCON": "14-May-2026",
-    "KIMS": "15-May-2026",
-    "DYCL": "12-May-2026",
-    "GPPL": "28-May-2026",
-    "ARVINDFASN": "06-May-2026",
-    "CAPILLARY": "06-May-2026",
-    "UNIECOM": "06-May-2026",
-    "KPIGREEN": "06-May-2026"
+    "ATALREAL": "14-May-2026",
+    "KRBL": "14-May-2026",
+    "TRANSWORLD": "19-May-2026",
+    "ALEMBICLTD": "19-May-2026",
+    "SAIL": "15-May-2026",
+    "PREMIERENE": "15-May-2026",
+    "CLEDUCATE": "13-May-2026",
+    "BLAL": "18-May-2026",
+    "TRITURBINE": "18-May-2026",
+    "BHARATRAS": "26-May-2026",
+    "JSWSTEEL": "14-May-2026",
+    "TITAN": "08-May-2026",
+    "MANYAVAR": "08-May-2026",
+    "IKIO": "08-May-2026"
   },
-  "last_updated": "2026-05-06 12:24:07",
+  "last_updated": "2026-05-08 13:57:09",
   "source": "NSE API"
 }

@@ -282,20 +282,22 @@ class TelegramNotifier:
     def send_order_flow_bullish(self, symbol: str, bai: float, price: float,
                                 price_change_pct: float, depth_ratio: float,
                                 buy_volume: int, sell_volume: int,
-                                signal_label: str = 'Bullish Pressure') -> bool:
+                                signal_label: str = 'Bullish Pressure',
+                                wall_context: str = '') -> bool:
         """Send bullish order flow alert. Delegates to OrderFlowAlertNotifier."""
         return self.order_flow_alerts.send_bullish_imbalance(
             symbol, bai, price, price_change_pct, depth_ratio, buy_volume, sell_volume,
-            signal_label=signal_label)
+            signal_label=signal_label, wall_context=wall_context)
 
     def send_order_flow_bearish(self, symbol: str, bai: float, price: float,
                                 price_change_pct: float, depth_ratio: float,
                                 buy_volume: int, sell_volume: int,
-                                signal_label: str = 'Bearish Pressure') -> bool:
+                                signal_label: str = 'Bearish Pressure',
+                                wall_context: str = '') -> bool:
         """Send bearish order flow alert. Delegates to OrderFlowAlertNotifier."""
         return self.order_flow_alerts.send_bearish_imbalance(
             symbol, bai, price, price_change_pct, depth_ratio, buy_volume, sell_volume,
-            signal_label=signal_label)
+            signal_label=signal_label, wall_context=wall_context)
 
     def send_order_flow_absorption(self, symbol: str, signal_type: str, price: float,
                                    wall_side: str, wall_qty: int, wall_price: float,
