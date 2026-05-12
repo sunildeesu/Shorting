@@ -31,7 +31,7 @@ class OrderFlowAlertNotifier(BaseNotifier):
         )
         if wall_context:
             msg += f"\n{wall_context}"
-        return self._send_message(msg)
+        return self.send_debug(msg)
 
     def send_bearish_imbalance(self, symbol: str, bai: float, price: float,
                                price_change_pct: float, depth_ratio: float,
@@ -52,7 +52,7 @@ class OrderFlowAlertNotifier(BaseNotifier):
         )
         if wall_context:
             msg += f"\n{wall_context}"
-        return self._send_message(msg)
+        return self.send_debug(msg)
 
     def send_overnight_bullish(self, symbol: str, price: float,
                                score: int, signals: str,
@@ -72,7 +72,7 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"💡 <b>Strategy:</b> Buy at close (~3:29 PM), sell tomorrow 9:25 AM\n"
             f"⚠️ <b>Note:</b> Broad crash-day filter active | Use small size"
         )
-        return self._send_message(msg)
+        return self.send_debug(msg)
 
     def send_absorption_alert(self, symbol: str, signal_type: str, price: float,
                               wall_side: str, wall_qty: int, wall_price: float,
@@ -106,7 +106,7 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"💪 <b>Absorption Strength:</b> {absorption_strength:.2f}/1.0\n\n"
             f"{verdict}"
         )
-        return self._send_message(msg)
+        return self.send_debug(msg)
 
     def send_wall_alert(self, symbol: str, wall_side: str, wall_price: float,
                         wall_qty: int, wall_ratio: float, current_price: float) -> bool:
@@ -127,7 +127,7 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"📦 <b>Wall Size:</b> {wall_qty:,} qty  ({wall_ratio:.1f}× avg level)\n\n"
             f"⚡ {context}"
         )
-        return self._send_message(msg)
+        return self.send_debug(msg)
 
     def send_order_flow_summary(self, top_bullish: List[dict],
                                 top_bearish: List[dict]) -> bool:

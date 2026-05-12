@@ -513,7 +513,7 @@ ORDER_FLOW_DEPTH_RATIO_BULLISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BULLIS
 ORDER_FLOW_DEPTH_RATIO_BEARISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BEARISH', '0.5'))    # bid/ask depth < this → bearish
 ORDER_FLOW_WALL_THRESHOLD       = float(os.getenv('ORDER_FLOW_WALL_THRESHOLD', '5.0'))         # single level > 5× avg = wall (internal detection)
 ORDER_FLOW_WALL_ALERT_THRESHOLD = float(os.getenv('ORDER_FLOW_WALL_ALERT_THRESHOLD', '50.0'))  # > 50× avg other levels = Telegram alert (10× was set when wall detection was broken; recalibrated after fix)
-ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.60'))  # 0–1 scale
+ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.80'))  # 0–1 scale; raised from 0.60 to reduce noise
 
 # Leading indicator thresholds (catch drops before price fully moves)
 ORDER_FLOW_BAI_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BEARISH', '-0.15'))    # BAI dropped > 0.15 in one cycle → bearish momentum (raised from -0.10)
@@ -541,7 +541,7 @@ ORDER_FLOW_OVERNIGHT_WINDOW_END    = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_
 
 # Alert management
 ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '45'))          # per-stock per-direction cooldown — raised from 25 to prevent same stock re-firing every 25 min
-ORDER_FLOW_SUMMARY_INTERVAL_MIN = int(os.getenv('ORDER_FLOW_SUMMARY_INTERVAL_MIN', '5'))       # periodic summary cadence
+ORDER_FLOW_SUMMARY_INTERVAL_MIN = int(os.getenv('ORDER_FLOW_SUMMARY_INTERVAL_MIN', '30'))      # periodic summary cadence
 ORDER_FLOW_SUMMARY_TOP_N        = int(os.getenv('ORDER_FLOW_SUMMARY_TOP_N', '5'))              # top N stocks per side in summary
 
 # Data freshness guard — skip analysis cycle if WebSocket is silent > this many seconds

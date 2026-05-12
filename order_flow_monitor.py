@@ -303,12 +303,14 @@ class OrderFlowMonitor:
             abs_strength = m['absorption_strength']
 
             # --- Absorption alert (structural — bypasses confluence gates) ---
+            # Use single 'ABSORPTION' cooldown key (not direction-specific) to prevent
+            # SELL_ABSORPTION and BUY_ABSORPTION both firing within the cooldown window.
             if (abs_signal and abs_strength >= config.ORDER_FLOW_ABSORPTION_MIN_STRENGTH
-                    and self._should_send(symbol, abs_signal)):
+                    and self._should_send(symbol, 'ABSORPTION')):
                 self.notifier.send_order_flow_absorption(
                     symbol, abs_signal, price, wall_side, wall_qty,
                     wall_price, abs_strength, volume_delta)
-                self._mark_sent(symbol, abs_signal)
+                self._mark_sent(symbol, 'ABSORPTION')
                 continue
 
             # Gate 1: skip penny stocks — tick size makes % moves unreliable

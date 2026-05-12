@@ -11,11 +11,11 @@ Improvements from backtesting research (34 days, Jan–Mar 2026):
 5. Nifty bias in alert header — day context always visible
 6. Trailing SL exit tracker   — follow-up alert on SL hit or EOD exit
 7. EOD P&L summary at 3:25 PM — daily recap via Telegram
-8. T+2 confirmation candle    — enter only if T+2 close confirms direction vs VWAP
+8. T+3 confirmation candle    — enter only if T+3 close confirms direction vs VWAP
 
 Strategy (trend-following):
   - Top 20 F&O movers by % from prev day close
-  - Signal at VWAP touch (within 0.15%); enter only if T+2 candle confirms direction
+  - Signal at VWAP touch (within 0.15%); enter only if T+3 candle confirms direction
   - H3 Nifty bias: shown in alert as context (BULL/BEAR day) — no trades are blocked
   - Trailing SL 0.5% from peak/trough
   - EOD exit at 3:20 PM
@@ -26,6 +26,7 @@ Reads from data/central_quotes.db — no live Kite API calls.
 import json
 import logging
 import os
+import sqlite3
 import sys
 import time
 from datetime import datetime, timedelta
@@ -43,20 +44,25 @@ LOOP_INTERVAL_SECONDS    = 60
 
 MARKET_OPEN_TIME = "09:15"        # VWAP calculation starts here
 ALERT_START_TIME = "10:00"        # no alerts before this (improvement #2)
-EXIT_TIME        = "15:20"        # trailing SL positions close here
-EOD_SUMMARY_TIME = "15:25"        # EOD P&L summary sent here
+EXIT_TIME        = "13:00"        # trailing SL positions close here (backtest: best avg/trade)
+EOD_SUMMARY_TIME = "13:05"        # EOD P&L summary sent here
 
 TRAILING_SL_PCT        = 0.50    # 0.5% trailing SL (best config from backtest)
-CONFIRM_OFFSET         = 2       # enter at T+2 candle if it confirms direction (#8)
+CONFIRM_OFFSET         = 3       # enter at T+3 candle if it confirms direction (#8)
 MAX_TRADES_PER_STOCK   = 2       # max trades per stock per day
 ALERT_COOLDOWN_MINUTES = 15      # min gap between signals on the same stock
 
-# ── Volume Filter (backtest-derived: 61% win rate, avg +₹2,414/trade) ───────
-# Require C-1 (touch candle) vol ≥ 1.5× day avg  AND  C-2 vol < 1.0× day avg
-# Pattern: quiet accumulation → volume spike at VWAP touch = institutional interest
+# ── Volume Filter ────────────────────────────────────────────────────────────
+# C-1 only: touch candle vol delta ≥ 2.0× day avg (backtest: best avg/trade config)
 VOLUME_FILTER_ENABLED = True
-VOLUME_C1_MIN_RATIO   = 1.5   # touch candle vol delta must be ≥ 1.5× avg
-VOLUME_C2_MAX_RATIO   = 1.0   # candle before touch must be < 1.0× avg (quiet)
+VOLUME_C1_MIN_RATIO   = 2.0   # touch candle vol delta must be ≥ 2.0× avg
+
+# ── Order Flow Wall Stop-Loss ─────────────────────────────────────────────────
+# At entry, query live order_flow.db for a wall on the stock.
+# If a BID wall exists for LONG (or ASK wall for SHORT), place initial SL
+# 0.1% beyond that wall price. Trailing SL ratchets from there.
+ORDER_FLOW_DB_PATH = "data/order_flow.db"
+WALL_SL_BUFFER_PCT = 0.10   # 0.1% beyond the wall price
 
 LOT_SIZES_FILE   = "data/lot_sizes.json"
 # ────────────────────────────────────────────────────────────────────────────
@@ -97,10 +103,46 @@ def _redis_publish(payload: dict) -> None:
         _redis_pub = None   # reset so next call retries the connection
 
 
+# ── Order Flow Wall SL lookup ────────────────────────────────────────────────
+
+def _get_wall_sl(symbol: str, direction: str, entry_price: float) -> Optional[float]:
+    """
+    Query live order_flow.db for the most recent wall on *symbol*.
+    Returns SL price (WALL_SL_BUFFER_PCT beyond wall) when a relevant wall exists:
+      LONG  → BID wall below entry_price → SL = wall * (1 - 0.001)
+      SHORT → ASK wall above entry_price → SL = wall * (1 + 0.001)
+    Returns None if no wall, wrong side, or any DB error.
+    """
+    try:
+        conn = sqlite3.connect(ORDER_FLOW_DB_PATH, timeout=2)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT wall_side, wall_price FROM flow_metrics "
+            "WHERE symbol = ? AND wall_price > 0 ORDER BY ts DESC LIMIT 1",
+            (symbol,)
+        )
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return None
+        wall_side  = row['wall_side']
+        wall_price = float(row['wall_price'])
+        if direction == "LONG" and wall_side == "BID" and wall_price < entry_price:
+            return round(wall_price * (1 - WALL_SL_BUFFER_PCT / 100), 2)
+        if direction == "SHORT" and wall_side == "ASK" and wall_price > entry_price:
+            return round(wall_price * (1 + WALL_SL_BUFFER_PCT / 100), 2)
+        return None
+    except Exception as exc:
+        logger.warning("[WallSL] %s lookup failed: %s", symbol, exc)
+        return None
+
+
 # ── Data class for a tracked trade ──────────────────────────────────────────
 class ActiveTrade:
     def __init__(self, symbol: str, direction: str, entry_price: float,
-                 vwap: float, lot: int, entry_time: str, rank: int, pct_change: float):
+                 vwap: float, lot: int, entry_time: str, rank: int, pct_change: float,
+                 wall_sl: Optional[float] = None):
         self.symbol      = symbol
         self.direction   = direction
         self.entry_price = entry_price
@@ -111,20 +153,32 @@ class ActiveTrade:
         self.pct_change  = pct_change
         self.peak        = entry_price   # for LONG trailing
         self.trough      = entry_price   # for SHORT trailing
-        self.current_sl  = (entry_price * (1 - TRAILING_SL_PCT / 100)
-                            if direction == "LONG"
-                            else entry_price * (1 + TRAILING_SL_PCT / 100))
+        self.wall_sl     = wall_sl       # None if no wall found at entry
+
+        # initial_sl: tighter of wall-based SL and standard 0.5% SL
+        standard_sl = (entry_price * (1 - TRAILING_SL_PCT / 100)
+                       if direction == "LONG"
+                       else entry_price * (1 + TRAILING_SL_PCT / 100))
+        if wall_sl is not None:
+            # LONG: higher = tighter; SHORT: lower = tighter
+            self.initial_sl = (max(wall_sl, standard_sl) if direction == "LONG"
+                               else min(wall_sl, standard_sl))
+        else:
+            self.initial_sl = standard_sl
+        self.current_sl = self.initial_sl
 
     def update(self, price: float):
-        """Update peak/trough and ratchet trailing SL."""
+        """Ratchet trailing SL, never retreating past initial_sl."""
         if self.direction == "LONG":
             if price > self.peak:
                 self.peak = price
-            self.current_sl = self.peak * (1 - TRAILING_SL_PCT / 100)
+            trail_sl = self.peak * (1 - TRAILING_SL_PCT / 100)
+            self.current_sl = max(self.initial_sl, trail_sl)
         else:
             if price < self.trough:
                 self.trough = price
-            self.current_sl = self.trough * (1 + TRAILING_SL_PCT / 100)
+            trail_sl = self.trough * (1 + TRAILING_SL_PCT / 100)
+            self.current_sl = min(self.initial_sl, trail_sl)
 
     def is_stopped(self, price: float) -> bool:
         if self.direction == "LONG":
@@ -154,6 +208,7 @@ class VWAPMoverMonitor:
         self.lot_sizes   = self._load_lot_sizes()
         self.prev_close: Dict[str, float] = {}
         self.prev_close_loaded_date: Optional[str] = None   # date when prev_close was refreshed from collector
+        self.last_prev_close_reload_time: Optional[datetime] = None  # throttle reload attempts
 
         # Day state — reset each morning
         self.current_date   = datetime.now().strftime('%Y-%m-%d')
@@ -169,7 +224,7 @@ class VWAPMoverMonitor:
 
         logger.info(f"Loaded {len(self.fo_symbols)} F&O symbols, "
                     f"{len(self.lot_sizes)} lot size entries")
-        vol_status = (f"ON (C-1≥{VOLUME_C1_MIN_RATIO}× + C-2<{VOLUME_C2_MAX_RATIO}×)"
+        vol_status = (f"ON (C-1≥{VOLUME_C1_MIN_RATIO}×, C-2 removed)"
                       if VOLUME_FILTER_ENABLED else "OFF")
         self.notifier.send_debug(
             f"🚀 <b>VWAP Monitor Started</b>\n"
@@ -178,7 +233,8 @@ class VWAPMoverMonitor:
             f"Alert start: {ALERT_START_TIME}  |  Exit: {EXIT_TIME}  |  TSL: {TRAILING_SL_PCT}%\n"
             f"Confirm: T+{CONFIRM_OFFSET}  |  Max trades/stock: {MAX_TRADES_PER_STOCK}  |  "
             f"Cooldown: {ALERT_COOLDOWN_MINUTES}min\n"
-            f"📊 Vol filter: {vol_status}"
+            f"📊 Vol filter: {vol_status}\n"
+            f"🧱 Wall SL: {WALL_SL_BUFFER_PCT}% beyond order flow wall (fallback: {TRAILING_SL_PCT}% TSL)"
         )
 
     # ── Loaders ─────────────────────────────────────────────────────────────
@@ -279,6 +335,7 @@ class VWAPMoverMonitor:
             self.last_top10           = []
             self.day_trade_log        = []
             self.prev_close_loaded_date = None   # force reload after collector runs
+            self.last_prev_close_reload_time = None
             self._load_prev_close()
 
     # ── VWAP ─────────────────────────────────────────────────────────────────
@@ -297,8 +354,7 @@ class VWAPMoverMonitor:
         """
         Returns (passes, c1_ratio, c2_ratio).
         C-1 = touch candle vol delta vs day avg.
-        C-2 = candle just before touch vs day avg.
-        Pass condition: C-1 >= VOLUME_C1_MIN_RATIO  AND  C-2 < VOLUME_C2_MAX_RATIO
+        Pass condition: C-1 >= VOLUME_C1_MIN_RATIO  (C-2 filter removed per backtest)
         Always passes (True) if filter disabled or insufficient candle history.
         """
         if not VOLUME_FILTER_ENABLED or len(candles) < 3:
@@ -316,8 +372,8 @@ class VWAPMoverMonitor:
             return True, 0.0, 0.0
 
         c1_ratio = deltas[-1] / avg
-        c2_ratio = deltas[-2] / avg
-        passes   = (c1_ratio >= VOLUME_C1_MIN_RATIO) and (c2_ratio < VOLUME_C2_MAX_RATIO)
+        c2_ratio = deltas[-2] / avg   # retained for logging; no longer a filter condition
+        passes   = (c1_ratio >= VOLUME_C1_MIN_RATIO)
         return passes, round(c1_ratio, 2), round(c2_ratio, 2)
 
     # ── Top movers ───────────────────────────────────────────────────────────
@@ -345,13 +401,14 @@ class VWAPMoverMonitor:
         top10: List[Tuple[str, float, float]],
         confirmed: bool = False,
         c1_ratio: float = 0.0, c2_ratio: float = 0.0,
+        wall_sl: Optional[float] = None,
     ) -> str:
         dir_icon  = "📈 BUY (LONG)"   if direction == "LONG" else "📉 SELL SHORT"
         pct_icon  = "📈" if pct_change >= 0 else "📉"
         sign      = "+" if pct_change >= 0 else ""
         now_str   = datetime.now().strftime("%I:%M %p")
 
-        # Bias header (improvement #5)
+        # Bias header
         if self.market_bias == "LONG":
             bias_line = "🟢 <b>BULL DAY</b> (Nifty 9:15 bias)\n"
         elif self.market_bias == "SHORT":
@@ -359,13 +416,18 @@ class VWAPMoverMonitor:
         else:
             bias_line = "⚪ <b>Bias: Undetermined</b>\n"
 
-        # SL loss in ₹ (improvement #4)
+        # SL line — show wall source if used
         sl_dist_pct = abs(price - sl_price) / price * 100
         sl_loss_rs  = sl_dist_pct / 100 * price * lot
+        if wall_sl is not None:
+            sl_line = (f"🛑 SL: ₹{sl_price:.2f}  ({sl_dist_pct:.2f}% = ₹{sl_loss_rs:,.0f} risk/lot)"
+                       f"  <i>[Wall @ ₹{wall_sl:.2f}]</i>")
+        else:
+            sl_line = f"🛑 SL: ₹{sl_price:.2f}  ({sl_dist_pct:.2f}% = ₹{sl_loss_rs:,.0f} risk/lot)"
 
-        # Volume filter line
+        # Volume filter line (C1 only now)
         if VOLUME_FILTER_ENABLED and c1_ratio > 0:
-            vol_line = f"📊 Vol: C-1={c1_ratio:.2f}× C-2={c2_ratio:.2f}× (quiet→spike ✅)\n"
+            vol_line = f"📊 Vol: C-1={c1_ratio:.2f}×  (C-2={c2_ratio:.2f}× ref)\n"
         else:
             vol_line = ""
 
@@ -375,7 +437,7 @@ class VWAPMoverMonitor:
             marker = " ← ENTRY" if sym == symbol else ""
             top10_lines.append(f"{i}. {sym}  {s}{pct:.1f}%{marker}")
 
-        header = "✅ <b>VWAP CONFIRMED ENTRY (T+2)</b>" if confirmed else "📊 <b>VWAP TOUCH ALERT</b>"
+        header = f"✅ <b>VWAP CONFIRMED ENTRY (T+{CONFIRM_OFFSET})</b>" if confirmed else "📊 <b>VWAP TOUCH ALERT</b>"
         return (
             f"{header}\n"
             f"{bias_line}\n"
@@ -386,7 +448,7 @@ class VWAPMoverMonitor:
             f"{vol_line}\n"
             f"<b>➡️ Action: {dir_icon}</b>\n"
             f"📦 Lot size: {lot}\n"
-            f"🛑 SL: ₹{sl_price:.2f}  ({sl_dist_pct:.2f}% = ₹{sl_loss_rs:,.0f} risk/lot)\n\n"
+            f"{sl_line}\n\n"
             f"<b>Top {TOP_N} Movers</b>\n"
             + "\n".join(top10_lines)
         )
@@ -513,20 +575,27 @@ class VWAPMoverMonitor:
         now     = datetime.now()
         now_str = now.strftime("%H:%M")
 
-        # Reload prev_close if the collector has updated it since our last load
-        # (fixes race: monitor loads at midnight before collector runs at 9:15)
+        # Reload prev_close once the collector has updated it for today.
+        # Throttled to every 5 minutes so we don't spam the DB while the collector is still warming up.
         today = now.strftime('%Y-%m-%d')
         if now_str >= "09:20" and self.prev_close_loaded_date != today:
-            logger.info(
-                f"prev_close was loaded from {self.prev_close_loaded_date}, "
-                f"collector has since updated it — reloading"
+            reload_due = (
+                self.last_prev_close_reload_time is None
+                or (now - self.last_prev_close_reload_time).total_seconds() >= 300
             )
-            self._load_prev_close()
-            self.notifier.send_debug(
-                f"🔄 <b>prev_close Reloaded</b>\n"
-                f"Stale data ({self.prev_close_loaded_date or 'unknown'}) replaced with today's values.\n"
-                f"Symbols loaded: {len(self.prev_close)}"
-            )
+            if reload_due:
+                logger.info(
+                    f"prev_close date ({self.prev_close_loaded_date or 'unknown'}) != today — "
+                    f"attempting reload (waiting for collector)"
+                )
+                self.last_prev_close_reload_time = now
+                self._load_prev_close()
+                if self.prev_close_loaded_date == today:
+                    self.notifier.send_debug(
+                        f"🔄 <b>prev_close Reloaded</b>\n"
+                        f"Now using today's values.\n"
+                        f"Symbols loaded: {len(self.prev_close)}"
+                    )
 
         # H3 bias — determined once at 9:16 AM, fixed for the day
         if not self.bias_determined and now_str >= "09:16":
@@ -535,11 +604,10 @@ class VWAPMoverMonitor:
                 self.market_bias     = bias
                 self.bias_determined = True
                 bias_icon = "🟢" if bias == "LONG" else "🔴"
-                logger.info(f"Market bias set: {bias_icon} {bias} — "
-                            f"will only send {bias} alerts today")
+                logger.info(f"Market bias set: {bias_icon} {bias} — informational only, all signals fire")
                 self.notifier.send_debug(
-                    f"{bias_icon} <b>Market Bias Set: {bias}</b>  (H3 9:15 candle)\n"
-                    f"Only <b>{bias}</b> alerts will fire today."
+                    f"{bias_icon} <b>Market Bias: {bias}</b>  (H3 9:15 candle)\n"
+                    f"Shown in alerts as context — signals fire for both directions."
                 )
 
         # Latest quotes
@@ -588,14 +656,23 @@ class VWAPMoverMonitor:
                 )
                 if can_enter:
                     lot      = self.lot_sizes.get(sym, 1)
-                    sl_price = (price_now * (1 - TRAILING_SL_PCT / 100)
-                                if direction == "LONG"
-                                else price_now * (1 + TRAILING_SL_PCT / 100))
                     dist_pct = abs(price_now - sig['vwap']) / sig['vwap'] * 100
+
+                    # Order flow wall SL (0.1% beyond wall); falls back to 0.5% TSL
+                    wall_sl  = _get_wall_sl(sym, direction, price_now)
+                    standard_sl = (price_now * (1 - TRAILING_SL_PCT / 100)
+                                   if direction == "LONG"
+                                   else price_now * (1 + TRAILING_SL_PCT / 100))
+                    if wall_sl is not None:
+                        sl_price = (max(wall_sl, standard_sl) if direction == "LONG"
+                                    else min(wall_sl, standard_sl))
+                    else:
+                        sl_price = standard_sl
 
                     logger.info(
                         f"CONFIRM ENTRY (T+{CONFIRM_OFFSET}): {sym} | {direction} | "
                         f"price={price_now:.2f} vwap={sig['vwap']:.2f} sl={sl_price:.2f}"
+                        + (f" (wall_sl={wall_sl:.2f})" if wall_sl else " (no wall → TSL)")
                     )
                     _redis_publish({
                         "type": "ENTRY", "symbol": sym, "direction": direction,
@@ -612,6 +689,7 @@ class VWAPMoverMonitor:
                         confirmed=True,
                         c1_ratio=sig.get('c1_ratio', 0.0),
                         c2_ratio=sig.get('c2_ratio', 0.0),
+                        wall_sl=wall_sl,
                     )
                     if self.notifier._send_message(msg):
                         self.trade_count[sym] = self.trade_count.get(sym, 0) + 1
@@ -619,6 +697,7 @@ class VWAPMoverMonitor:
                             symbol=sym, direction=direction, entry_price=price_now,
                             vwap=sig['vwap'], lot=lot, entry_time=now.strftime("%H:%M"),
                             rank=sig['rank'], pct_change=sig['pct_change'],
+                            wall_sl=wall_sl,
                         )
                         logger.info(f"  ✓ Confirmed entry & tracking: {sym} {direction} "
                                     f"SL={sl_price:.2f} lot={lot} "
@@ -685,7 +764,7 @@ class VWAPMoverMonitor:
             if not vol_ok:
                 logger.debug(
                     f"  VOL FILTER rejected {symbol}: C-1={c1_ratio:.2f}× C-2={c2_ratio:.2f}× "
-                    f"(need C-1≥{VOLUME_C1_MIN_RATIO} AND C-2<{VOLUME_C2_MAX_RATIO})"
+                    f"(need C-1≥{VOLUME_C1_MIN_RATIO})"
                 )
                 continue
 

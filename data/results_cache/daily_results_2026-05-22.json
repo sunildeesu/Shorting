@@ -1,13 +1,25 @@
 {
   "date": "2026-05-22",
   "symbols": [
+    "20MICRONS",
+    "BIRLACABLE",
+    "COLPAL",
+    "EXCELINDUS",
     "HINDALCO",
     "INDIGOPNTS",
+    "JINDRILL",
     "JUBLPHARMA",
+    "MAHSEAMLES",
     "PDMJEPAPER",
+    "RAMCOCEM",
+    "SHYAMCENT",
+    "SKMEGGPROD",
+    "STARCEMENT",
+    "SUNPHARMA",
+    "TORNTPHARM",
     "TTKPRESTIG",
     "TVSELECT"
   ],
-  "saved_at": "2026-05-08 13:57:09",
+  "saved_at": "2026-05-12 11:49:03",
   "source": "NSE event-calendar"
 }

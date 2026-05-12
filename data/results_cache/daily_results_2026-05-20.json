@@ -1,19 +1,32 @@
 {
   "date": "2026-05-20",
   "symbols": [
+    "ACE",
     "AMAGI",
     "AMJLAND",
     "APOLLOHOSP",
     "BOSCHLTD",
+    "CARYSIL",
+    "CLCIND",
     "GRASIM",
+    "HEMIPROP",
     "HONAUT",
     "JUBLFOOD",
     "LENSKART",
     "LMW",
     "MEDPLUS",
     "MOTHERSON",
-    "MURUDCERA"
+    "MURUDCERA",
+    "RUDRA",
+    "SAMBHAAV",
+    "SHREYANIND",
+    "SOMICONVEY",
+    "TAINWALCHM",
+    "TALBROAUTO",
+    "TEAMLEASE",
+    "VEEDOL",
+    "VSTL"
   ],
-  "saved_at": "2026-05-08 13:57:09",
+  "saved_at": "2026-05-12 11:49:03",
   "source": "NSE event-calendar"
 }

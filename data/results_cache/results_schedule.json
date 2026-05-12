@@ -1,20 +1,19 @@
 {
   "schedule": {
-    "ATALREAL": "14-May-2026",
-    "KRBL": "14-May-2026",
-    "TRANSWORLD": "19-May-2026",
-    "ALEMBICLTD": "19-May-2026",
-    "SAIL": "15-May-2026",
-    "PREMIERENE": "15-May-2026",
-    "CLEDUCATE": "13-May-2026",
-    "BLAL": "18-May-2026",
-    "TRITURBINE": "18-May-2026",
-    "BHARATRAS": "26-May-2026",
-    "JSWSTEEL": "14-May-2026",
-    "TITAN": "08-May-2026",
-    "MANYAVAR": "08-May-2026",
-    "IKIO": "08-May-2026"
+    "VIYASH": "19-May-2026",
+    "KDDL": "19-May-2026",
+    "CLCIND": "20-May-2026",
+    "PURVA": "12-May-2026",
+    "MATRIMONY": "14-May-2026",
+    "UTLSOLAR": "14-May-2026",
+    "DBEIL": "30-May-2026",
+    "GTL": "14-May-2026",
+    "GANGESSECU": "14-May-2026",
+    "VSTL": "20-May-2026",
+    "MONARCH": "15-May-2026",
+    "AKUMS": "14-May-2026",
+    "PARKHOSPS": "12-May-2026"
   },
-  "last_updated": "2026-05-08 13:57:09",
+  "last_updated": "2026-05-12 11:49:03",
   "source": "NSE API"
 }
