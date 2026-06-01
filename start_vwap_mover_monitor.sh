@@ -5,7 +5,7 @@
 # The script itself handles market-open gating via is_market_open()
 #
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 MONITOR_SCRIPT="$PROJECT_DIR/vwap_mover_monitor.py"
 LOG_DIR="$PROJECT_DIR/logs"

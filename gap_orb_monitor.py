@@ -43,6 +43,7 @@ TRAILING_SL_PCT = 0.5     # trailing SL % from peak/trough (activates after 1R)
 
 ORB_START_TIME  = "09:15"
 ORB_END_TIME    = "09:25"   # opening range ends; entry window starts
+ORB_MINUTES     = 10        # duration of the opening range window
 ENTRY_END_TIME  = "11:00"   # no new entries after this
 EXIT_TIME       = "11:00"   # hard exit for all open positions
 SUMMARY_TIME    = "11:05"   # EOD summary telegram message
@@ -408,9 +409,10 @@ class GapOrbMonitor:
                     f"Entry: <b>₹{price:.1f}</b> @{candle['timestamp'][11:16]}\n"
                     f"SL: ₹{trade_sl:.1f} ({sl_pct:.1f}% risk)\n"
                     f"T1 (2R): ₹{t1:.1f} | Lot: {lot}\n"
-                    f"Vol conf: {delta:.0f} vs avg {avg_or_vol:.0f} ({vol_str})"
+                    f"Vol conf: {delta:.0f} vs avg {avg_or_vol:.0f} ({vol_str})\n"
+                    f"<i>via SI·Gap-ORB</i>"
                 )
-                self.notifier._send_message(msg)
+                self.notifier.send_debug(msg)
                 logger.info(f"ENTERED {direction} {sym}: entry={price} SL={trade_sl} lot={lot}")
                 break  # one trade per stock
 
@@ -467,9 +469,10 @@ class GapOrbMonitor:
             f"Direction: {trade.direction} | Gap: {trade.gap_pct:+.1f}%\n"
             f"Entry: ₹{trade.entry_price:.1f} @{trade.entry_time} → "
             f"Exit: ₹{exit_price:.1f} @{now_hm}\n"
-            f"P&L: <b>₹{pnl:,.0f}</b> | Lot: {trade.lot}"
+            f"P&L: <b>₹{pnl:,.0f}</b> | Lot: {trade.lot}\n"
+            f"<i>via SI·Gap-ORB</i>"
         )
-        self.notifier._send_message(msg)
+        self.notifier.send_debug(msg)
         logger.info(
             f"EXIT {trade.direction} {trade.symbol}: "
             f"entry={trade.entry_price} exit={exit_price:.2f} [{reason}] PnL=₹{pnl:,.0f}"

@@ -628,6 +628,38 @@ class EarlyWarningDetector:
         self._recent_prealerts = {k for k in self._recent_prealerts
                                    if k.split('_')[1] + '_' + k.split('_')[2] >= cutoff}
 
+    def _get_sector_info(self, symbol: str) -> str:
+        """Load sector name and day/5-min % from the cached sector analysis. Returns empty string on failure."""
+        try:
+            import json
+            import os
+            sector_cache = "data/sector_analysis_cache.json"
+            if not os.path.exists(sector_cache):
+                return ""
+
+            # Get sector name from sector_manager singleton
+            from sector_manager import get_sector_manager
+            sector_name = get_sector_manager().get_sector(symbol)
+            if not sector_name:
+                return ""
+
+            with open(sector_cache, 'r') as f:
+                sector_analysis = json.load(f)
+
+            sector_data = sector_analysis.get('sectors', {}).get(sector_name)
+            if not sector_data:
+                return ""
+
+            change_day = sector_data.get('price_change_day', 0)
+            change_5min = sector_data.get('price_change_5min', 0)
+            display_name = sector_name.replace('_', ' ').title()
+
+            day_emoji = "🟢" if change_day > 0 else "🔴" if change_day < 0 else "⚪"
+            min5_emoji = "🟢" if change_5min > 0 else "🔴" if change_5min < 0 else "⚪"
+            return f"🏭 <b>{display_name}</b>: {day_emoji} {change_day:+.2f}% today | {min5_emoji} {change_5min:+.2f}% 5m\n"
+        except Exception:
+            return ""
+
     def _send_prealert(self, symbol: str, direction: str, change_pct: float,
                        current_price: float, prev_price: float, volume_ratio: float,
                        obv_pattern: str = 'neutral', oi_pattern: str = 'neutral',
@@ -680,11 +712,15 @@ class EarlyWarningDetector:
             results_label = get_results_label(symbol)
             results_line = f"<b>{results_label}</b>\n" if results_label else ""
 
+            # Sector context line
+            sector_line = self._get_sector_info(symbol)
+
             # Build message (keep it short - this is a pre-alert)
             message = (
                 f"⚠️ <b>PRE-ALERT: {symbol}</b> ⚠️\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"{results_line}"
+                f"{sector_line}"
                 f"{emoji} Early {direction} Signal\n"
                 f"{arrow} <b>{change_pct:.2f}%</b> in {self.lookback_minutes} min\n\n"
                 f"💰 {prev_price_str} → {price_str}\n"

@@ -3,7 +3,7 @@
 # Volume Profile Analyzer - Daily Launcher
 # Runs at 3:25 PM on weekdays (near market close)
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 ANALYZER_SCRIPT="$PROJECT_DIR/volume_profile_analyzer.py"
 LOG_DIR="$PROJECT_DIR/logs"

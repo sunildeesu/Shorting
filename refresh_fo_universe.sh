@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 SCRIPT="$PROJECT_DIR/refresh_fo_universe.py"
 LOG_DIR="$PROJECT_DIR/logs"

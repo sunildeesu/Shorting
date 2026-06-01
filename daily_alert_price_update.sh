@@ -12,7 +12,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 cd "$PROJECT_DIR"
 
 echo "======================================================================="

@@ -39,8 +39,10 @@
     "GOKULAGRO",
     "GPIL",
     "GREENPANEL",
+    "GRPLTD",
     "HINDCOPPER",
     "IMAGICAA",
+    "IRBINVIT",
     "IRIS",
     "ITCHOTELS",
     "JISLDVREQS",
@@ -52,6 +54,7 @@
     "MODIS",
     "MONARCH",
     "MPSLTD",
+    "MUKKA",
     "NAVA",
     "NCC",
     "NHPC",
@@ -60,6 +63,8 @@
     "OMAXE",
     "PALASHSECU",
     "PDSL",
+    "PGINVIT",
+    "PODDARMENT",
     "POWERGRID",
     "PREMIERENE",
     "RANEHOLDIN",
@@ -87,6 +92,6 @@
     "WHEELS",
     "ZUARI"
   ],
-  "saved_at": "2026-05-12 11:49:03",
+  "saved_at": "2026-05-14 09:15:27",
   "source": "NSE event-calendar"
 }

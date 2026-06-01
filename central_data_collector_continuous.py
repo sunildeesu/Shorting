@@ -13,6 +13,7 @@ Author: Claude Sonnet 4.5
 Date: 2026-01-19
 """
 
+import sys
 import time
 import logging
 from datetime import datetime, time as dt_time
@@ -24,6 +25,7 @@ from telegram_notifier import TelegramNotifier
 from rapid_drop_detector import RapidAlertDetector
 from early_warning_detector import EarlyWarningDetector
 from closing_window_detector import ClosingWindowDetector
+from futures_bid_ask_detector import FuturesBidAskDetector
 from quarterly_results_checker import send_morning_results_alert, get_results_checker
 from auto_trader import get_auto_trader
 import config
@@ -94,7 +96,7 @@ def main():
         logger.info("✅ Collector initialized successfully")
     except Exception as e:
         logger.error(f"❌ Failed to initialize collector: {e}", exc_info=True)
-        return
+        sys.exit(1)
 
     # Run backfill to fill any missing historical data (e.g., from network downtime)
     try:
@@ -114,6 +116,7 @@ def main():
     rapid_detector = None
     early_warning = None
     closing_window_detector = None
+    futures_bid_ask = None
     auto_trader = None
     telegram = None
     detection_db = None
@@ -148,11 +151,17 @@ def main():
         else:
             logger.info("ℹ️ Closing window detector disabled in config")
 
+        # Futures bid/ask imbalance (top 5 every 5 min)
+        if collector.futures_mapper:
+            futures_bid_ask = FuturesBidAskDetector(collector.kite, collector.futures_mapper, telegram)
+            logger.info("✅ Futures bid/ask detector initialized (top-5 every 5 min → debug channel)")
+
     except Exception as e:
         logger.error(f"⚠️ Detector init failed (collection will continue): {e}")
         rapid_detector = None
         early_warning = None
         closing_window_detector = None
+        futures_bid_ask = None
 
     # Initialize Alert P&L Tracker (error-isolated, guarded import)
     pnl_tracker = None
@@ -234,6 +243,13 @@ def main():
                                            f"{detection_stats.get('rise_alerts_sent', 0)} rise alerts")
                         except Exception as e:
                             logger.error(f"⚠️ Rapid detection failed: {e}")
+
+                    # Futures bid/ask imbalance (every 5 cycles = 5 min)
+                    if futures_bid_ask and futures_bid_ask.should_run():
+                        try:
+                            futures_bid_ask.run(collector.stocks)
+                        except Exception as e:
+                            logger.error(f"⚠️ Futures bid/ask detection failed: {e}")
 
                     # Closing window detection (3:10-3:25 PM institutional activity)
                     if closing_window_detector:

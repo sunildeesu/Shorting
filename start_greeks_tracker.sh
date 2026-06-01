@@ -8,7 +8,7 @@
 set -e
 
 # Configuration
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 TRACKER_SCRIPT="$PROJECT_DIR/greeks_difference_tracker.py"
 LOG_DIR="$PROJECT_DIR/logs"

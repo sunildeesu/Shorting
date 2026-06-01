@@ -12,6 +12,7 @@ from telegram_notifiers.sector_alerts import SectorAlertNotifier
 from telegram_notifiers.price_action_alerts import PriceActionAlertNotifier
 from telegram_notifiers.nifty_option_alerts import NiftyOptionAlertNotifier
 from telegram_notifiers.volume_profile_alerts import VolumeProfileAlertNotifier
+from telegram_notifiers.flag_alerts import FlagAlertNotifier
 
 __all__ = [
     'BaseNotifier',
@@ -21,4 +22,5 @@ __all__ = [
     'PriceActionAlertNotifier',
     'NiftyOptionAlertNotifier',
     'VolumeProfileAlertNotifier',
+    'FlagAlertNotifier',
 ]

@@ -5,7 +5,7 @@
 # Monitor exits itself at 11:10 AM after EOD summary.
 #
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 MONITOR_SCRIPT="$PROJECT_DIR/gap_orb_monitor.py"
 LOG_DIR="$PROJECT_DIR/logs"

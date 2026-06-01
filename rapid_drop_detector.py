@@ -23,6 +23,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 import config
 from alert_excel_logger import AlertExcelLogger
 from quarterly_results_checker import get_results_label
+from sector_manager import get_sector_manager
 
 if TYPE_CHECKING:
     from auto_trader import AutoTrader
@@ -154,8 +155,11 @@ class RapidAlertDetector:
                 if drop_pct >= self.drop_threshold:
                     stats['drops_detected'] += 1
 
+                    # Use volume_spike alert type for big spikes (≥2x), 5min for smaller
+                    alert_type = "volume_spike" if volume_multiplier >= 2.0 else "5min"
+
                     # Apply cooldown deduplication
-                    if self.alert_history.should_send_alert(symbol, "5min", cooldown_minutes=self.cooldown_minutes):
+                    if self.alert_history.should_send_alert(symbol, alert_type, cooldown_minutes=self.cooldown_minutes):
                         # Get and increment alert count for today (with direction)
                         alert_count = self.alert_history.increment_alert_count(symbol, direction="drop")
                         direction_arrows = self.alert_history.get_direction_arrows(symbol)
@@ -170,7 +174,8 @@ class RapidAlertDetector:
                             volume_5min_ago=volume_5min_ago,
                             volume_multiplier=volume_multiplier,
                             alert_count=alert_count,
-                            direction_arrows=direction_arrows
+                            direction_arrows=direction_arrows,
+                            alert_type=alert_type,
                         )
 
                         if success:
@@ -178,9 +183,9 @@ class RapidAlertDetector:
                             stats['alerted_symbols'].append({
                                 'symbol': symbol, 'direction': 'drop',
                                 'price': current_price, 'time': datetime.now().isoformat(),
-                                'alert_type': '5min', 'alert_count': alert_count
+                                'alert_type': alert_type, 'alert_count': alert_count
                             })
-                            logger.info(f"RAPID DROP ALERT: {symbol} dropped {drop_pct:.2f}% "
+                            logger.info(f"RAPID DROP ALERT [{alert_type}]: {symbol} dropped {drop_pct:.2f}% "
                                        f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                        f"VOL: {volume_multiplier:.1f}x spike")
 
@@ -195,8 +200,11 @@ class RapidAlertDetector:
                     if rise_pct >= self.rise_threshold:
                         stats['rises_detected'] += 1
 
+                        # Use volume_spike_rise alert type for big spikes (≥2x), 5min_rise for smaller
+                        rise_alert_type = "volume_spike_rise" if volume_multiplier >= 2.0 else "5min_rise"
+
                         # Apply cooldown deduplication (separate from drop cooldown)
-                        if self.alert_history.should_send_alert(symbol, "5min_rise", cooldown_minutes=self.cooldown_minutes):
+                        if self.alert_history.should_send_alert(symbol, rise_alert_type, cooldown_minutes=self.cooldown_minutes):
                             # Get and increment alert count for today (with direction)
                             alert_count = self.alert_history.increment_alert_count(symbol, direction="rise")
                             direction_arrows = self.alert_history.get_direction_arrows(symbol)
@@ -211,7 +219,8 @@ class RapidAlertDetector:
                                 volume_5min_ago=volume_5min_ago,
                                 volume_multiplier=volume_multiplier,
                                 alert_count=alert_count,
-                                direction_arrows=direction_arrows
+                                direction_arrows=direction_arrows,
+                                alert_type=rise_alert_type,
                             )
 
                             if success:
@@ -219,9 +228,9 @@ class RapidAlertDetector:
                                 stats['alerted_symbols'].append({
                                     'symbol': symbol, 'direction': 'rise',
                                     'price': current_price, 'time': datetime.now().isoformat(),
-                                    'alert_type': '5min', 'alert_count': alert_count
+                                    'alert_type': rise_alert_type, 'alert_count': alert_count
                                 })
-                                logger.info(f"RAPID RISE ALERT: {symbol} rose {rise_pct:.2f}% "
+                                logger.info(f"RAPID RISE ALERT [{rise_alert_type}]: {symbol} rose {rise_pct:.2f}% "
                                            f"(₹{price_5min_ago:.2f} → ₹{current_price:.2f}) "
                                            f"VOL: {volume_multiplier:.1f}x spike")
 
@@ -246,6 +255,36 @@ class RapidAlertDetector:
 
         return stats
 
+    def _get_sector_context(self, symbol: str, stock_change_5min: float) -> dict | None:
+        """Read sector state from cached sector analysis — zero API calls."""
+        try:
+            import json, os
+            sector_cache = "data/sector_analysis_cache.json"
+            if not os.path.exists(sector_cache):
+                return None
+            sector_name = get_sector_manager().get_sector(symbol)
+            if not sector_name:
+                return None
+            with open(sector_cache) as f:
+                sector_analysis = json.load(f)
+            sector_data = sector_analysis.get("sectors", {}).get(sector_name)
+            if not sector_data:
+                return None
+            return {
+                "sector_name":         sector_name,
+                "sector_change_5min":  sector_data.get("price_change_5min", 0),
+                "sector_change_10min": sector_data.get("price_change_10min", 0),
+                "sector_change_day":   sector_data.get("price_change_day", 0),
+                "stock_vs_sector":     stock_change_5min - sector_data.get("price_change_5min", 0),
+                "sector_volume_ratio": sector_data.get("volume_ratio", 1.0),
+                "sector_momentum":     sector_data.get("momentum_score_10min", 0),
+                "stocks_up_10min":     sector_data.get("stocks_up_10min", 0),
+                "stocks_down_10min":   sector_data.get("stocks_down_10min", 0),
+                "total_stocks":        sector_data.get("total_stocks", 0),
+            }
+        except Exception:
+            return None
+
     def _send_alert(
         self,
         symbol: str,
@@ -256,7 +295,8 @@ class RapidAlertDetector:
         volume_5min_ago: int = 0,
         volume_multiplier: float = 0,
         alert_count: int = None,
-        direction_arrows: str = None
+        direction_arrows: str = None,
+        alert_type: str = "5min",
     ) -> bool:
         """
         Send 5-minute drop alert via Telegram.
@@ -283,18 +323,20 @@ class RapidAlertDetector:
                 'volume_spike': True  # We only call this if spike detected
             } if current_volume > 0 else None
 
+            sector_context = self._get_sector_context(symbol, -drop_pct)
+
             # Send alert via TelegramNotifier
             success = self.telegram.send_alert(
                 symbol=symbol,
                 drop_percent=drop_pct,
                 current_price=current_price,
                 previous_price=price_5min_ago,
-                alert_type="5min",
+                alert_type=alert_type,
                 volume_data=volume_data,
-                market_cap_cr=None,  # Not calculated for rapid alerts
-                rsi_analysis=None,   # Not calculated for rapid alerts
-                oi_analysis=None,    # Not calculated for rapid alerts
-                sector_context=None,  # Not calculated for rapid alerts
+                market_cap_cr=None,
+                rsi_analysis=None,
+                oi_analysis=None,
+                sector_context=sector_context,
                 alert_count=alert_count,
                 direction_arrows=direction_arrows
             )
@@ -331,7 +373,8 @@ class RapidAlertDetector:
         volume_5min_ago: int = 0,
         volume_multiplier: float = 0,
         alert_count: int = None,
-        direction_arrows: str = None
+        direction_arrows: str = None,
+        alert_type: str = "5min_rise",
     ) -> bool:
         """
         Send 5-minute rise alert via Telegram.
@@ -358,18 +401,20 @@ class RapidAlertDetector:
                 'volume_spike': True  # We only call this if spike detected
             } if current_volume > 0 else None
 
+            sector_context = self._get_sector_context(symbol, rise_pct)
+
             # Send alert via TelegramNotifier (uses same interface, alert_type differentiates)
             success = self.telegram.send_alert(
                 symbol=symbol,
                 drop_percent=rise_pct,  # Reuses same param (positive value = rise)
                 current_price=current_price,
                 previous_price=price_5min_ago,
-                alert_type="5min_rise",  # Key difference from drops
+                alert_type=alert_type,
                 volume_data=volume_data,
-                market_cap_cr=None,  # Not calculated for rapid alerts
-                rsi_analysis=None,   # Not calculated for rapid alerts
-                oi_analysis=None,    # Not calculated for rapid alerts
-                sector_context=None,  # Not calculated for rapid alerts
+                market_cap_cr=None,
+                rsi_analysis=None,
+                oi_analysis=None,
+                sector_context=sector_context,
                 alert_count=alert_count,
                 direction_arrows=direction_arrows
             )

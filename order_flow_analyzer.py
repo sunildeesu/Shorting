@@ -287,17 +287,23 @@ class OrderFlowAnalyzer:
         if total_vol == 0:
             return '', 0.0
 
-        price_still = abs(price_change_pct) < 0.10
+        # Price must be very flat — tightened from 0.10% to 0.05% to filter noise
+        price_still = abs(price_change_pct) < 0.05
         min_strength = config.ORDER_FLOW_ABSORPTION_MIN_STRENGTH
 
+        # Volume must be strongly one-sided (≥65% dominant) to count as absorption
+        dominant_vol_threshold = 0.65
+
         if (has_ask_wall and wall_side == 'ASK'
-                and sell_vol > buy_vol and price_change_pct >= -0.05 and price_still):
+                and sell_vol > buy_vol and price_change_pct >= -0.05 and price_still
+                and sell_vol / total_vol >= dominant_vol_threshold):
             strength = min((sell_vol / total_vol) * (1 - abs(price_change_pct) / 0.5), 1.0)
             if strength >= min_strength:
                 return 'SELL_ABSORPTION', strength
 
         if (has_bid_wall and wall_side == 'BID'
-                and buy_vol > sell_vol and price_change_pct <= 0.05 and price_still):
+                and buy_vol > sell_vol and price_change_pct <= 0.05 and price_still
+                and buy_vol / total_vol >= dominant_vol_threshold):
             strength = min((buy_vol / total_vol) * (1 - abs(price_change_pct) / 0.5), 1.0)
             if strength >= min_strength:
                 return 'BUY_ABSORPTION', strength

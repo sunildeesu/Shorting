@@ -1,7 +1,17 @@
 """Shared formatting helper functions for Telegram alerts."""
 
 
-def format_sector_context(sector_context: dict, is_priority: bool = False) -> str:
+def _drop_signal_quality(sector_change_day: float) -> str:
+    """Return signal quality line based on backtest results (1541 drop alerts)."""
+    if sector_change_day > 0.3:
+        return "   📌 <b>Signal:</b> Stock-specific drop — sector rising (56% WR, watch reversal)\n"
+    elif sector_change_day < -0.3:
+        return "   ✅ <b>Signal:</b> Momentum drop — sector also falling (66% WR, best edge)\n"
+    else:
+        return "   ⚠️ <b>Signal:</b> Flat sector — lower conviction (44% WR, weakest edge)\n"
+
+
+def format_sector_context(sector_context: dict, is_priority: bool = False, is_drop: bool = False) -> str:
     """
     Format sector context section for Telegram alert.
 
@@ -22,10 +32,11 @@ def format_sector_context(sector_context: dict, is_priority: bool = False) -> st
 
     # Extract sector data
     sector_name = sector_context.get('sector_name', 'Unknown')
+    sector_change_5min = sector_context.get('sector_change_5min', 0)
     sector_change_10min = sector_context.get('sector_change_10min', 0)
+    sector_change_day = sector_context.get('sector_change_day', 0)
     stock_vs_sector = sector_context.get('stock_vs_sector', 0)
     sector_volume_ratio = sector_context.get('sector_volume_ratio', 1.0)
-    sector_momentum = sector_context.get('sector_momentum', 0)
     stocks_up = sector_context.get('stocks_up_10min', 0)
     stocks_down = sector_context.get('stocks_down_10min', 0)
     total_stocks = sector_context.get('total_stocks', 0)
@@ -33,10 +44,15 @@ def format_sector_context(sector_context: dict, is_priority: bool = False) -> st
     # Format sector name (replace underscores with spaces, title case)
     display_sector = sector_name.replace('_', ' ').title()
 
-    # Sector performance line
-    sector_emoji = "🟢" if sector_change_10min > 0 else "🔴" if sector_change_10min < 0 else "⚪"
-    sector_section += f"   <b>Sector:</b> {display_sector} {sector_emoji}\n"
-    sector_section += f"   <b>10-min Change:</b> {sector_change_10min:+.2f}%\n"
+    # Day performance — most useful for trade context
+    day_emoji = "🟢" if sector_change_day > 0 else "🔴" if sector_change_day < 0 else "⚪"
+    sector_section += f"   <b>Sector:</b> {display_sector}\n"
+    sector_section += f"   {day_emoji} <b>Today:</b> {sector_change_day:+.2f}%"
+
+    # Inline 5-min and 10-min for intraday context
+    min5_emoji = "🟢" if sector_change_5min > 0 else "🔴" if sector_change_5min < 0 else "⚪"
+    min10_emoji = "🟢" if sector_change_10min > 0 else "🔴" if sector_change_10min < 0 else "⚪"
+    sector_section += f"  |  {min5_emoji} 5m: {sector_change_5min:+.2f}%  {min10_emoji} 10m: {sector_change_10min:+.2f}%\n"
 
     # Stock vs Sector differential
     if stock_vs_sector != 0:
@@ -48,17 +64,16 @@ def format_sector_context(sector_context: dict, is_priority: bool = False) -> st
     if total_stocks > 0:
         up_pct = (stocks_up / total_stocks) * 100
         down_pct = (stocks_down / total_stocks) * 100
-        sector_section += f"   <b>Breadth:</b> {stocks_up}↑ ({up_pct:.0f}%) / {stocks_down}↓ ({down_pct:.0f}%)\n"
+        sector_section += f"   <b>Breadth:</b> {stocks_up}↑ ({up_pct:.0f}%) / {stocks_down}↓ ({down_pct:.0f}%) of {total_stocks}\n"
 
     # Volume context
     if sector_volume_ratio != 1.0:
         vol_emoji = "🔥" if sector_volume_ratio > 1.2 else "📊"
-        sector_section += f"   {vol_emoji} <b>Volume:</b> {sector_volume_ratio:.2f}x average\n"
+        sector_section += f"   {vol_emoji} <b>Vol:</b> {sector_volume_ratio:.2f}x avg\n"
 
-    # Momentum summary
-    if sector_momentum != 0:
-        mom_emoji = "🚀" if sector_momentum > 0 else "🔻"
-        sector_section += f"   {mom_emoji} <b>Momentum:</b> {sector_momentum:+.2f}\n"
+    # Backtest signal quality (drop alerts only)
+    if is_drop:
+        sector_section += _drop_signal_quality(sector_change_day)
 
     return sector_section
 

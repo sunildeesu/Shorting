@@ -513,7 +513,9 @@ ORDER_FLOW_DEPTH_RATIO_BULLISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BULLIS
 ORDER_FLOW_DEPTH_RATIO_BEARISH  = float(os.getenv('ORDER_FLOW_DEPTH_RATIO_BEARISH', '0.5'))    # bid/ask depth < this → bearish
 ORDER_FLOW_WALL_THRESHOLD       = float(os.getenv('ORDER_FLOW_WALL_THRESHOLD', '5.0'))         # single level > 5× avg = wall (internal detection)
 ORDER_FLOW_WALL_ALERT_THRESHOLD = float(os.getenv('ORDER_FLOW_WALL_ALERT_THRESHOLD', '50.0'))  # > 50× avg other levels = Telegram alert (10× was set when wall detection was broken; recalibrated after fix)
-ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.80'))  # 0–1 scale; raised from 0.60 to reduce noise
+ORDER_FLOW_ABSORPTION_MIN_STRENGTH = float(os.getenv('ORDER_FLOW_ABSORPTION_MIN_STRENGTH', '0.92'))  # 0–1 scale; raised from 0.80→0.92 to reduce noise
+ORDER_FLOW_ABSORPTION_WALL_MIN_RATIO = float(os.getenv('ORDER_FLOW_ABSORPTION_WALL_MIN_RATIO', '80.0'))  # raised from 50×→80× avg; only very significant walls qualify
+ORDER_FLOW_ABSORPTION_COOLDOWN_MINUTES = int(os.getenv('ORDER_FLOW_ABSORPTION_COOLDOWN_MINUTES', '120'))  # 2-hour absorption-specific cooldown (vs 45-min general)
 
 # Leading indicator thresholds (catch drops before price fully moves)
 ORDER_FLOW_BAI_DELTA_BEARISH    = float(os.getenv('ORDER_FLOW_BAI_DELTA_BEARISH', '-0.15'))    # BAI dropped > 0.15 in one cycle → bearish momentum (raised from -0.10)
@@ -541,6 +543,7 @@ ORDER_FLOW_OVERNIGHT_WINDOW_END    = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_
 
 # Alert management
 ORDER_FLOW_COOLDOWN_MINUTES     = int(os.getenv('ORDER_FLOW_COOLDOWN_MINUTES', '45'))          # per-stock per-direction cooldown — raised from 25 to prevent same stock re-firing every 25 min
+ORDER_FLOW_MAX_ALERTS_PER_CYCLE = int(os.getenv('ORDER_FLOW_MAX_ALERTS_PER_CYCLE', '2'))       # max directional alerts per 30s cycle — prevents burst flooding when many stocks qualify simultaneously
 ORDER_FLOW_SUMMARY_INTERVAL_MIN = int(os.getenv('ORDER_FLOW_SUMMARY_INTERVAL_MIN', '30'))      # periodic summary cadence
 ORDER_FLOW_SUMMARY_TOP_N        = int(os.getenv('ORDER_FLOW_SUMMARY_TOP_N', '5'))              # top N stocks per side in summary
 
@@ -557,3 +560,22 @@ ORDER_FLOW_FUT_CUM_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BEA
 ORDER_FLOW_FUT_CUM_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BULLISH',  '0.30'))
 ORDER_FLOW_BASIS_BEARISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BEARISH_PCT', '-0.20'))  # futures at 0.20% discount → aggressive selling
 ORDER_FLOW_BASIS_BULLISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BULLISH_PCT',  '0.60'))  # futures at 0.60% premium → aggressive buying
+
+# ============================================
+# FLAG PATTERN MONITOR CONFIGURATION
+# ============================================
+# EOD scan for bull flag (Stage 3 consolidation) setups on daily charts.
+# Alerts when a stock has made a strong pole move and is now pulling back
+# in an orderly manner — the entry zone before the next breakout (Stage 4).
+
+ENABLE_FLAG_PATTERN_ALERTS = os.getenv('ENABLE_FLAG_PATTERN_ALERTS', 'true').lower() == 'true'
+FLAG_DB_PATH          = os.getenv('FLAG_DB_PATH', 'data/flag_pattern.db')   # SQLite DB for universe, OHLCV cache, detections
+FLAG_INCLUDE_SMALLMID = os.getenv('FLAG_INCLUDE_SMALLMID', 'true').lower() == 'true'  # include Midcap150 + Smallcap250
+FLAG_MIN_POLE_PCT     = float(os.getenv('FLAG_MIN_POLE_PCT',  '15.0'))  # minimum pole gain %
+FLAG_MAX_PULLBACK_PCT = float(os.getenv('FLAG_MAX_PULLBACK_PCT', '20.0'))  # max flag depth from pole high %
+FLAG_MIN_FLAG_DAYS    = int(os.getenv('FLAG_MIN_FLAG_DAYS', '3'))   # min trading days in flag
+FLAG_MAX_FLAG_DAYS    = int(os.getenv('FLAG_MAX_FLAG_DAYS', '20'))  # max trading days in flag
+FLAG_MIN_SCORE        = float(os.getenv('FLAG_MIN_SCORE', '6.0'))   # minimum confidence score (0-10)
+FLAG_COOLDOWN_DAYS    = int(os.getenv('FLAG_COOLDOWN_DAYS', '3'))   # suppress re-alerts within N days
+FLAG_LOOKBACK_DAYS    = int(os.getenv('FLAG_LOOKBACK_DAYS', '140')) # calendar days to fetch (≈100 trading days)
+FLAG_POLE_SEARCH_DAYS = int(os.getenv('FLAG_POLE_SEARCH_DAYS', '60'))  # trading-day window to search for pole high

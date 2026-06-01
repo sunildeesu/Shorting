@@ -118,7 +118,10 @@ class OrderFlowMonitor:
         last_fired = self._cooldown_cache.get(key)
         if last_fired:
             age_min = (datetime.now() - last_fired).total_seconds() / 60
-            return age_min >= config.ORDER_FLOW_COOLDOWN_MINUTES
+            cooldown = (config.ORDER_FLOW_ABSORPTION_COOLDOWN_MINUTES
+                        if alert_type == 'ABSORPTION'
+                        else config.ORDER_FLOW_COOLDOWN_MINUTES)
+            return age_min >= cooldown
 
         # Not in memory (first run or restart) — check DB
         in_db = self.db.was_alert_sent_recently(symbol, alert_type)
@@ -273,19 +276,28 @@ class OrderFlowMonitor:
              (|cum_delta_pct| ≥ ORDER_FLOW_CUM_EXECUTION_GATE=0.30, correct sign)
           4. Price direction gate — price_change_pct must align with signal direction
              (< -0.05% for bearish, > +0.05% for bullish in the 30s window)
-          5. Confluence score ≥ ORDER_FLOW_MIN_CONFLUENCE_SCORE (default 6)
+          5. Confluence score ≥ ORDER_FLOW_MIN_CONFLUENCE_SCORE (default 7)
              requires 3+ independent signals — eliminates "5m flow + FUT BAI only" noise
           6. Market regime gate — counter-trend alerts need score ≥ 8
              when ≥ 40% of liquid stocks show opposite flow
+          7. Per-cycle cap — only the top ORDER_FLOW_MAX_ALERTS_PER_CYCLE directional
+             alerts (ranked by score) fire per 30s cycle to prevent burst flooding.
 
         Absorption bypasses all confluence gates (structural signal).
-        Walls merge into directional alerts when both fire together (one message,
-        wall context appended). Standalone wall alert fires only when no directional
-        signal qualifies for the stock in that cycle.
+        Walls appear as context lines within directional alerts only — no standalone
+        wall alerts are sent, since a wall without directional flow is unactionable.
         """
         min_score    = config.ORDER_FLOW_MIN_CONFLUENCE_SCORE
         regime       = self._get_market_regime(metrics)
         counter_min  = 8   # score needed when alert is against the market regime (raised from 6)
+
+        # Collect all alert candidates first, then rank and cap before sending.
+        # Directional: (score, symbol, direction, send_args, wall_args, reasons, regime)
+        # Absorption:  ('ABS', symbol, abs_signal, price, wall_side, wall_qty, wall_price,
+        #               abs_strength, volume_delta)
+        # Standalone wall alerts are disabled — walls only enrich directional alerts.
+        directional_candidates: List[tuple] = []
+        absorption_candidates: List[tuple] = []
 
         for symbol, m in metrics.items():
             price        = m['last_price']
@@ -302,23 +314,25 @@ class OrderFlowMonitor:
             abs_signal   = m['absorption_signal']
             abs_strength = m['absorption_strength']
 
-            # --- Absorption alert (structural — bypasses confluence gates) ---
-            # Use single 'ABSORPTION' cooldown key (not direction-specific) to prevent
-            # SELL_ABSORPTION and BUY_ABSORPTION both firing within the cooldown window.
+            # --- Absorption alert ---
+            # Requires a significant wall (≥ ORDER_FLOW_ABSORPTION_WALL_MIN_RATIO) to avoid
+            # triggering on routine 5× depth imbalances that occur in every liquid stock.
             if (abs_signal and abs_strength >= config.ORDER_FLOW_ABSORPTION_MIN_STRENGTH
+                    and wall_ratio >= config.ORDER_FLOW_ABSORPTION_WALL_MIN_RATIO
                     and self._should_send(symbol, 'ABSORPTION')):
-                self.notifier.send_order_flow_absorption(
-                    symbol, abs_signal, price, wall_side, wall_qty,
-                    wall_price, abs_strength, volume_delta)
-                self._mark_sent(symbol, 'ABSORPTION')
+                absorption_candidates.append(
+                    (abs_strength, symbol, abs_signal, price, wall_side,
+                     wall_qty, wall_price, volume_delta)
+                )
                 continue
 
             # Gate 1: skip penny stocks — tick size makes % moves unreliable
             if price < config.ORDER_FLOW_MIN_STOCK_PRICE:
                 continue
 
-            # Pre-compute wall qualification — used to enrich directional alerts
-            # or fire a standalone wall alert if no directional signal fires.
+            # Pre-compute wall qualification — used to enrich directional alerts only.
+            # Walls are context, not standalone signals: a wall without flow direction
+            # doesn't tell you which way to trade, so no standalone wall alerts are sent.
             wall_qualifies = (wall_ratio >= config.ORDER_FLOW_WALL_ALERT_THRESHOLD
                               and bool(wall_side))
 
@@ -337,92 +351,113 @@ class OrderFlowMonitor:
                 (has_fut and fut_bai_delta >= config.ORDER_FLOW_FUT_BAI_DELTA_BULLISH and fut_bai >= 0)
             )
             if not (bear_bai_shift or bull_bai_shift):
-                # No directional signal — still fire standalone wall alert if qualified
-                if (wall_qualifies and self._should_send(symbol, f'WALL_{wall_side}')):
-                    self.notifier.send_order_flow_wall(
-                        symbol, wall_side, wall_price, wall_qty, wall_ratio, price)
-                    self._mark_sent(symbol, f'WALL_{wall_side}')
                 continue
 
             # Gate 3: directional execution gate — real money must confirm direction
             cum_pct = m.get('cum_delta_pct', 0)
             bear_score, bull_score, bear_reasons, bull_reasons = self._score_stock(m)
 
-            directional_fired = False
-
             if (bear_bai_shift
                     and cum_pct <= -config.ORDER_FLOW_CUM_EXECUTION_GATE
                     and price_chg < -0.05):   # Gate: price must be falling in the 30s window
                 required = counter_min if regime == 'bullish' else min_score
                 if bear_score >= required and self._should_send(symbol, 'BEARISH'):
-                    # Build wall context to attach to the directional alert
-                    wall_context = ''
-                    if wall_qualifies:
-                        if wall_side == 'ASK':
-                            wall_context = (
-                                f"🧱 ASK wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
-                                f" — confirms resistance, stop above ₹{wall_price:,.2f}"
-                            )
-                            label = f"Bearish CONFIRMED ({', '.join(bear_reasons)})"
-                        else:  # BID wall opposing bearish direction
-                            wall_context = (
-                                f"⚠️ BID wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
-                                f" — may support price, proceed with caution"
-                            )
-                            label = f"Bearish ({', '.join(bear_reasons)})"
-                    else:
-                        label = f"Bearish ({', '.join(bear_reasons)})"
-                    self.notifier.send_order_flow_bearish(
-                        symbol, bai, price, price_chg, depth_ratio,
-                        buy_vol, sell_vol, signal_label=label, wall_context=wall_context)
-                    self._mark_sent(symbol, 'BEARISH')
-                    if wall_qualifies:
-                        self._mark_sent(symbol, f'WALL_{wall_side}')
-                    directional_fired = True
-                    logger.info(
-                        f"BEARISH: {symbol} score={bear_score} wall={wall_side or 'none'}"
-                        f" — {label} [regime={regime}]"
-                    )
+                    directional_candidates.append((
+                        bear_score, symbol, 'BEARISH',
+                        (bai, price, price_chg, depth_ratio, buy_vol, sell_vol),
+                        (wall_qualifies, wall_side, wall_price, wall_qty, wall_ratio),
+                        bear_reasons, regime
+                    ))
 
             elif (bull_bai_shift
                     and cum_pct >= config.ORDER_FLOW_CUM_EXECUTION_GATE
                     and price_chg > 0.05):    # Gate: price must be rising in the 30s window
                 required = counter_min if regime == 'bearish' else min_score
                 if bull_score >= required and self._should_send(symbol, 'BULLISH'):
-                    wall_context = ''
-                    if wall_qualifies:
-                        if wall_side == 'BID':
-                            wall_context = (
-                                f"🧱 BID wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
-                                f" — confirms support, stop below ₹{wall_price:,.2f}"
-                            )
-                            label = f"Bullish CONFIRMED ({', '.join(bull_reasons)})"
-                        else:  # ASK wall opposing bullish direction
-                            wall_context = (
-                                f"⚠️ ASK wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
-                                f" — overhead resistance, proceed with caution"
-                            )
-                            label = f"Bullish ({', '.join(bull_reasons)})"
-                    else:
-                        label = f"Bullish ({', '.join(bull_reasons)})"
-                    self.notifier.send_order_flow_bullish(
-                        symbol, bai, price, price_chg, depth_ratio,
-                        buy_vol, sell_vol, signal_label=label, wall_context=wall_context)
-                    self._mark_sent(symbol, 'BULLISH')
-                    if wall_qualifies:
-                        self._mark_sent(symbol, f'WALL_{wall_side}')
-                    directional_fired = True
-                    logger.info(
-                        f"BULLISH: {symbol} score={bull_score} wall={wall_side or 'none'}"
-                        f" — {label} [regime={regime}]"
-                    )
+                    directional_candidates.append((
+                        bull_score, symbol, 'BULLISH',
+                        (bai, price, price_chg, depth_ratio, buy_vol, sell_vol),
+                        (wall_qualifies, wall_side, wall_price, wall_qty, wall_ratio),
+                        bull_reasons, regime
+                    ))
 
-            # Standalone wall alert — only fires if no directional alert fired this cycle
-            if (wall_qualifies and not directional_fired
-                    and self._should_send(symbol, f'WALL_{wall_side}')):
-                self.notifier.send_order_flow_wall(
-                    symbol, wall_side, wall_price, wall_qty, wall_ratio, price)
-                self._mark_sent(symbol, f'WALL_{wall_side}')
+        # Fire top-N directional alerts ranked by score (prevents burst flooding)
+        max_alerts = config.ORDER_FLOW_MAX_ALERTS_PER_CYCLE
+        directional_candidates.sort(key=lambda x: x[0], reverse=True)
+        if len(directional_candidates) > max_alerts:
+            logger.info(
+                f"Per-cycle cap: {len(directional_candidates)} candidates, "
+                f"firing top {max_alerts} by score"
+            )
+        for candidate in directional_candidates[:max_alerts]:
+            score, symbol, direction, send_args, wall_args, reasons, cycle_regime = candidate
+            bai, price, price_chg, depth_ratio, buy_vol, sell_vol = send_args
+            wall_qualifies, wall_side, wall_price, wall_qty, wall_ratio = wall_args
+
+            wall_context = ''
+            if wall_qualifies:
+                if direction == 'BEARISH':
+                    if wall_side == 'ASK':
+                        wall_context = (
+                            f"🧱 ASK wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
+                            f" — confirms resistance, stop above ₹{wall_price:,.2f}"
+                        )
+                        label = f"Bearish CONFIRMED ({', '.join(reasons)})"
+                    else:
+                        wall_context = (
+                            f"⚠️ BID wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
+                            f" — may support price, proceed with caution"
+                        )
+                        label = f"Bearish ({', '.join(reasons)})"
+                else:  # BULLISH
+                    if wall_side == 'BID':
+                        wall_context = (
+                            f"🧱 BID wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
+                            f" — confirms support, stop below ₹{wall_price:,.2f}"
+                        )
+                        label = f"Bullish CONFIRMED ({', '.join(reasons)})"
+                    else:
+                        wall_context = (
+                            f"⚠️ ASK wall ₹{wall_price:,.2f} ({wall_ratio:.0f}× avg)"
+                            f" — overhead resistance, proceed with caution"
+                        )
+                        label = f"Bullish ({', '.join(reasons)})"
+            else:
+                label = f"{'Bearish' if direction == 'BEARISH' else 'Bullish'} ({', '.join(reasons)})"
+
+            if direction == 'BEARISH':
+                self.notifier.send_order_flow_bearish(
+                    symbol, bai, price, price_chg, depth_ratio,
+                    buy_vol, sell_vol, signal_label=label, wall_context=wall_context)
+            else:
+                self.notifier.send_order_flow_bullish(
+                    symbol, bai, price, price_chg, depth_ratio,
+                    buy_vol, sell_vol, signal_label=label, wall_context=wall_context)
+
+            self._mark_sent(symbol, direction)
+            logger.info(
+                f"{direction}: {symbol} score={score} wall={wall_side or 'none'}"
+                f" — {label} [regime={cycle_regime}]"
+            )
+
+        # Fire top-1 absorption alert per cycle (strongest by strength score)
+        if absorption_candidates:
+            absorption_candidates.sort(key=lambda x: x[0], reverse=True)
+            if len(absorption_candidates) > 1:
+                logger.info(
+                    f"Absorption cap: {len(absorption_candidates)} candidates, "
+                    f"firing top 1 by strength"
+                )
+            strength, symbol, abs_signal, price, wall_side, wall_qty, wall_price, volume_delta = \
+                absorption_candidates[0]
+            self.notifier.send_order_flow_absorption(
+                symbol, abs_signal, price, wall_side, wall_qty,
+                wall_price, strength, volume_delta)
+            self._mark_sent(symbol, 'ABSORPTION')
+            logger.info(
+                f"ABSORPTION: {symbol} type={abs_signal} strength={strength:.2f} "
+                f"wall={wall_side} ratio={metrics[symbol]['wall_ratio']:.0f}×"
+            )
 
     # --------------------------------------------------------
     # Overnight hold alerts (closing window: 2:00–3:15 PM, BULLISH only)

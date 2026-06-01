@@ -407,7 +407,9 @@ class StockMonitor:
                 return None
 
             # Extract sector metrics
+            sector_change_5min = sector_data.get('price_change_5min', 0)
             sector_change_10min = sector_data.get('price_change_10min', 0)
+            sector_change_day = sector_data.get('price_change_day', 0)
             sector_volume_ratio = sector_data.get('volume_ratio', 1.0)
             sector_momentum = sector_data.get('momentum_score_10min', 0)
             stocks_up_10min = sector_data.get('stocks_up_10min', 0)
@@ -419,7 +421,9 @@ class StockMonitor:
 
             return {
                 'sector_name': sector_name,
+                'sector_change_5min': sector_change_5min,
                 'sector_change_10min': sector_change_10min,
+                'sector_change_day': sector_change_day,
                 'stock_vs_sector': stock_vs_sector,
                 'sector_volume_ratio': sector_volume_ratio,
                 'sector_momentum': sector_momentum,

@@ -446,6 +446,6 @@ class StockAlertNotifier(BaseNotifier):
 
         # Add Sector Context (if enabled and available)
         if sector_context and config.ENABLE_SECTOR_CONTEXT_IN_ALERTS:
-            message += format_sector_context(sector_context, is_priority)
+            message += format_sector_context(sector_context, is_priority, is_drop=not is_rise)
 
         return message
