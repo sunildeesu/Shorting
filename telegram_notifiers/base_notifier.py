@@ -15,8 +15,10 @@ class BaseNotifier:
         self.channel_id = config.TELEGRAM_CHANNEL_ID
         self.debug_bot_token = config.TELEGRAM_DEBUG_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN
         self.debug_channel_id = config.TELEGRAM_DEBUG_CHANNEL_ID
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
-        self.debug_base_url = f"https://api.telegram.org/bot{self.debug_bot_token}"
+        # config.TELEGRAM_API_BASE lets delivery route via a relay (e.g. a Cloudflare
+        # Worker) when api.telegram.org is blocked directly; defaults to api.telegram.org.
+        self.base_url = f"{config.TELEGRAM_API_BASE}/bot{self.bot_token}"
+        self.debug_base_url = f"{config.TELEGRAM_API_BASE}/bot{self.debug_bot_token}"
 
         if not self.bot_token or not self.channel_id:
             raise ValueError("Telegram bot token and channel ID must be set in .env file")

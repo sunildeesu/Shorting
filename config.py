@@ -9,6 +9,10 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 TELEGRAM_DEBUG_BOT_TOKEN = os.getenv('TELEGRAM_DEBUG_BOT_TOKEN')
 TELEGRAM_DEBUG_CHANNEL_ID = os.getenv('TELEGRAM_DEBUG_CHANNEL_ID')
+# Base host for the Telegram Bot API. Override with a Cloudflare Worker relay URL
+# (e.g. https://relay.example.workers.dev/r/<secret>) when api.telegram.org is blocked
+# on the direct connection. Defaults to direct. Affects Telegram delivery only.
+TELEGRAM_API_BASE = os.getenv('TELEGRAM_API_BASE', 'https://api.telegram.org').rstrip('/')
 
 # Market Configuration
 MARKET_TIMEZONE = 'Asia/Kolkata'
