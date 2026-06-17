@@ -13,6 +13,10 @@ TELEGRAM_DEBUG_CHANNEL_ID = os.getenv('TELEGRAM_DEBUG_CHANNEL_ID')
 # (e.g. https://relay.example.workers.dev/r/<secret>) when api.telegram.org is blocked
 # on the direct connection. Defaults to direct. Affects Telegram delivery only.
 TELEGRAM_API_BASE = os.getenv('TELEGRAM_API_BASE', 'https://api.telegram.org').rstrip('/')
+# Discord webhook delivery (sent in parallel with Telegram). Reachable where
+# Telegram is blocked. Leave unset to disable. Debug falls back to main if unset.
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+DISCORD_DEBUG_WEBHOOK_URL = os.getenv('DISCORD_DEBUG_WEBHOOK_URL')
 
 # Market Configuration
 MARKET_TIMEZONE = 'Asia/Kolkata'
