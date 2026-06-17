@@ -335,3 +335,11 @@ class TelegramNotifier:
         Delegates to StockAlertNotifier (uses base _send_message)
         """
         return self.stock_alerts.send_test_message()
+
+    def send_debug(self, message: str) -> bool:
+        """
+        Send a message to the debug/system channel.
+
+        Delegates to StockAlertNotifier (uses base send_debug)
+        """
+        return self.stock_alerts.send_debug(message)
