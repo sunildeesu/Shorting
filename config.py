@@ -13,6 +13,10 @@ TELEGRAM_DEBUG_CHANNEL_ID = os.getenv('TELEGRAM_DEBUG_CHANNEL_ID')
 # (e.g. https://relay.example.workers.dev/r/<secret>) when api.telegram.org is blocked
 # on the direct connection. Defaults to direct. Affects Telegram delivery only.
 TELEGRAM_API_BASE = os.getenv('TELEGRAM_API_BASE', 'https://api.telegram.org').rstrip('/')
+# Discord webhook delivery (sent in parallel with Telegram). Reachable where
+# Telegram is blocked. Leave unset to disable. Debug falls back to main if unset.
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL')
+DISCORD_DEBUG_WEBHOOK_URL = os.getenv('DISCORD_DEBUG_WEBHOOK_URL')
 
 # Market Configuration
 MARKET_TIMEZONE = 'Asia/Kolkata'
@@ -450,6 +454,32 @@ CPR_DRY_RUN_MODE = os.getenv('CPR_DRY_RUN_MODE', 'false').lower() == 'true'
 
 # State file (persistent storage for position tracking)
 CPR_STATE_FILE = 'data/cpr_state.json'
+
+# ============================================
+# POTENTIAL DOUBLE BOTTOM ALERT CONFIGURATION
+# ============================================
+# Intraday monitor that alerts when live price returns to within a tight band of a
+# prior significant daily low that previously held and rallied — i.e. price is AT the
+# probable second bottom, BEFORE the bounce. Separate from the confirmed EOD DOUBLE_BOTTOM
+# pattern (eod_pattern_detector.py), which only fires after price has already recovered.
+
+# Enable/Disable the intraday potential-double-bottom monitor
+ENABLE_DOUBLE_BOTTOM_ALERTS = os.getenv('ENABLE_DOUBLE_BOTTOM_ALERTS', 'true').lower() == 'true'
+
+# Dry-run mode (detect and log, but do NOT send alerts)
+DOUBLE_BOTTOM_DRY_RUN_MODE = os.getenv('DOUBLE_BOTTOM_DRY_RUN_MODE', 'false').lower() == 'true'
+
+# Proximity band: how close (%) live price must be to the prior low to trigger
+DOUBLE_BOTTOM_PROXIMITY_PCT = float(os.getenv('DOUBLE_BOTTOM_PROXIMITY_PCT', '2.0'))
+
+# Daily candles to scan when finding prior swing lows
+DOUBLE_BOTTOM_LOOKBACK_DAYS = int(os.getenv('DOUBLE_BOTTOM_LOOKBACK_DAYS', '50'))
+
+# Minimum rally (%) above a low for it to qualify as a first bottom (middle of the W)
+DOUBLE_BOTTOM_MIN_RALLY_PCT = float(os.getenv('DOUBLE_BOTTOM_MIN_RALLY_PCT', '3.0'))
+
+# Cooldown per (symbol, level) so each level alerts at most ~once per trading day
+DOUBLE_BOTTOM_COOLDOWN_MINUTES = int(os.getenv('DOUBLE_BOTTOM_COOLDOWN_MINUTES', '360'))
 
 # ============================================
 # AUTO-TRADING CONFIGURATION

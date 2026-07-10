@@ -1,9 +1,15 @@
 """Base notifier class with common Telegram functionality."""
+import html
+import re
 import requests
 import logging
 import config
 
 logger = logging.getLogger(__name__)
+
+# Discord limits: embed description max 4096 chars, max 10 embeds and 6000 chars total per message.
+_DISCORD_EMBED_LIMIT = 4096
+_DISCORD_MAX_EMBEDS = 10
 
 
 class BaseNotifier:
@@ -19,6 +25,11 @@ class BaseNotifier:
         # Worker) when api.telegram.org is blocked directly; defaults to api.telegram.org.
         self.base_url = f"{config.TELEGRAM_API_BASE}/bot{self.bot_token}"
         self.debug_base_url = f"{config.TELEGRAM_API_BASE}/bot{self.debug_bot_token}"
+
+        # Optional Discord webhooks — alerts are sent in parallel with Telegram so
+        # delivery survives Telegram being blocked. Debug falls back to the main webhook.
+        self.discord_webhook = config.DISCORD_WEBHOOK_URL
+        self.discord_debug_webhook = config.DISCORD_DEBUG_WEBHOOK_URL or config.DISCORD_WEBHOOK_URL
 
         if not self.bot_token or not self.channel_id:
             raise ValueError("Telegram bot token and channel ID must be set in .env file")
@@ -48,11 +59,71 @@ class BaseNotifier:
         logger.error(f"Telegram message dropped after rate-limit retry: {channel_id}")
         return False
 
+    def _html_to_discord(self, message: str) -> str:
+        """Convert Telegram HTML formatting to Discord markdown."""
+        text = re.sub(r'</?(?:b|strong)>', '**', message, flags=re.IGNORECASE)
+        text = re.sub(r'</?(?:i|em)>', '*', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?u>', '__', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?(?:code|pre)>', '`', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)  # strip any remaining tags
+        return html.unescape(text)
+
+    @staticmethod
+    def _chunk_text(text: str, limit: int) -> list:
+        """Split text into <=limit-char chunks, preferring line boundaries."""
+        if len(text) <= limit:
+            return [text]
+        chunks, current = [], ""
+        for line in text.split("\n"):
+            while len(line) > limit:  # a single over-long line: hard-split
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.append(line[:limit])
+                line = line[limit:]
+            if current and len(current) + len(line) + 1 > limit:
+                chunks.append(current)
+                current = line
+            else:
+                current = f"{current}\n{line}" if current else line
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _send_to_discord(self, webhook_url: str, message: str) -> bool:
+        """Send a message to a Discord webhook as embed(s). No-op if not configured."""
+        if not webhook_url:
+            return False
+        import time as _time
+        content = self._html_to_discord(message)
+        if not content.strip():
+            return False
+        embeds = [{"description": chunk}
+                  for chunk in self._chunk_text(content, _DISCORD_EMBED_LIMIT)][:_DISCORD_MAX_EMBEDS]
+        payload = {"embeds": embeds}
+        for attempt in range(2):
+            try:
+                response = requests.post(webhook_url, json=payload, timeout=10)
+                if response.status_code == 429:
+                    retry_after = response.json().get('retry_after', 5)
+                    logger.warning(f"Discord rate limit — waiting {retry_after}s before retry")
+                    _time.sleep(float(retry_after))
+                    continue
+                response.raise_for_status()
+                return True
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to send Discord message: {e}")
+                return False
+        logger.error("Discord message dropped after rate-limit retry")
+        return False
+
     def _send_message(self, message: str) -> bool:
-        """Send message to the main stock alerts channel."""
-        ok = self._send_to(self.channel_id, message)
+        """Send to the main alerts channel via Telegram and Discord (parallel)."""
+        tg_ok = self._send_to(self.channel_id, message)
+        dc_ok = self._send_to_discord(self.discord_webhook, message)
+        ok = tg_ok or dc_ok
         if ok:
-            logger.info("Telegram message sent to main channel")
+            logger.info(f"Alert delivered to main channel (telegram={tg_ok}, discord={dc_ok})")
         return ok
 
     def send_debug(self, message: str) -> bool:
@@ -66,14 +137,18 @@ class BaseNotifier:
             return self._send_message(message)
         url = f"{self.debug_base_url}/sendMessage"
         payload = {"chat_id": self.debug_channel_id, "text": message, "parse_mode": "HTML"}
+        tg_ok = False
         try:
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
-            logger.info("Telegram message sent to debug channel")
-            return True
+            tg_ok = True
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send to debug channel: {e}")
-            return False
+        dc_ok = self._send_to_discord(self.discord_debug_webhook, message)
+        ok = tg_ok or dc_ok
+        if ok:
+            logger.info(f"Debug message delivered (telegram={tg_ok}, discord={dc_ok})")
+        return ok
 
     def send_test_message(self) -> bool:
         """Send a test message to both channels to verify integration."""
