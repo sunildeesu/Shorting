@@ -17,6 +17,7 @@ from telegram_notifiers.price_action_alerts import PriceActionAlertNotifier
 from telegram_notifiers.nifty_option_alerts import NiftyOptionAlertNotifier
 from telegram_notifiers.volume_profile_alerts import VolumeProfileAlertNotifier
 from telegram_notifiers.order_flow_alerts import OrderFlowAlertNotifier
+from telegram_notifiers.atr_alerts import ATRAlertNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class TelegramNotifier:
         self.nifty_option_alerts = NiftyOptionAlertNotifier()
         self.volume_profile_alerts = VolumeProfileAlertNotifier()
         self.order_flow_alerts = OrderFlowAlertNotifier()
+        self.atr_alerts = ATRAlertNotifier()
 
         # Expose common properties for backward compatibility
         self.bot_token = self.stock_alerts.bot_token
@@ -323,6 +325,14 @@ class TelegramNotifier:
     def send_order_flow_summary(self, top_bullish: list, top_bearish: list) -> bool:
         """Send periodic order flow summary. Delegates to OrderFlowAlertNotifier."""
         return self.order_flow_alerts.send_order_flow_summary(top_bullish, top_bearish)
+
+    # ========================================
+    # ATR Breakout Alert Methods
+    # ========================================
+
+    def send_atr_breakout(self, analysis: dict) -> bool:
+        """Send an ATR breakout alert. Delegates to ATRAlertNotifier."""
+        return self.atr_alerts.send_atr_breakout(analysis)
 
     # ========================================
     # Utility Methods

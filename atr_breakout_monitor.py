@@ -524,25 +524,14 @@ class ATRBreakoutMonitor:
                 logger.debug(f"{symbol}: ATR alert already sent today")
                 return False
 
-            # Format message
-            message = self._format_atr_alert_message(analysis)
-
-            # Send to Telegram
-            url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = {
-                'chat_id': config.TELEGRAM_CHANNEL_ID,
-                'text': message,
-                'parse_mode': 'HTML'
-            }
-
-            response = requests.post(url, json=payload)
-            telegram_success = response.status_code == 200
+            # Send to Telegram via shared notifier (retry + HTML-safe formatting)
+            telegram_success = self.telegram.send_atr_breakout(analysis)
 
             if telegram_success:
                 logger.info(f"{symbol}: ATR breakout alert sent successfully")
                 self.alert_history.record_alert(symbol, "atr_breakout")
             else:
-                logger.error(f"{symbol}: Failed to send alert: {response.text}")
+                logger.error(f"{symbol}: Failed to send ATR breakout alert")
 
             # Log to Excel if enabled
             if self.excel_logger:
@@ -572,148 +561,6 @@ class ATRBreakoutMonitor:
         except Exception as e:
             logger.error(f"Failed to send ATR alert: {e}")
             return False
-
-    def _format_atr_alert_message(self, analysis: Dict) -> str:
-        """Format ATR breakout alert message for Telegram"""
-        symbol = analysis['symbol']
-        today_open = analysis['today_open']
-        current_price = analysis['current_price']
-        entry_level = analysis['entry_level']
-        stop_loss = analysis['stop_loss']
-        atr_20 = analysis['atr_20']
-        atr_30 = analysis['atr_30']
-        volatility_filter = "✅ PASSED" if analysis['volatility_filter_passed'] else "❌ FAILED"
-        breakout_distance = analysis['breakout_distance']
-        risk_amount = analysis['risk_amount']
-        risk_percent = analysis['risk_percent']
-        market_cap_cr = analysis['market_cap_cr']
-        volume = analysis['volume']
-        is_friday = analysis['is_friday']
-
-        # Format volume in lakhs
-        volume_lakhs = volume / 100000
-
-        # Build message
-        message = "🎯🎯🎯 ATR BREAKOUT SIGNAL 🎯🎯🎯\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        message += "⚡ VOLATILITY CONTRACTION BREAKOUT ⚡\n"
-        message += "━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        message += f"📊 Stock: <b>{symbol}</b>\n"
-        if market_cap_cr:
-            message += f"💰 Market Cap: ₹{market_cap_cr:,.0f} Cr\n"
-        message += "\n"
-
-        message += "📈 <b>Breakout Details:</b>\n"
-        message += f"   Today's Open: ₹{today_open:.2f}\n"
-        message += f"   Entry Level: ₹{entry_level:.2f} (O + {config.ATR_ENTRY_MULTIPLIER}×ATR)\n"
-        message += f"   Current Price: <b>₹{current_price:.2f}</b> ✅\n"
-        message += f"   Breakout: +₹{breakout_distance:.2f} above entry\n"
-        message += "\n"
-
-        message += "📊 <b>ATR Analysis:</b>\n"
-        message += f"   ATR(20): ₹{atr_20:.2f}\n"
-        message += f"   ATR(30): ₹{atr_30:.2f}\n"
-        message += f"   Volatility Filter: {volatility_filter}\n"
-        if analysis['volatility_filter_passed']:
-            message += "   💡 Volatility contracting (ATR20 < ATR30)\n"
-        message += "\n"
-
-        # NEW: Show all filter statuses
-        message += "🔍 <b>Quality Filters (NEW):</b>\n"
-        price_filter = "✅ PASSED" if analysis['price_filter_passed'] else "❌ FAILED"
-        volume_filter = "✅ PASSED" if analysis['volume_filter_passed'] else "❌ FAILED"
-        message += f"   Price Trend: {price_filter}"
-        if analysis['ma_20']:
-            message += f" (>${analysis['ma_20']:.2f} MA20)"
-        message += "\n"
-        message += f"   Volume Confirm: {volume_filter}"
-        if analysis['avg_volume']:
-            vol_multiplier = volume / analysis['avg_volume']
-            message += f" ({vol_multiplier:.1f}× avg)"
-        message += "\n"
-        message += "\n"
-
-        message += "🛡️ <b>Risk Management:</b>\n"
-        message += f"   Stop Loss: ₹{stop_loss:.2f}\n"
-        message += f"   Risk: ₹{risk_amount:.2f} ({risk_percent:.2f}%)\n"
-        message += f"   R:R Ratio: 1:2 (₹{risk_amount * 2:.2f} target)\n"
-        message += "\n"
-
-        message += "📊 <b>Volume:</b>\n"
-        message += f"   Today: {volume_lakhs:.2f}L shares\n"
-        message += "\n"
-
-        # RSI Momentum Analysis
-        rsi_analysis = analysis.get('rsi_analysis')
-        if rsi_analysis:
-            message += "📊 <b>RSI Momentum Analysis:</b>\n"
-
-            # RSI Values
-            rsi_9 = rsi_analysis.get('rsi_9')
-            rsi_14 = rsi_analysis.get('rsi_14')
-            rsi_21 = rsi_analysis.get('rsi_21')
-
-            if rsi_9 is not None or rsi_14 is not None or rsi_21 is not None:
-                message += "   <b>RSI Values:</b>\n"
-
-                if rsi_9 is not None:
-                    emoji = "🔥" if rsi_9 > 70 else "❄️" if rsi_9 < 30 else "📊"
-                    message += f"      {emoji} RSI(9): {rsi_9:.2f}\n"
-
-                if rsi_14 is not None:
-                    emoji = "🔥" if rsi_14 > 70 else "❄️" if rsi_14 < 30 else "📊"
-                    message += f"      {emoji} RSI(14): {rsi_14:.2f}\n"
-
-                if rsi_21 is not None:
-                    emoji = "🔥" if rsi_21 > 70 else "❄️" if rsi_21 < 30 else "📊"
-                    message += f"      {emoji} RSI(21): {rsi_21:.2f}\n"
-
-            # RSI Crossovers
-            crossovers = rsi_analysis.get('crossovers', {})
-            if crossovers:
-                message += "   <b>Crossovers:</b>\n"
-                for pair, crossover_data in crossovers.items():
-                    if crossover_data.get('status') and crossover_data.get('strength') is not None:
-                        fast, slow = pair.split('_')
-                        arrow = "↑" if crossover_data['status'] == 'above' else "↓"
-                        strength = crossover_data['strength']
-                        sign = "+" if strength >= 0 else ""
-                        message += f"      • RSI({fast}){arrow}RSI({slow}): {sign}{strength:.2f}\n"
-
-            # Recent Crossovers
-            recent_crosses = []
-            for pair, crossover_data in crossovers.items():
-                recent = crossover_data.get('recent_cross', {})
-                if recent.get('occurred'):
-                    bars_ago = recent.get('bars_ago', 0)
-                    direction = recent.get('direction', '').capitalize()
-                    emoji = "🟢" if direction == 'Bullish' else "🔴"
-                    fast, slow = pair.split('_')
-                    recent_crosses.append(f"{emoji} RSI({fast})×RSI({slow}) {direction} {bars_ago}d ago")
-
-            if recent_crosses:
-                message += "   <b>Recent Crosses:</b>\n"
-                for cross in recent_crosses:
-                    message += f"      • {cross}\n"
-
-            # Overall Summary
-            summary = rsi_analysis.get('summary', '')
-            if summary:
-                emoji = "🟢" if 'Bullish' in summary else "🔴" if 'Bearish' in summary else "⚪"
-                message += f"   <b>Summary:</b> {emoji} {summary}\n"
-
-            message += "\n"
-
-        # Friday exit warning
-        if is_friday and config.ATR_FRIDAY_EXIT:
-            message += "⚠️ <b>FRIDAY EXIT RULE ACTIVE</b> ⚠️\n"
-            message += "   Close all positions before market close!\n"
-            message += "\n"
-
-        message += f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-
-        return message
 
     def _load_friday_reminder_tracking(self) -> Dict:
         """Load tracking data for Friday exit reminders"""
