@@ -67,6 +67,63 @@ class PatternAlertNotifier(BaseNotifier):
             logger.error(f"Failed to send EOD pattern summary: {e}")
             return False
 
+    def send_potential_double_bottom_alert(
+        self,
+        symbol: str,
+        current_price: float,
+        support_level: float,
+        first_low_date: str = "",
+        peak_between: float = 0.0
+    ) -> bool:
+        """
+        Send an intraday "potential double bottom" alert.
+
+        Fired when live price returns to within a tight band of a prior significant low
+        that previously held and rallied. This is an UNCONFIRMED, at-support watch signal
+        (price can still break down) — distinct from the confirmed EOD DOUBLE_BOTTOM.
+
+        Args:
+            symbol: Stock symbol
+            current_price: Current live price
+            support_level: The prior low being retested
+            first_low_date: Date of the prior low (optional, for context)
+            peak_between: Rally peak between the prior low and now (optional)
+
+        Returns:
+            True if delivered (Telegram and/or Discord), False otherwise
+        """
+        distance_pct = (current_price - support_level) / support_level * 100
+        suggested_stop = support_level * 0.98  # 2% below the prior low
+
+        message = (
+            "🟣🟣🟣 <b><code>POTENTIAL DOUBLE BOTTOM</code></b> 🟣🟣🟣\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+            f"📈 <b>{symbol}</b> is testing a prior low\n\n"
+            f"   💵 Current: ₹{current_price:,.2f}\n"
+            f"   🎯 Prior low (support): ₹{support_level:,.2f}\n"
+            f"   📏 Distance: {distance_pct:+.2f}%\n"
+        )
+        if peak_between:
+            rally_pct = (peak_between - support_level) / support_level * 100
+            message += f"   ⛰️ Rally off prior low: ₹{peak_between:,.2f} (+{rally_pct:.1f}%)\n"
+        if first_low_date:
+            message += f"   📅 Prior low date: {first_low_date}\n"
+        message += (
+            f"   🛡️ Suggested stop: ₹{suggested_stop:,.2f} (below support)\n\n"
+            "⚠️ <b>UNCONFIRMED / FORMING</b> — price is at the probable second bottom "
+            "but has NOT confirmed a bounce yet. It can still break below support. "
+            "This is an early watch signal, not a completed pattern.\n"
+        )
+
+        try:
+            success = self._send_message(message)
+            if success:
+                logger.info(f"Potential double bottom alert sent for {symbol} @ {support_level:.2f}")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send potential double bottom alert for {symbol}: {e}")
+            return False
+
     def _format_premarket_alert_message(
         self,
         top_patterns: List[Dict],

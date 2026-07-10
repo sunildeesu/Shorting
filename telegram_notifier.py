@@ -147,6 +147,22 @@ class TelegramNotifier:
             analysis_date=analysis_date
         )
 
+    def send_potential_double_bottom_alert(self, symbol: str, current_price: float,
+                                           support_level: float, first_low_date: str = "",
+                                           peak_between: float = 0.0) -> bool:
+        """
+        Send an intraday "potential double bottom" (at-support, unconfirmed) alert
+
+        Delegates to PatternAlertNotifier
+        """
+        return self.pattern_alerts.send_potential_double_bottom_alert(
+            symbol=symbol,
+            current_price=current_price,
+            support_level=support_level,
+            first_low_date=first_low_date,
+            peak_between=peak_between
+        )
+
     # ========================================
     # Sector Alert Methods
     # ========================================
