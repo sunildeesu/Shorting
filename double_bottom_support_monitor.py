@@ -51,68 +51,60 @@ SERVICE_NAME = "double_bottom_support_monitor"
 INSTRUMENT_TOKENS_FILE = "data/instrument_tokens.json"
 
 
-def find_double_bottom_levels(
+def find_double_bottom_setups(
     candles: List[Dict],
     min_rally_pct: float,
+    pivot_bars: int,
     min_days_ago: int = 5,
-    cluster_pct: float = 1.0
+    max_days_ago: int = 40,
 ) -> List[Dict]:
     """
-    Find candidate "first bottom" support levels from daily candles.
+    Find the first bottom of a potential double bottom.
 
-    A candidate is a prior swing low that (a) occurred at least `min_days_ago` bars ago,
-    and (b) was followed by a rally of at least `min_rally_pct` above the low (the middle
-    of the W). Nearby levels are merged so a cluster of lows reports once.
+    A double bottom forms at the *major low* — so we anchor only on the single lowest
+    low within the recency window [min_days_ago, max_days_ago]; higher intermediate lows
+    are ignored. That low must have been followed by a rally of at least min_rally_pct
+    (the middle peak of the W). The live retest / proximity check happens later against
+    the live price, so this returns the stable historical context only.
 
     Args:
         candles: Daily OHLCV dicts in chronological (ascending) order
-        min_rally_pct: Minimum rally above the low to qualify (e.g. 3.0)
-        min_days_ago: Low must be at least this many bars before the latest candle
-        cluster_pct: Merge candidate levels within this % of each other
+        min_rally_pct: Minimum rally above the low to qualify as a real W (e.g. 6.0)
+        pivot_bars: kept for signature compatibility; the global minimum is used
+        min_days_ago / max_days_ago: recency window for the first bottom
 
     Returns:
-        List of {'level': float, 'date': str, 'peak_between': float}, most recent first
+        List with the single lowest-low setup {'level','date','peak_between','rally_pct'},
+        or [] if none qualifies.
     """
     n = len(candles)
-    if n < 10:
+    if n < min_days_ago + 2:
         return []
 
-    candidates: List[Dict] = []
-    # Local minima: a low lower than both neighbours. Range stops at n-1 so a valid
-    # minimum always has a following candle (a rally can only be measured after the low).
-    for i in range(1, n - 1):
-        low = candles[i]['low']
-        if not (low < candles[i - 1]['low'] and low < candles[i + 1]['low']):
+    # The major bottom = lowest low within the recency window.
+    lo_idx = None
+    for i in range(0, n - 1):
+        bars_ago = (n - 1) - i
+        if not (min_days_ago <= bars_ago <= max_days_ago):
             continue
-        # Must be old enough that a rally + pullback could have formed since.
-        if (n - 1) - i < min_days_ago:
-            continue
-        # Rally after the low must reach min_rally_pct above it.
-        peak_between = max(c['high'] for c in candles[i + 1:])
-        if peak_between < low * (1 + min_rally_pct / 100):
-            continue
-        candidates.append({
-            'level': low,
-            'date': str(candles[i].get('date', '')),
-            'peak_between': peak_between,
-            'index': i
-        })
-
-    if not candidates:
+        if lo_idx is None or candles[i]['low'] < candles[lo_idx]['low']:
+            lo_idx = i
+    if lo_idx is None:
         return []
 
-    # Merge clusters: keep the most recent low in each price cluster.
-    candidates.sort(key=lambda c: c['index'], reverse=True)  # most recent first
-    merged: List[Dict] = []
-    for cand in candidates:
-        if any(abs(cand['level'] - m['level']) / m['level'] * 100 <= cluster_pct
-               for m in merged):
-            continue
-        merged.append(cand)
+    low = candles[lo_idx]['low']
+    # A real intervening rally (middle peak of the W) after the major low.
+    peak_between = max(c['high'] for c in candles[lo_idx + 1:])
+    rally_pct = (peak_between - low) / low * 100
+    if rally_pct < min_rally_pct:
+        return []
 
-    for m in merged:
-        m.pop('index', None)
-    return merged
+    return [{
+        'level': low,
+        'date': str(candles[lo_idx].get('date', '')),
+        'peak_between': peak_between,
+        'rally_pct': rally_pct,
+    }]
 
 
 class DoubleBottomSupportMonitor:
@@ -208,7 +200,13 @@ class DoubleBottomSupportMonitor:
             if not candles or len(candles) < 10:
                 continue
 
-            found = find_double_bottom_levels(candles[-lookback:], min_rally_pct=min_rally)
+            found = find_double_bottom_setups(
+                candles[-lookback:],
+                min_rally_pct=min_rally,
+                pivot_bars=config.DOUBLE_BOTTOM_PIVOT_BARS,
+                min_days_ago=config.DOUBLE_BOTTOM_MIN_DAYS_AGO,
+                max_days_ago=config.DOUBLE_BOTTOM_MAX_DAYS_AGO,
+            )
             if found:
                 levels[symbol] = found
 
@@ -217,39 +215,48 @@ class DoubleBottomSupportMonitor:
         self._levels_date = today
         return levels
 
-    def _check_symbol(self, symbol: str, price: float, candidates: List[Dict]) -> bool:
-        """Alert if price is within the proximity band of any candidate level. One per level/day."""
+    def _check_symbol(self, symbol: str, price: float, setups: List[Dict]) -> bool:
+        """Alert at most once per symbol: pick the single best retested setup."""
         proximity = config.DOUBLE_BOTTOM_PROXIMITY_PCT
-        sent = False
-        for cand in candidates:
-            level = cand['level']
-            distance_pct = abs(price - level) / level * 100
-            if distance_pct > proximity:
-                continue
+        max_below = config.DOUBLE_BOTTOM_MAX_BELOW_PCT
 
-            alert_type = f"POTENTIAL_DB_{round(level)}"
-            if not self.alert_history.should_send_alert(
-                symbol, alert_type, cooldown_minutes=config.DOUBLE_BOTTOM_COOLDOWN_MINUTES
-            ):
-                logger.info(f"⏸️  {symbol} @ {level:.2f}: already alerted (cooldown) - skipping")
-                continue
+        # Keep only setups the live price is currently retesting: within the proximity
+        # band and not broken decisively below the first bottom (that would be a breakdown).
+        matches = [
+            s for s in setups
+            if abs(price - s['level']) / s['level'] * 100 <= proximity
+            and price >= s['level'] * (1 - max_below / 100)
+        ]
+        if not matches:
+            return False
 
-            logger.info(f"🔔 {symbol} at probable double bottom: price {price:.2f} "
-                        f"near prior low {level:.2f} ({distance_pct:.2f}%)")
+        # Single best = clearest W (largest rally). setups are pre-sorted by rally_pct.
+        best = matches[0]
+        level = best['level']
+        distance_pct = (price - level) / level * 100
 
-            if self.dry_run:
-                logger.info(f"[DRY RUN] Would send POTENTIAL_DOUBLE_BOTTOM alert for {symbol} "
-                            f"(price {price:.2f}, support {level:.2f})")
-            else:
-                self.telegram.send_potential_double_bottom_alert(
-                    symbol=symbol,
-                    current_price=price,
-                    support_level=level,
-                    first_low_date=cand.get('date', ''),
-                    peak_between=cand.get('peak_between', 0.0)
-                )
-            sent = True
-        return sent
+        # One alert per symbol per cooldown (not per level) — removes duplicate noise.
+        if not self.alert_history.should_send_alert(
+            symbol, "POTENTIAL_DB", cooldown_minutes=config.DOUBLE_BOTTOM_COOLDOWN_MINUTES
+        ):
+            logger.info(f"⏸️  {symbol}: already alerted (cooldown) - skipping")
+            return False
+
+        logger.info(f"🔔 {symbol} at probable double bottom: price {price:.2f} near prior "
+                    f"low {level:.2f} ({distance_pct:+.2f}%, rally {best['rally_pct']:.1f}%)")
+
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would send POTENTIAL_DOUBLE_BOTTOM alert for {symbol} "
+                        f"(price {price:.2f}, support {level:.2f})")
+        else:
+            self.telegram.send_potential_double_bottom_alert(
+                symbol=symbol,
+                current_price=price,
+                support_level=level,
+                first_low_date=best.get('date', ''),
+                peak_between=best.get('peak_between', 0.0)
+            )
+        return True
 
     def monitor(self) -> Dict:
         """Run one monitoring cycle."""
@@ -318,4 +325,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import proctitle; proctitle.set_title("nse-doublebottom-monitor")
     main()

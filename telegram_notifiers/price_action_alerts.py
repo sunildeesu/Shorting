@@ -55,6 +55,9 @@ class PriceActionAlertNotifier(BaseNotifier):
             confidence_breakdown, market_cap_cr
         )
 
+        import config
+        if getattr(config, 'PRICE_ACTION_ALERTS_TO_DEBUG', False):
+            return self.send_debug(message)
         return self._send_message(message)
 
     def _format_price_action_message(

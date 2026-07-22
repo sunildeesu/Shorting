@@ -29,7 +29,7 @@ from alert_excel_logger import AlertExcelLogger
 from telegram_notifier import TelegramNotifier
 from price_action_detector import PriceActionDetector
 from market_utils import is_market_open, get_market_status
-from central_db_reader import fetch_nifty_vix, report_cycle_complete
+from central_db_reader import fetch_nifty_vix, report_cycle_complete, fetch_intraday_candles
 from service_health import get_health_tracker
 
 # Configure logging
@@ -191,15 +191,15 @@ class PriceActionMonitor:
                     current_price = candle_data[symbol]['current_price']
                     avg_volume = candle_data[symbol]['avg_volume']
 
-                    # Apply price filter
+                    # Apply price filter (skip penny stocks)
                     if current_price < config.PRICE_ACTION_MIN_PRICE:
                         logger.debug(f"{symbol}: Price {current_price:.2f} below minimum {config.PRICE_ACTION_MIN_PRICE}")
                         continue
 
-                    # Apply volume filter
-                    if avg_volume < config.PRICE_ACTION_MIN_AVG_VOLUME:
-                        logger.debug(f"{symbol}: Avg volume {avg_volume:.0f} below minimum {config.PRICE_ACTION_MIN_AVG_VOLUME}")
-                        continue
+                    # No absolute volume floor: a generic share-count threshold can't work across
+                    # differently-priced stocks. Volume is judged RELATIVELY inside the detectors
+                    # (each scores the pattern candle's volume vs this stock's own average -> a
+                    # % increase), and min_confidence gates on the resulting score.
 
                     # Detect patterns
                     result = self.detector.detect_patterns(
@@ -372,43 +372,29 @@ class PriceActionMonitor:
         candle_data = {}
 
         try:
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=6)  # Last 6 hours (enough for 50+ candles)
+            # Single shared read from the central DB — the intraday collector owns the Kite fetch,
+            # so this monitor makes no per-symbol Kite historical calls.
+            candles_by_symbol = fetch_intraday_candles(
+                self.stocks, config.INTRADAY_CANDLE_INTERVAL, "price_action_monitor"
+            )
+            if not candles_by_symbol:
+                logger.warning("No fresh intraday candles in central DB - skipping cycle")
+                return {}
 
-            for symbol in self.stocks:
-                try:
-                    # Get instrument token
-                    instrument_token = self._get_instrument_token(symbol)
-                    if not instrument_token:
-                        continue
-
-                    # Fetch from Kite API
-                    candles = self.kite.historical_data(
-                        instrument_token=instrument_token,
-                        from_date=start_time,
-                        to_date=end_time,
-                        interval="5minute"
-                    )
-
-                    if len(candles) >= config.PRICE_ACTION_LOOKBACK_CANDLES:
-                        # Calculate average volume from last 20 candles
-                        volumes = [c['volume'] for c in candles[-20:]]
-                        avg_volume = sum(volumes) / len(volumes) if volumes else 0
-
-                        candle_data[symbol] = {
-                            'candles': candles,
-                            'current_price': candles[-1]['close'],
-                            'avg_volume': avg_volume
-                        }
-                    else:
-                        logger.debug(f"{symbol}: Insufficient candles ({len(candles)})")
-
-                except Exception as e:
-                    logger.debug(f"{symbol}: Failed to fetch candles - {e}")
+            for symbol, candles in candles_by_symbol.items():
+                if len(candles) < config.PRICE_ACTION_LOOKBACK_CANDLES:
+                    logger.debug(f"{symbol}: Insufficient candles ({len(candles)})")
                     continue
+                volumes = [c['volume'] for c in candles[-20:]]
+                avg_volume = sum(volumes) / len(volumes) if volumes else 0
+                candle_data[symbol] = {
+                    'candles': candles,
+                    'current_price': candles[-1]['close'],
+                    'avg_volume': avg_volume
+                }
 
         except Exception as e:
-            logger.error(f"Failed to fetch candle data: {e}", exc_info=True)
+            logger.error(f"Failed to read candle data from central DB: {e}", exc_info=True)
 
         return candle_data
 
@@ -491,4 +477,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import proctitle; proctitle.set_title("nse-priceaction-monitor")
     main()

@@ -112,6 +112,15 @@ def main():
     except Exception as e:
         logger.warning(f"⚠️ Backfill check failed (continuing with live collection): {e}")
 
+    # Refresh 50-day daily candles once/day so consumers read them from the central
+    # DB instead of calling Kite directly (no-op unless ENABLE_CENTRAL_DAILY_CANDLES).
+    try:
+        written = collector.refresh_daily_candles()
+        if written:
+            logger.info(f"✅ Daily candles refreshed: {written} rows in central DB")
+    except Exception as e:
+        logger.warning(f"⚠️ Daily-candle refresh failed (continuing): {e}")
+
     # Initialize rapid alert detector (error-isolated - collection continues if this fails)
     rapid_detector = None
     early_warning = None
@@ -344,4 +353,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import proctitle; proctitle.set_title("nse-central-collector")
     main()

@@ -27,7 +27,7 @@ import os
 import sys
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from kiteconnect import KiteConnect
 from kiteconnect.exceptions import (
@@ -198,6 +198,109 @@ class CentralDataCollector:
         except Exception as e:
             logger.error(f"Failed to load stock list: {e}")
             return []
+
+    def refresh_daily_candles(self, days_back: int = 70) -> int:
+        """
+        Fetch 50-day daily OHLC for the whole F&O universe and store it in the
+        central DB, so consumer services (stock_monitor, atr_monitor) read from
+        there instead of each calling Kite historical_data.
+
+        Runs once per day (at collector startup). ~200 sequential, rate-limited
+        Kite calls. No-op unless config.ENABLE_CENTRAL_DAILY_CANDLES is true.
+
+        Returns:
+            Number of candle rows written (0 if disabled or nothing fetched).
+        """
+        if not getattr(config, 'ENABLE_CENTRAL_DAILY_CANDLES', False):
+            return 0
+
+        # Reuse the shared token map (tradingsymbol -> instrument_token).
+        tokens_file = "data/instrument_tokens.json"
+        try:
+            with open(tokens_file, 'r') as f:
+                tokens = json.load(f)
+        except Exception as e:
+            logger.error(f"daily_candles: cannot load {tokens_file} ({e}); skipping refresh")
+            return 0
+
+        to_date = datetime.now().date()
+        from_date = to_date - timedelta(days=days_back)
+
+        candles: Dict[str, List[Dict]] = {}
+        ok = 0
+        for symbol in self.stocks:
+            clean = symbol.replace('.NS', '')
+            token = tokens.get(clean)
+            if not token:
+                logger.debug(f"daily_candles: no token for {clean}")
+                continue
+            try:
+                bars = self._retry_with_backoff(
+                    lambda t=token: self.kite.historical_data(t, from_date, to_date, "day")
+                )
+                if bars:
+                    candles[clean] = bars  # keys: date, open, high, low, close, volume
+                    ok += 1
+            except Exception as e:
+                logger.debug(f"daily_candles: {clean} fetch failed: {e}")
+            time.sleep(config.REQUEST_DELAY_SECONDS)  # respect Kite ~3 req/s
+
+        written = self.db.store_daily_candles_batch(candles)
+        self.db.update_metadata('daily_candles_refreshed', datetime.now().isoformat())
+        logger.info(f"daily_candles: stored {written} rows for {ok}/{len(self.stocks)} stocks")
+        return written
+
+    def refresh_intraday_candles(self, interval: str = None, lookback_hours: int = None) -> int:
+        """
+        Fetch recent intraday OHLC (e.g. 5-minute) for the whole F&O universe and store it in
+        the central DB, so consumer services (price_action_monitor, candle_confirmation_monitor)
+        read from there instead of each calling Kite historical_data.
+
+        Runs every 5 minutes during market hours (dedicated --intraday LaunchAgent). ~200
+        sequential, rate-limited Kite calls. No-op unless ENABLE_CENTRAL_INTRADAY_CANDLES.
+
+        Returns:
+            Number of candle rows written (0 if disabled or nothing fetched).
+        """
+        if not getattr(config, 'ENABLE_CENTRAL_INTRADAY_CANDLES', False):
+            return 0
+
+        interval = interval or config.INTRADAY_CANDLE_INTERVAL
+        lookback_hours = lookback_hours or config.INTRADAY_CANDLE_LOOKBACK_HOURS
+
+        tokens_file = "data/instrument_tokens.json"
+        try:
+            with open(tokens_file, 'r') as f:
+                tokens = json.load(f)
+        except Exception as e:
+            logger.error(f"intraday_candles: cannot load {tokens_file} ({e}); skipping")
+            return 0
+
+        to_dt = datetime.now()
+        from_dt = to_dt - timedelta(hours=lookback_hours)
+
+        candles: Dict[str, List[Dict]] = {}
+        ok = 0
+        for symbol in self.stocks:
+            clean = symbol.replace('.NS', '')
+            token = tokens.get(clean)
+            if not token:
+                continue
+            try:
+                bars = self._retry_with_backoff(
+                    lambda t=token: self.kite.historical_data(t, from_dt, to_dt, interval)
+                )
+                if bars:
+                    candles[clean] = bars  # keys: date, open, high, low, close, volume
+                    ok += 1
+            except Exception as e:
+                logger.debug(f"intraday_candles: {clean} fetch failed: {e}")
+            time.sleep(config.REQUEST_DELAY_SECONDS)  # respect Kite ~3 req/s
+
+        written = self.db.store_intraday_candles_batch(candles, interval)
+        self.db.update_metadata('intraday_candles_refreshed', datetime.now().isoformat())
+        logger.info(f"intraday_candles ({interval}): stored {written} rows for {ok}/{len(self.stocks)} stocks")
+        return written
 
     def collect_and_store(self):
         """
@@ -614,6 +717,16 @@ class CentralDataCollector:
 def main():
     """Main entry point"""
     try:
+        # --intraday mode: only refresh 5-min candles into the central DB (dedicated 5-min job).
+        if '--intraday' in sys.argv:
+            from market_utils import is_market_open
+            if not is_market_open():
+                logger.info("intraday_candles: market closed - skipping")
+                return 0
+            collector = CentralDataCollector()
+            collector.refresh_intraday_candles()
+            return 0
+
         collector = CentralDataCollector()
         collector.collect_and_store()
 

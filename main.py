@@ -13,6 +13,13 @@ import sys
 import time
 import logging
 import os
+# Cap BLAS/OpenMP threads BEFORE numpy/pandas load. This workload is thousands of
+# tiny arrays (per-stock RSI on ~50 daily points), where Apple Accelerate's
+# multi-threading only adds oversubscription overhead — the >100% CPU spikes.
+# Must run before stock_monitor imports pandas/numpy below.
+for _v in ("VECLIB_MAXIMUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 import threading
 from datetime import datetime, time as dt_time
 from market_utils import is_market_open, get_market_status
@@ -277,5 +284,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import proctitle; proctitle.set_title("nse-stock-monitor")
     exit_code = main()
     sys.exit(exit_code)

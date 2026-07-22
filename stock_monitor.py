@@ -40,6 +40,13 @@ class StockMonitor:
         self.telegram = TelegramNotifier()
         self.stocks = self._load_stock_list()
 
+        # --- CPU phase-2 caches (StockMonitor is long-lived across cycles) ---
+        # Daily OHLC base per symbol changes only once/day -> build once, reuse.
+        # RSI is refreshed at most every config.RSI_REFRESH_SECONDS to avoid
+        # recomputing 3x pandas_ta.rsi for ~200 stocks every 5-min cycle.
+        self._daily_base_cache = {}   # clean_symbol -> (date_str, base_df)
+        self._rsi_cache = {}          # clean_symbol -> (monotonic_ts, rsi_analysis)
+
         # Alert tracking for deduplication (PERSISTENT - survives script restarts)
         self.alert_history_manager = AlertHistoryManager()
 
@@ -289,36 +296,33 @@ class StockMonitor:
         clean_symbol = symbol.replace('.NS', '')
 
         try:
-            # Try unified data cache first (50-day data from ATR monitor)
-            df = None
-            if self.data_cache and config.ENABLE_UNIFIED_CACHE:
-                try:
-                    cached_data = self.data_cache.get_atr_data(clean_symbol)
-                    if cached_data:
-                        df = pd.DataFrame(cached_data)
-                        df.columns = df.columns.str.lower()
-                        logger.debug(f"{symbol}: Using cached historical data ({len(df)} candles)")
-                except Exception as e:
-                    logger.debug(f"{symbol}: Cache error: {e}, fetching fresh data")
+            # (A) RSI result cache — daily-timeframe RSI barely moves intra-cycle,
+            # so optionally reuse the last result for RSI_REFRESH_SECONDS to avoid
+            # recomputing 3x pandas_ta.rsi for ~200 stocks every cycle.
+            refresh = getattr(config, 'RSI_REFRESH_SECONDS', 0)
+            if refresh > 0:
+                cached = self._rsi_cache.get(clean_symbol)
+                if cached and (time.time() - cached[0]) < refresh:
+                    return cached[1]
 
-            # Cache miss or error - fetch from API (fallback)
-            if df is None:
-                df = self.fetch_historical_data(clean_symbol, days_back=50, interval="day")
+            # (B) Daily base DataFrame — the 50-day OHLC only changes once/day, so
+            # build it once per symbol per day and reuse (skips the per-cycle DB
+            # read + DataFrame rebuild that dominated CPU).
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            cached_base = self._daily_base_cache.get(clean_symbol)
+            if cached_base is not None and cached_base[0] == today_str:
+                df_base = cached_base[1]
+            else:
+                df_base = self._load_daily_base_df(symbol, clean_symbol)
+                if df_base is not None:
+                    self._daily_base_cache[clean_symbol] = (today_str, df_base)
 
-                # Cache it for next time
-                if df is not None and self.data_cache and config.ENABLE_UNIFIED_CACHE:
-                    try:
-                        cache_data = df.to_dict('records')
-                        self.data_cache.set_atr_data(clean_symbol, cache_data)
-                        logger.debug(f"{symbol}: Cached historical data ({len(df)} candles)")
-                    except Exception as e:
-                        logger.debug(f"{symbol}: Failed to cache data: {e}")
-
-            if df is None or len(df) < config.RSI_MIN_DATA_DAYS:
+            if df_base is None or len(df_base) < config.RSI_MIN_DATA_DAYS:
                 logger.debug(f"{symbol}: Insufficient historical data for RSI (need {config.RSI_MIN_DATA_DAYS} days)")
                 return None
 
-            # Append today's current price as latest candle for real-time RSI
+            # Append today's live price as the latest candle for real-time RSI.
+            # concat builds a NEW frame; the cached base is never mutated.
             today_candle = pd.DataFrame([{
                 'close': current_price,
                 'high': current_price,  # Approximate (real high might be higher)
@@ -326,7 +330,7 @@ class StockMonitor:
                 'open': current_price,  # Approximate
                 'volume': current_volume
             }])
-            df = pd.concat([df, today_candle], ignore_index=True)
+            df = pd.concat([df_base, today_candle], ignore_index=True)
 
             # Calculate RSI with crossovers
             rsi_analysis = calculate_rsi_with_crossovers(
@@ -335,12 +339,64 @@ class StockMonitor:
                 crossover_lookback=config.RSI_CROSSOVER_LOOKBACK
             )
 
+            if refresh > 0 and rsi_analysis is not None:
+                self._rsi_cache[clean_symbol] = (time.time(), rsi_analysis)
+
             logger.debug(f"{symbol}: RSI(14)={rsi_analysis.get('rsi_14')}, Summary={rsi_analysis.get('summary')}")
             return rsi_analysis
 
         except Exception as e:
             logger.warning(f"{symbol}: RSI calculation failed: {e}")
             return None
+
+    def _load_daily_base_df(self, symbol: str, clean_symbol: str) -> Optional[pd.DataFrame]:
+        """Load the 50-day daily OHLC base (lowercased columns) for a symbol.
+
+        Preference order: central DB (collector-owned) -> legacy unified JSON
+        cache -> direct-Kite fallback (only while central candles are disabled).
+        Returns None if unavailable. Result is cached per-day by the caller.
+        """
+        df = None
+        # When central daily candles are enabled, the collector owns the fetch
+        # and this service must NOT call Kite directly.
+        use_central = (getattr(config, 'ENABLE_CENTRAL_DAILY_CANDLES', False)
+                       and self.central_db is not None)
+
+        # 1) Preferred source: collector-owned daily candles in the central DB
+        if use_central:
+            try:
+                bars = self.central_db.get_daily_candles_batch(
+                    [clean_symbol], days=50).get(clean_symbol)
+                if bars:
+                    df = pd.DataFrame(bars)
+                    df.columns = df.columns.str.lower()
+                    logger.debug(f"{symbol}: Using central-DB daily candles ({len(df)} candles)")
+            except Exception as e:
+                logger.debug(f"{symbol}: central-DB daily read error: {e}")
+
+        # 2) Legacy unified JSON cache (50-day data from ATR monitor)
+        if df is None and self.data_cache and config.ENABLE_UNIFIED_CACHE:
+            try:
+                cached_data = self.data_cache.get_atr_data(clean_symbol)
+                if cached_data:
+                    df = pd.DataFrame(cached_data)
+                    df.columns = df.columns.str.lower()
+                    logger.debug(f"{symbol}: Using cached historical data ({len(df)} candles)")
+            except Exception as e:
+                logger.debug(f"{symbol}: Cache error: {e}")
+
+        # 3) Direct-Kite fallback — ONLY while central source is disabled
+        #    (transition). With ENABLE_CENTRAL_DAILY_CANDLES=true, no direct fetch.
+        if df is None and not use_central:
+            df = self.fetch_historical_data(clean_symbol, days_back=50, interval="day")
+            if df is not None and self.data_cache and config.ENABLE_UNIFIED_CACHE:
+                try:
+                    self.data_cache.set_atr_data(clean_symbol, df.to_dict('records'))
+                    logger.debug(f"{symbol}: Cached historical data ({len(df)} candles)")
+                except Exception as e:
+                    logger.debug(f"{symbol}: Failed to cache data: {e}")
+
+        return df
 
     def calculate_market_cap(self, symbol: str, current_price: float) -> Tuple[float, float]:
         """
@@ -1373,8 +1429,15 @@ class StockMonitor:
 
         logger.info(f"Starting to monitor {stats['total']} stocks for {' and '.join(detection_methods)}...")
 
+        # Per-phase wall-time accumulators (diagnostic; logged only if PROFILE_CYCLE).
+        # perf_counter overhead is ~ns/call — negligible even ×200 stocks.
+        _prof = {"fetch": 0.0, "rsi": 0.0, "oi": 0.0, "drop": 0.0, "rise": 0.0, "sector": 0.0}
+        _pc = time.perf_counter
+
         # Fetch all prices and volumes in batches
+        _t = _pc()
         price_data = self.fetch_all_prices_batch()
+        _prof["fetch"] += _pc() - _t
 
         # Check each stock for drops and rises
         for symbol, quote_data in price_data.items():
@@ -1388,7 +1451,9 @@ class StockMonitor:
                 # Calculate RSI once for this stock (if enabled)
                 rsi_analysis = None
                 if config.ENABLE_RSI:
+                    _t = _pc()
                     rsi_analysis = self._calculate_rsi_for_stock(symbol, current_price, current_volume)
+                    _prof["rsi"] += _pc() - _t
 
                 # Calculate OI analysis once for this stock (if enabled and OI data available)
                 oi_analysis = None
@@ -1404,6 +1469,7 @@ class StockMonitor:
                         price_change_pct = 0.0  # No historical price yet, assume 0% change
 
                     # Run OI analysis (independent of price history availability)
+                    _t = _pc()
                     oi_analysis = self.oi_analyzer.analyze_oi_change(
                         symbol=symbol,
                         current_oi=current_oi,
@@ -1411,17 +1477,22 @@ class StockMonitor:
                         oi_day_high=oi_day_high,
                         oi_day_low=oi_day_low
                     )
+                    _prof["oi"] += _pc() - _t
 
                     if oi_analysis:
                         logger.info(f"📊 {symbol}: OI {oi_analysis['pattern']} ({oi_analysis['oi_change_pct']:+.1f}%) - {oi_analysis['signal']} - {oi_analysis['interpretation']}")
 
                 # Check for drops (pass RSI and OI analysis)
+                _t = _pc()
                 drop_alert_sent = self.check_stock_for_drop(symbol, current_price, current_volume, rsi_analysis, oi_analysis)
+                _prof["drop"] += _pc() - _t
 
                 # Check for rises (if enabled, pass RSI and OI analysis)
                 rise_alert_sent = False
                 if config.ENABLE_RISE_ALERTS:
+                    _t = _pc()
                     rise_alert_sent = self.check_stock_for_rise(symbol, current_price, current_volume, rsi_analysis, oi_analysis)
+                    _prof["rise"] += _pc() - _t
 
                 stats["checked"] += 1
                 if drop_alert_sent:
@@ -1450,7 +1521,9 @@ class StockMonitor:
                 snapshot_time = self._get_snapshot_time_if_due()
 
                 # Analyze sectors and cache results
+                _t = _pc()
                 sector_analysis = self.sector_analyzer.analyze_and_cache(save_snapshot_at=snapshot_time)
+                _prof["sector"] += _pc() - _t
 
                 if sector_analysis:
                     logger.debug(f"Sector analysis updated ({len(sector_analysis.get('sectors', {}))} sectors)")
@@ -1497,6 +1570,16 @@ class StockMonitor:
                 "errors": stats["errors"]
             }
         )
+
+        # Diagnostic: per-phase wall time this cycle — reveals the real CPU hotspot.
+        if getattr(config, 'PROFILE_CYCLE', False):
+            total = sum(_prof.values())
+            logger.info(
+                "⏱️ CYCLE PROFILE (wall s): "
+                f"fetch={_prof['fetch']:.1f} rsi={_prof['rsi']:.1f} oi={_prof['oi']:.1f} "
+                f"drop={_prof['drop']:.1f} rise={_prof['rise']:.1f} sector={_prof['sector']:.1f} "
+                f"| sum={total:.1f} over {stats['checked']} stocks"
+            )
 
         return stats
 

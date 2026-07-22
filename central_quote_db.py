@@ -233,6 +233,49 @@ class CentralQuoteDB:
             )
         """)
 
+        # Table 6: Daily OHLC history (50-day candles for RSI/ATR).
+        # Populated once/day by the central collector so consumer services
+        # (stock_monitor, atr_monitor) read from here instead of hitting Kite.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS daily_candles (
+                symbol       TEXT NOT NULL,
+                date         TEXT NOT NULL,
+                open         REAL,
+                high         REAL,
+                low          REAL,
+                close        REAL,
+                volume       INTEGER,
+                last_updated TEXT NOT NULL,
+                PRIMARY KEY (symbol, date)
+            )
+        """)
+
+        # Index for fast per-symbol history reads (most-recent first)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_daily_symbol_date
+            ON daily_candles(symbol, date DESC)
+        """)
+
+        # Intraday OHLC candles (e.g. 5-minute). One collector writes; all services read.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS intraday_candles (
+                symbol       TEXT NOT NULL,
+                interval     TEXT NOT NULL,
+                timestamp    TEXT NOT NULL,
+                open         REAL,
+                high         REAL,
+                low          REAL,
+                close        REAL,
+                volume       INTEGER,
+                last_updated TEXT NOT NULL,
+                PRIMARY KEY (symbol, interval, timestamp)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_intraday_symbol_ts
+            ON intraday_candles(symbol, interval, timestamp DESC)
+        """)
+
         conn.commit()
         logger.info("Database tables and indexes created successfully")
 
@@ -384,6 +427,181 @@ class CentralQuoteDB:
         """, symbols)
 
         return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def store_daily_candles_batch(self, candles: Dict[str, List[Dict]]) -> int:
+        """
+        Upsert 50-day daily OHLC candles for many symbols. Collector-only.
+        Call once/day (startup + post-close).
+
+        Args:
+            candles: {symbol: [{date, open, high, low, close, volume}, ...]}
+                     `date` may be a 'YYYY-MM-DD' string or a datetime/date.
+
+        Returns:
+            Number of candle rows written.
+        """
+        if not candles:
+            return 0
+
+        cursor = self.conn.cursor()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        rows = []
+        for symbol, bars in candles.items():
+            for bar in bars:
+                d = bar.get('date')
+                if hasattr(d, 'strftime'):
+                    d = d.strftime('%Y-%m-%d')
+                elif isinstance(d, str):
+                    d = d[:10]  # keep date portion of any ISO timestamp
+                else:
+                    continue
+                rows.append((
+                    symbol, d,
+                    bar.get('open'), bar.get('high'),
+                    bar.get('low'), bar.get('close'),
+                    bar.get('volume', 0), now_str
+                ))
+
+        if not rows:
+            return 0
+
+        cursor.executemany("""
+            INSERT OR REPLACE INTO daily_candles
+            (symbol, date, open, high, low, close, volume, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+
+        self.conn.commit()
+        logger.info(f"Stored {len(rows)} daily candles for {len(candles)} symbols")
+        return len(rows)
+
+    def get_daily_candles_batch(
+        self, symbols: List[str], days: int = 50
+    ) -> Dict[str, List[Dict]]:
+        """
+        Return the most recent `days` daily candles per symbol, oldest-first
+        (ready to feed straight into a DataFrame for RSI/ATR).
+
+        Args:
+            symbols: List of stock symbols
+            days: Max number of most-recent candles per symbol
+
+        Returns:
+            {symbol: [{date, open, high, low, close, volume}, ...]} (asc by date)
+        """
+        if not symbols:
+            return {}
+
+        cursor = self.conn.cursor()
+        placeholders = ','.join('?' * len(symbols))
+        # Pull newest-first, then trim per-symbol and reverse to oldest-first.
+        cursor.execute(f"""
+            SELECT symbol, date, open, high, low, close, volume
+            FROM daily_candles
+            WHERE symbol IN ({placeholders})
+            ORDER BY symbol ASC, date DESC
+        """, symbols)
+
+        result: Dict[str, List[Dict]] = {}
+        for sym, date, o, h, l, c, v in cursor.fetchall():
+            bucket = result.setdefault(sym, [])
+            if len(bucket) >= days:
+                continue
+            bucket.append({
+                'date': date, 'open': o, 'high': h,
+                'low': l, 'close': c, 'volume': v
+            })
+        # Stored newest-first above; reverse each to oldest-first for callers.
+        for sym in result:
+            result[sym].reverse()
+        return result
+
+    def store_intraday_candles_batch(self, candles: Dict[str, List[Dict]], interval: str) -> int:
+        """
+        Upsert intraday OHLC candles for many symbols. Collector-only.
+
+        Args:
+            candles: {symbol: [{date, open, high, low, close, volume}, ...]}
+                     `date` is a datetime (Kite) or ISO string; stored as ISO text.
+            interval: candle interval, e.g. '5minute'.
+
+        Returns:
+            Number of candle rows written.
+        """
+        if not candles:
+            return 0
+
+        cursor = self.conn.cursor()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        rows = []
+        for symbol, bars in candles.items():
+            for bar in bars:
+                d = bar.get('date')
+                if hasattr(d, 'isoformat'):
+                    ts = d.isoformat()
+                elif isinstance(d, str):
+                    ts = d
+                else:
+                    continue
+                rows.append((
+                    symbol, interval, ts,
+                    bar.get('open'), bar.get('high'),
+                    bar.get('low'), bar.get('close'),
+                    bar.get('volume', 0), now_str
+                ))
+
+        if not rows:
+            return 0
+
+        cursor.executemany("""
+            INSERT OR REPLACE INTO intraday_candles
+            (symbol, interval, timestamp, open, high, low, close, volume, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        self.conn.commit()
+        logger.info(f"Stored {len(rows)} {interval} candles for {len(candles)} symbols")
+        return len(rows)
+
+    def get_intraday_candles_batch(
+        self, symbols: List[str], interval: str, limit: int = 80
+    ) -> Dict[str, List[Dict]]:
+        """
+        Return the most recent `limit` intraday candles per symbol, oldest-first.
+
+        Args:
+            symbols: List of stock symbols
+            interval: candle interval, e.g. '5minute'
+            limit: Max number of most-recent candles per symbol
+
+        Returns:
+            {symbol: [{date, open, high, low, close, volume}, ...]} (asc by timestamp)
+        """
+        if not symbols:
+            return {}
+
+        cursor = self.conn.cursor()
+        placeholders = ','.join('?' * len(symbols))
+        cursor.execute(f"""
+            SELECT symbol, timestamp, open, high, low, close, volume
+            FROM intraday_candles
+            WHERE interval = ? AND symbol IN ({placeholders})
+            ORDER BY symbol ASC, timestamp DESC
+        """, [interval, *symbols])
+
+        result: Dict[str, List[Dict]] = {}
+        for sym, ts, o, h, l, c, v in cursor.fetchall():
+            bucket = result.setdefault(sym, [])
+            if len(bucket) >= limit:
+                continue
+            bucket.append({
+                'date': ts, 'open': o, 'high': h,
+                'low': l, 'close': c, 'volume': v
+            })
+        for sym in result:
+            result[sym].reverse()  # newest-first above -> oldest-first for callers
+        return result
 
     def update_metadata(self, key: str, value: str):
         """
@@ -1060,13 +1278,24 @@ class CentralQuoteDB:
         cursor.execute("DELETE FROM vix_quotes WHERE timestamp < ?", (cutoff_str,))
         deleted_vix = cursor.rowcount
 
+        # Clean intraday candles with their own (longer) retention window.
+        try:
+            import config
+            intraday_days = int(getattr(config, 'INTRADAY_CANDLE_RETENTION_DAYS', 7))
+        except Exception:
+            intraday_days = 7
+        intraday_cutoff = (datetime.now() - timedelta(days=intraday_days)).isoformat()
+        cursor.execute("DELETE FROM intraday_candles WHERE timestamp < ?", (intraday_cutoff,))
+        deleted_intraday = cursor.rowcount
+
         self.conn.commit()
 
         # Vacuum to reclaim space
         cursor.execute("VACUUM")
 
         logger.info(f"Cleanup complete: Deleted {deleted_stocks} stock quotes, "
-                   f"{deleted_nifty} NIFTY quotes, {deleted_vix} VIX quotes older than {days} day(s)")
+                   f"{deleted_nifty} NIFTY quotes, {deleted_vix} VIX quotes older than {days} day(s); "
+                   f"{deleted_intraday} intraday candles older than {intraday_days} day(s)")
 
     def get_database_stats(self) -> Dict:
         """

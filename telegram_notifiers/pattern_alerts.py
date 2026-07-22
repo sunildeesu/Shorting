@@ -116,9 +116,12 @@ class PatternAlertNotifier(BaseNotifier):
         )
 
         try:
-            success = self._send_message(message)
+            import config
+            to_debug = getattr(config, 'DOUBLE_BOTTOM_ALERTS_TO_DEBUG', False)
+            success = self.send_debug(message) if to_debug else self._send_message(message)
             if success:
-                logger.info(f"Potential double bottom alert sent for {symbol} @ {support_level:.2f}")
+                dest = "debug" if to_debug else "main"
+                logger.info(f"Potential double bottom alert sent to {dest} for {symbol} @ {support_level:.2f}")
             return success
         except Exception as e:
             logger.error(f"Failed to send potential double bottom alert for {symbol}: {e}")

@@ -1118,4 +1118,5 @@ def main():
 
 
 if __name__ == '__main__':
+    import proctitle; proctitle.set_title("nse-greeks-tracker")
     main()

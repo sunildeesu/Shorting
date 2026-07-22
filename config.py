@@ -133,6 +133,18 @@ ENABLE_ATR_ALERTS = os.getenv('ENABLE_ATR_ALERTS', 'true').lower() == 'true'  # 
 # Unified Cache Configuration
 # Shared caching across stock_monitor, atr_breakout_monitor, and eod_analyzer
 ENABLE_UNIFIED_CACHE = os.getenv('ENABLE_UNIFIED_CACHE', 'true').lower() == 'true'  # Enable unified caching
+# When true: collector owns the 50-day daily OHLC fetch (central DB), and consumer
+# services read from there and never call Kite historical_data directly.
+ENABLE_CENTRAL_DAILY_CANDLES = os.getenv('ENABLE_CENTRAL_DAILY_CANDLES', 'false').lower() == 'true'
+# When true: a dedicated collector owns the 5-min intraday OHLC fetch (central DB), and every
+# consumer (price_action_monitor, candle_confirmation_monitor, …) reads candles from there
+# instead of each calling Kite historical_data. Retention purges old rows to avoid bloat.
+ENABLE_CENTRAL_INTRADAY_CANDLES = os.getenv('ENABLE_CENTRAL_INTRADAY_CANDLES', 'true').lower() == 'true'
+INTRADAY_CANDLE_INTERVAL = os.getenv('INTRADAY_CANDLE_INTERVAL', '5minute')
+# Span the previous session so consumers always have enough candles (price_action needs 50 ≈ 4h
+# of market time) even at the open / on a cold DB. ~30h reaches into the prior trading day.
+INTRADAY_CANDLE_LOOKBACK_HOURS = int(os.getenv('INTRADAY_CANDLE_LOOKBACK_HOURS', '30'))
+INTRADAY_CANDLE_RETENTION_DAYS = int(os.getenv('INTRADAY_CANDLE_RETENTION_DAYS', '7'))
 QUOTE_CACHE_TTL_SECONDS = int(os.getenv('QUOTE_CACHE_TTL_SECONDS', '60'))  # Quote cache TTL (60 seconds)
 HISTORICAL_CACHE_TTL_HOURS = int(os.getenv('HISTORICAL_CACHE_TTL_HOURS', '24'))  # Historical data cache TTL (24 hours)
 INTRADAY_CACHE_TTL_HOURS = int(os.getenv('INTRADAY_CACHE_TTL_HOURS', '1'))  # Intraday data cache TTL (1 hour)
@@ -198,6 +210,13 @@ YAHOO_FINANCE_SUFFIX = '.NS'  # NSE stocks suffix for Yahoo Finance
 ENABLE_RSI = os.getenv('ENABLE_RSI', 'true').lower() == 'true'  # Toggle RSI calculation
 RSI_PERIODS = [9, 14, 21]  # Calculate RSI for multiple periods (fast, standard, slow)
 RSI_MIN_DATA_DAYS = int(os.getenv('RSI_MIN_DATA_DAYS', '30'))  # Minimum historical data needed (days)
+# CPU: RSI is computed from DAILY candles + today's live price, so it barely moves
+# intra-cycle. Recompute per stock at most every N seconds instead of every ~5-min
+# cycle (0 = recompute every cycle = original behavior). 600-900 cuts CPU a lot.
+RSI_REFRESH_SECONDS = int(os.getenv('RSI_REFRESH_SECONDS', '0'))
+# Diagnostic: when true, monitor_all_stocks logs per-phase wall time each cycle
+# (fetch / rsi / oi / drop / rise / sector) to find the real CPU hotspot. Safe.
+PROFILE_CYCLE = os.getenv('PROFILE_CYCLE', 'false').lower() == 'true'
 RSI_CROSSOVER_LOOKBACK = int(os.getenv('RSI_CROSSOVER_LOOKBACK', '3'))  # Detect crossovers in last N candles
 
 # OI (Open Interest) Analysis Configuration
@@ -234,6 +253,8 @@ SECTOR_DROPBOX_FOLDER = os.getenv('SECTOR_DROPBOX_FOLDER', '/SectorAnalysis')  #
 # 5-minute candlestick pattern detection with confidence scoring
 
 ENABLE_PRICE_ACTION_ALERTS = os.getenv('ENABLE_PRICE_ACTION_ALERTS', 'true').lower() == 'true'
+# Route price-action alerts to the debug channel instead of main (observe without touching main).
+PRICE_ACTION_ALERTS_TO_DEBUG = os.getenv('PRICE_ACTION_ALERTS_TO_DEBUG', 'true').lower() == 'true'
 PRICE_ACTION_TIMEFRAME = '5minute'  # Timeframe for pattern detection
 PRICE_ACTION_MIN_CONFIDENCE = float(os.getenv('PRICE_ACTION_MIN_CONFIDENCE', '8.0'))  # Minimum 8.0/10 (high confidence only)
 PRICE_ACTION_LOOKBACK_CANDLES = int(os.getenv('PRICE_ACTION_LOOKBACK_CANDLES', '50'))  # Candles to analyze
@@ -241,11 +262,32 @@ PRICE_ACTION_COOLDOWN = int(os.getenv('PRICE_ACTION_COOLDOWN', '30'))  # 30-min 
 
 # Price and liquidity filters
 PRICE_ACTION_MIN_PRICE = float(os.getenv('PRICE_ACTION_MIN_PRICE', '50.0'))  # Min ₹50
-PRICE_ACTION_MIN_AVG_VOLUME = int(os.getenv('PRICE_ACTION_MIN_AVG_VOLUME', '500000'))  # Min 500K avg volume
+# DEPRECATED / unused: an absolute share-count floor can't work across differently-priced stocks.
+# Volume is now judged relatively inside the pattern detectors (candle volume vs the stock's own
+# average = % increase). Kept only to avoid breaking any external env override.
+PRICE_ACTION_MIN_AVG_VOLUME = int(os.getenv('PRICE_ACTION_MIN_AVG_VOLUME', '500000'))
 
 # Market regime parameters
 PRICE_ACTION_USE_MARKET_REGIME = os.getenv('PRICE_ACTION_USE_MARKET_REGIME', 'true').lower() == 'true'
 PRICE_ACTION_REGIME_SMA_PERIOD = int(os.getenv('PRICE_ACTION_REGIME_SMA_PERIOD', '50'))  # 50-day SMA for Nifty
+
+# ============================================
+# CANDLE REVERSAL (HAMMER / SHOOTING STAR) + CONFIRMATION
+# ============================================
+# 5-min two-candle reversal signal: a hammer (bullish) or shooting star (bearish) followed by
+# a confirmation candle that closes beyond the signal candle's wick extreme, with above-average
+# volume. Posts to the DEBUG channel to start with. See candle_confirmation_monitor.py.
+ENABLE_CANDLE_REVERSAL_ALERTS = os.getenv('ENABLE_CANDLE_REVERSAL_ALERTS', 'true').lower() == 'true'
+ENABLE_HAMMER_SIGNAL = os.getenv('ENABLE_HAMMER_SIGNAL', 'true').lower() == 'true'          # bullish
+ENABLE_SHOOTING_STAR_SIGNAL = os.getenv('ENABLE_SHOOTING_STAR_SIGNAL', 'true').lower() == 'true'  # bearish
+CANDLE_DRY_RUN_MODE = os.getenv('CANDLE_DRY_RUN_MODE', 'false').lower() == 'true'
+CANDLE_MIN_CONFIDENCE = float(os.getenv('CANDLE_MIN_CONFIDENCE', '6.0'))       # HammerDetector/ShootingStar shape score
+# Confirmation volume is RELATIVE to each stock's own timeframe average (the candles before the
+# confirmation) — not an absolute share count. 1.2 = the confirm candle must be ≥ 20% above that
+# stock's recent average 5-min volume. CANDLE_VOLUME_BASELINE = how many prior candles form it.
+CANDLE_CONFIRM_VOLUME_MULT = float(os.getenv('CANDLE_CONFIRM_VOLUME_MULT', '1.2'))
+CANDLE_VOLUME_BASELINE = int(os.getenv('CANDLE_VOLUME_BASELINE', '20'))
+CANDLE_COOLDOWN_MINUTES = int(os.getenv('CANDLE_COOLDOWN_MINUTES', '30'))      # per (symbol, direction)
 
 # ============================================
 # NIFTY OPTIONS SELLING INDICATOR
@@ -470,16 +512,34 @@ ENABLE_DOUBLE_BOTTOM_ALERTS = os.getenv('ENABLE_DOUBLE_BOTTOM_ALERTS', 'true').l
 DOUBLE_BOTTOM_DRY_RUN_MODE = os.getenv('DOUBLE_BOTTOM_DRY_RUN_MODE', 'false').lower() == 'true'
 
 # Proximity band: how close (%) live price must be to the prior low to trigger
-DOUBLE_BOTTOM_PROXIMITY_PCT = float(os.getenv('DOUBLE_BOTTOM_PROXIMITY_PCT', '2.0'))
+DOUBLE_BOTTOM_PROXIMITY_PCT = float(os.getenv('DOUBLE_BOTTOM_PROXIMITY_PCT', '1.0'))
 
-# Daily candles to scan when finding prior swing lows
+# Daily candles to scan when finding the major low (the first bottom). Backtesting showed
+# a short window (~50 trading days) is materially more accurate than a long one: the second
+# bottom / retest plays out within weeks, and the middle-peak target stays reachable.
 DOUBLE_BOTTOM_LOOKBACK_DAYS = int(os.getenv('DOUBLE_BOTTOM_LOOKBACK_DAYS', '50'))
 
-# Minimum rally (%) above a low for it to qualify as a first bottom (middle of the W)
-DOUBLE_BOTTOM_MIN_RALLY_PCT = float(os.getenv('DOUBLE_BOTTOM_MIN_RALLY_PCT', '3.0'))
+# Minimum rally (%) above the major low for it to qualify as a real W (middle peak).
+DOUBLE_BOTTOM_MIN_RALLY_PCT = float(os.getenv('DOUBLE_BOTTOM_MIN_RALLY_PCT', '8.0'))
 
-# Cooldown per (symbol, level) so each level alerts at most ~once per trading day
-DOUBLE_BOTTOM_COOLDOWN_MINUTES = int(os.getenv('DOUBLE_BOTTOM_COOLDOWN_MINUTES', '360'))
+# Retained for signature compatibility; the detector now anchors on the single lowest low.
+DOUBLE_BOTTOM_PIVOT_BARS = int(os.getenv('DOUBLE_BOTTOM_PIVOT_BARS', '3'))
+
+# Recency window for the major low: at least MIN (some separation from today) and at most
+# MAX bars ago, so the low is an established bottom being retested, not a fresh low.
+DOUBLE_BOTTOM_MIN_DAYS_AGO = int(os.getenv('DOUBLE_BOTTOM_MIN_DAYS_AGO', '5'))
+DOUBLE_BOTTOM_MAX_DAYS_AGO = int(os.getenv('DOUBLE_BOTTOM_MAX_DAYS_AGO', '40'))
+
+# How far below the first bottom the price may be and still count (beyond this = breakdown).
+DOUBLE_BOTTOM_MAX_BELOW_PCT = float(os.getenv('DOUBLE_BOTTOM_MAX_BELOW_PCT', '1.0'))
+
+# Cooldown per symbol — 1440 min = at most one alert per symbol per trading day.
+DOUBLE_BOTTOM_COOLDOWN_MINUTES = int(os.getenv('DOUBLE_BOTTOM_COOLDOWN_MINUTES', '1440'))
+
+# Route double-bottom alerts to the debug channel instead of the main channel.
+# Set true while observing the signal (backtest showed it underperforms); flip to
+# false to promote alerts back to the main Telegram/Discord channel.
+DOUBLE_BOTTOM_ALERTS_TO_DEBUG = os.getenv('DOUBLE_BOTTOM_ALERTS_TO_DEBUG', 'true').lower() == 'true'
 
 # ============================================
 # AUTO-TRADING CONFIGURATION

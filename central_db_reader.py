@@ -185,6 +185,66 @@ def fetch_stock_prices(
         return {}
 
 
+def fetch_intraday_candles(
+    symbols: List[str],
+    interval: str,
+    service_name: str,
+    max_age_minutes: int = 10,
+    limit: int = 80,
+) -> Dict[str, List[Dict]]:
+    """
+    Read intraday OHLC candles for many symbols from the central DB (single shared source).
+
+    Freshness is judged by the 'intraday_candles_refreshed' metadata written by the intraday
+    collector. If missing/stale, returns {} (callers skip the cycle) — there is deliberately NO
+    per-consumer Kite fallback, so we never recreate the N-service fan-out this design removes.
+
+    Returns:
+        {symbol: [{date, open, high, low, close, volume}, ...]} oldest-first, or {} if stale.
+    """
+    if not symbols:
+        return {}
+
+    health = get_health_tracker()
+    central_db = get_central_db()
+
+    refreshed = central_db.get_metadata('intraday_candles_refreshed')
+    age_minutes = None
+    if refreshed:
+        try:
+            age_minutes = (datetime.now() - datetime.fromisoformat(refreshed)).total_seconds() / 60
+        except Exception:
+            age_minutes = None
+
+    if age_minutes is None:
+        msg = "No intraday candles in central DB - is the intraday collector running?"
+        logger.error(f"[{service_name}] INTRADAY_DB_EMPTY: {msg}")
+        health.report_error(service_name, "intraday_db_empty", msg, severity="error")
+        return {}
+
+    if age_minutes > max_age_minutes:
+        msg = f"Intraday candles STALE ({age_minutes:.1f} min old, max {max_age_minutes})"
+        logger.error(f"[{service_name}] INTRADAY_DB_STALE: {msg}")
+        health.report_error(service_name, "intraday_db_stale", msg,
+                            severity="warning", details={"age_minutes": round(age_minutes, 1)})
+        return {}
+
+    try:
+        candles = central_db.get_intraday_candles_batch(symbols, interval, limit=limit)
+        coverage = (len(candles) / len(symbols) * 100) if symbols else 0
+        logger.info(f"[{service_name}] Read {interval} candles for {len(candles)}/{len(symbols)} "
+                    f"symbols from central DB ({age_minutes:.1f} min old, 0 API calls)")
+        health.report_metric(service_name, "data_source", "central_db")
+        health.report_metric(service_name, "intraday_candle_coverage_pct", round(coverage, 1))
+        health.clear_error(service_name, "intraday_db_empty")
+        health.clear_error(service_name, "intraday_db_stale")
+        return candles
+    except Exception as e:
+        logger.error(f"[{service_name}] INTRADAY_DB_ERROR: {e}")
+        health.report_error(service_name, "intraday_db_exception", str(e), severity="error")
+        return {}
+
+
 def _fetch_stock_prices_from_api(
     symbols: List[str],
     service_name: str,
