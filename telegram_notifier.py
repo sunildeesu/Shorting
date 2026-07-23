@@ -151,7 +151,11 @@ class TelegramNotifier:
 
     def send_potential_double_bottom_alert(self, symbol: str, current_price: float,
                                            support_level: float, first_low_date: str = "",
-                                           peak_between: float = 0.0) -> bool:
+                                           peak_between: float = 0.0,
+                                           strength: float = 0.0, touches: int = 0,
+                                           stop_price: float = 0.0, stop_pct: float = 0.0,
+                                           target_price: float = 0.0, target_pct: float = 0.0,
+                                           time_stop_days: int = 0, slots_free: int = 0) -> bool:
         """
         Send an intraday "potential double bottom" (at-support, unconfirmed) alert
 
@@ -162,7 +166,42 @@ class TelegramNotifier:
             current_price=current_price,
             support_level=support_level,
             first_low_date=first_low_date,
-            peak_between=peak_between
+            peak_between=peak_between,
+            strength=strength,
+            touches=touches,
+            stop_price=stop_price,
+            stop_pct=stop_pct,
+            target_price=target_price,
+            target_pct=target_pct,
+            time_stop_days=time_stop_days,
+            slots_free=slots_free
+        )
+
+    def send_double_bottom_stop_update(self, moves: list) -> bool:
+        """
+        Send the daily "move your stops" alert for tracked double-bottom positions
+
+        Delegates to PatternAlertNotifier
+        """
+        return self.pattern_alerts.send_double_bottom_stop_update(moves=moves)
+
+    def send_double_bottom_exit_alert(self, symbol: str, exit_reason: str,
+                                      entry_price: float, exit_price: float,
+                                      pnl_pct: float, days_held: int,
+                                      entry_date: str = "") -> bool:
+        """
+        Send an exit alert for a tracked double-bottom position
+
+        Delegates to PatternAlertNotifier
+        """
+        return self.pattern_alerts.send_double_bottom_exit_alert(
+            symbol=symbol,
+            exit_reason=exit_reason,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            pnl_pct=pnl_pct,
+            days_held=days_held,
+            entry_date=entry_date
         )
 
     # ========================================

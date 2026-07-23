@@ -75,7 +75,9 @@ def run(months, cost, max_stocks):
             variants = {
                 'NEW': (find_double_bottom_setups(win, config.DOUBLE_BOTTOM_MIN_RALLY_PCT,
                         config.DOUBLE_BOTTOM_PIVOT_BARS, min_days_ago=config.DOUBLE_BOTTOM_MIN_DAYS_AGO,
-                        max_days_ago=config.DOUBLE_BOTTOM_MAX_DAYS_AGO), prox_new),
+                        max_days_ago=config.DOUBLE_BOTTOM_MAX_DAYS_AGO,
+                        min_strength=config.DOUBLE_BOTTOM_MIN_STRENGTH,
+                        touch_tolerance_pct=config.DOUBLE_BOTTOM_TOUCH_TOLERANCE_PCT), prox_new),
                 'OLD': (old_setups(win), prox_old),
             }
             for name, (setups, prox) in variants.items():

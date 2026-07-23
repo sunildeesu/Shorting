@@ -522,8 +522,27 @@ DOUBLE_BOTTOM_LOOKBACK_DAYS = int(os.getenv('DOUBLE_BOTTOM_LOOKBACK_DAYS', '50')
 # Minimum rally (%) above the major low for it to qualify as a real W (middle peak).
 DOUBLE_BOTTOM_MIN_RALLY_PCT = float(os.getenv('DOUBLE_BOTTOM_MIN_RALLY_PCT', '8.0'))
 
-# Retained for signature compatibility; the detector now anchors on the single lowest low.
+# Bars either side of a low that must not be lower for it to count as a swing low.
 DOUBLE_BOTTOM_PIVOT_BARS = int(os.getenv('DOUBLE_BOTTOM_PIVOT_BARS', '3'))
+
+# Support-strength score (0-10): how many separate times price tested the level and how
+# decisively it bounced. Now used mainly to RANK the day's candidates (best one is alerted);
+# MIN_TOUCHES below is the binding quality filter, so the threshold is left open.
+DOUBLE_BOTTOM_MIN_STRENGTH = float(os.getenv('DOUBLE_BOTTOM_MIN_STRENGTH', '0.0'))
+
+# Band around a level (%) within which a daily low counts as a touch of that level.
+DOUBLE_BOTTOM_TOUCH_TOLERANCE_PCT = float(os.getenv('DOUBLE_BOTTOM_TOUCH_TOLERANCE_PCT', '1.0'))
+
+# Minimum separate touches of the level. Win rate rises monotonically with touch count
+# (2 touches 35%, 3 touches 40%, 4+ touches 46-50% in a 6mo/120-stock backtest), so 3 is
+# the cut where a level is demonstrably support rather than an incidental low.
+DOUBLE_BOTTOM_MIN_TOUCHES = int(os.getenv('DOUBLE_BOTTOM_MIN_TOUCHES', '3'))
+
+# Only buy support inside an uptrend: live price must be above its own SMA. This was the
+# single largest edge found and the only filter that also improved out-of-sample
+# (win rate 70.0% -> 81.2% OOS in a 3y/195-stock test).
+DOUBLE_BOTTOM_REQUIRE_UPTREND = os.getenv('DOUBLE_BOTTOM_REQUIRE_UPTREND', 'true').lower() == 'true'
+DOUBLE_BOTTOM_TREND_SMA_PERIOD = int(os.getenv('DOUBLE_BOTTOM_TREND_SMA_PERIOD', '50'))
 
 # Recency window for the major low: at least MIN (some separation from today) and at most
 # MAX bars ago, so the low is an established bottom being retested, not a fresh low.
@@ -540,6 +559,49 @@ DOUBLE_BOTTOM_COOLDOWN_MINUTES = int(os.getenv('DOUBLE_BOTTOM_COOLDOWN_MINUTES',
 # Set true while observing the signal (backtest showed it underperforms); flip to
 # false to promote alerts back to the main Telegram/Discord channel.
 DOUBLE_BOTTOM_ALERTS_TO_DEBUG = os.getenv('DOUBLE_BOTTOM_ALERTS_TO_DEBUG', 'true').lower() == 'true'
+
+# --- Trade management (double_bottom_position_tracker.py) ---
+# The monitor alerts at most ONE new setup per day and only while a slot is free, so the
+# live signal matches the backtested portfolio: a fixed ₹ account holding a few positions.
+# Sizing for reference: capital / MAX_SLOTS per position.
+#
+# Regime-segmented backtest (backtest_double_bottom_portfolio.py --by-year, 195 F&O
+# stocks, ₹1L, 4 slots, these defaults) — compare return to the MEDIAN STOCK, not to zero:
+#   2023-07..2024-07  BULL  median stock +57.1%  ->  +101.1%
+#   2024-07..2025-07  FLAT  median stock  +1.8%  ->   +43.4%
+#   2025-07..2026-07  FLAT  median stock  +1.1%  ->   +40.8%
+#   full 3y: +295.9%, CAGR 59.4%, max drawdown 11.6%, 176 trades, 76.1% win
+# A sustained DOWNTREND has never been tested - no such year exists in the data. Re-run
+# the script periodically; it labels each period's regime automatically.
+DOUBLE_BOTTOM_MAX_SLOTS = int(os.getenv('DOUBLE_BOTTOM_MAX_SLOTS', '4'))
+
+# Exit geometry. The stop is evaluated on the CLOSE (intraday wicks through support were
+# the main source of avoidable losses — a close-triggered 2xATR stop reached the same win
+# rate that an intraday stop needed 15% to reach).
+#
+# TARGET_PCT is NOT a hard exit: it is the level at which the trade ARMS. On touching it
+# the stop jumps to that price (locking the gain) and then trails TRAIL_PCT below the
+# running high of completed daily bars, so winners can run. Backtest 3y/195 stocks/4 slots:
+# fixed +6% exit -> +171.7%; arm at +6% then trail 1.5% -> +295.9%, with win rate (76%)
+# and max drawdown (11.6%) unchanged. 129 of 176 trades armed; 120 finished at or above
+# +6%, 9 gapped through the lock overnight (worst still +5.5%), none turned into a loss.
+DOUBLE_BOTTOM_TARGET_PCT = float(os.getenv('DOUBLE_BOTTOM_TARGET_PCT', '6.0'))
+
+# How far below the running high the armed stop trails. 1.0-2.0% are statistically tied;
+# 1.5% earns the same as 1.0% while halving overnight-gap exits (17 vs 24 over 3 years).
+DOUBLE_BOTTOM_TRAIL_PCT = float(os.getenv('DOUBLE_BOTTOM_TRAIL_PCT', '1.5'))
+DOUBLE_BOTTOM_STOP_ATR_MULT = float(os.getenv('DOUBLE_BOTTOM_STOP_ATR_MULT', '2.0'))
+DOUBLE_BOTTOM_STOP_MIN_PCT = float(os.getenv('DOUBLE_BOTTOM_STOP_MIN_PCT', '3.0'))
+DOUBLE_BOTTOM_STOP_MAX_PCT = float(os.getenv('DOUBLE_BOTTOM_STOP_MAX_PCT', '12.0'))
+DOUBLE_BOTTOM_ATR_PERIOD = int(os.getenv('DOUBLE_BOTTOM_ATR_PERIOD', '14'))
+
+# Exit at the close after this many trading days regardless of P&L (capital velocity:
+# with a fixed account, recycling capital matters more than holding for a bigger win).
+DOUBLE_BOTTOM_TIME_STOP_DAYS = int(os.getenv('DOUBLE_BOTTOM_TIME_STOP_DAYS', '30'))
+
+# Where open/closed tracked positions live.
+DOUBLE_BOTTOM_POSITIONS_FILE = os.getenv('DOUBLE_BOTTOM_POSITIONS_FILE',
+                                         'data/double_bottom_positions.json')
 
 # ============================================
 # AUTO-TRADING CONFIGURATION

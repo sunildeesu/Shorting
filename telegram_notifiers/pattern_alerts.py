@@ -73,7 +73,15 @@ class PatternAlertNotifier(BaseNotifier):
         current_price: float,
         support_level: float,
         first_low_date: str = "",
-        peak_between: float = 0.0
+        peak_between: float = 0.0,
+        strength: float = 0.0,
+        touches: int = 0,
+        stop_price: float = 0.0,
+        stop_pct: float = 0.0,
+        target_price: float = 0.0,
+        target_pct: float = 0.0,
+        time_stop_days: int = 0,
+        slots_free: int = 0
     ) -> bool:
         """
         Send an intraday "potential double bottom" alert.
@@ -88,12 +96,17 @@ class PatternAlertNotifier(BaseNotifier):
             support_level: The prior low being retested
             first_low_date: Date of the prior low (optional, for context)
             peak_between: Rally peak between the prior low and now (optional)
+            strength: Support-strength score 0-10 (optional)
+            touches: How many separate times price tested the level (optional)
+            stop_price / stop_pct: ATR-based stop, evaluated on the daily CLOSE
+            target_price / target_pct: resting limit target
+            time_stop_days: exit at the close after this many trading days
+            slots_free: portfolio slots available before this entry
 
         Returns:
             True if delivered (Telegram and/or Discord), False otherwise
         """
         distance_pct = (current_price - support_level) / support_level * 100
-        suggested_stop = support_level * 0.98  # 2% below the prior low
 
         message = (
             "🟣🟣🟣 <b><code>POTENTIAL DOUBLE BOTTOM</code></b> 🟣🟣🟣\n"
@@ -108,9 +121,29 @@ class PatternAlertNotifier(BaseNotifier):
             message += f"   ⛰️ Rally off prior low: ₹{peak_between:,.2f} (+{rally_pct:.1f}%)\n"
         if first_low_date:
             message += f"   📅 Prior low date: {first_low_date}\n"
+        if strength:
+            message += f"   🧱 Support strength: {strength:.1f}/10 ({touches} touches)\n"
+
+        if stop_price and target_price:
+            import config as _cfg
+            trail = getattr(_cfg, 'DOUBLE_BOTTOM_TRAIL_PCT', 1.5)
+            message += (
+                "\n<b>TRADE PLAN</b>\n"
+                f"   🛡️ Stop: ₹{stop_price:,.2f} (-{stop_pct:.1f}%) "
+                f"— <b>on a daily CLOSE below</b>, not intraday\n"
+                f"   🎯 Arms at: ₹{target_price:,.2f} (+{target_pct:.1f}%) — do NOT sell "
+                f"here; move the stop up to this price to lock the gain\n"
+                f"   📈 Then trail: stop rides {trail:.1f}% below the running high "
+                f"(updated for you after each close)\n"
+                f"   ⏳ Time stop: exit at close after {time_stop_days} trading days\n"
+            )
+            if slots_free:
+                message += f"   🎰 Slots free before this entry: {slots_free}\n"
+        else:
+            message += f"   🛡️ Suggested stop: ₹{support_level * 0.98:,.2f} (below support)\n"
+
         message += (
-            f"   🛡️ Suggested stop: ₹{suggested_stop:,.2f} (below support)\n\n"
-            "⚠️ <b>UNCONFIRMED / FORMING</b> — price is at the probable second bottom "
+            "\n⚠️ <b>UNCONFIRMED / FORMING</b> — price is at the probable second bottom "
             "but has NOT confirmed a bounce yet. It can still break below support. "
             "This is an early watch signal, not a completed pattern.\n"
         )
@@ -125,6 +158,107 @@ class PatternAlertNotifier(BaseNotifier):
             return success
         except Exception as e:
             logger.error(f"Failed to send potential double bottom alert for {symbol}: {e}")
+            return False
+
+    def send_double_bottom_exit_alert(
+        self,
+        symbol: str,
+        exit_reason: str,
+        entry_price: float,
+        exit_price: float,
+        pnl_pct: float,
+        days_held: int,
+        entry_date: str = ""
+    ) -> bool:
+        """
+        Send an EXIT alert for a tracked double-bottom position.
+
+        Fired by double_bottom_position_tracker.py after the close when the target, the
+        close-based stop, or the time stop triggers.
+
+        Args:
+            symbol: Stock symbol
+            exit_reason: 'target', 'stop' or 'time'
+            entry_price / exit_price: fill prices
+            pnl_pct: realised P&L percentage
+            days_held: trading days the position was open
+            entry_date: when the position was opened
+
+        Returns:
+            True if delivered (Telegram and/or Discord), False otherwise
+        """
+        head = {
+            'target': ("🟢🟢🟢", "LOCKED GAIN", "🎯 Hit target then fell back to the lock"),
+            'trail': ("🟢🟢🟢", "TRAILING STOP", "📈 Rode the trend, trailing stop hit"),
+            'gap': ("🟠🟠🟠", "GAPPED OUT", "⚠️ Gapped through the locked stop overnight"),
+            'stop': ("🔴🔴🔴", "STOP HIT", "🛡️ Closed below stop"),
+            'time': ("🟡🟡🟡", "TIME STOP", "⏳ Held the maximum period"),
+        }.get(exit_reason, ("⚪️⚪️⚪️", "EXIT", "Exit"))
+
+        message = (
+            f"{head[0]} <b><code>DOUBLE BOTTOM {head[1]}</code></b> {head[0]}\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+            f"📉 <b>{symbol}</b> — {head[2]}\n\n"
+            f"   💵 Entry: ₹{entry_price:,.2f}\n"
+            f"   💰 Exit: ₹{exit_price:,.2f}\n"
+            f"   {'📈' if pnl_pct >= 0 else '📉'} P&L: <b>{pnl_pct:+.2f}%</b>\n"
+            f"   ⏱️ Held: {days_held} trading day(s)\n"
+        )
+        if entry_date:
+            message += f"   📅 Entered: {entry_date}\n"
+        message += "\n🎰 A portfolio slot is now free.\n"
+
+        try:
+            import config
+            to_debug = getattr(config, 'DOUBLE_BOTTOM_ALERTS_TO_DEBUG', False)
+            success = self.send_debug(message) if to_debug else self._send_message(message)
+            if success:
+                logger.info(f"Double bottom exit alert sent for {symbol} ({exit_reason}, "
+                            f"{pnl_pct:+.2f}%)")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send double bottom exit alert for {symbol}: {e}")
+            return False
+
+    def send_double_bottom_stop_update(self, moves: List[Dict]) -> bool:
+        """
+        Tell the user where to move their stop orders after the close.
+
+        The trailing stop is only real if the resting order is actually moved, so this
+        fires whenever a tracked position's stop level changed today.
+
+        Args:
+            moves: [{'symbol','old_stop','new_stop','armed','high_water','mtm_pct'}, ...]
+
+        Returns:
+            True if delivered (Telegram and/or Discord), False otherwise
+        """
+        if not moves:
+            return False
+
+        message = (
+            "🔵🔵🔵 <b><code>DOUBLE BOTTOM — MOVE YOUR STOPS</code></b> 🔵🔵🔵\n"
+            "┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄\n"
+        )
+        for m in moves:
+            tag = "🔒 locked & trailing" if m['armed'] else "stop raised"
+            message += (
+                f"\n📈 <b>{m['symbol']}</b> — {tag}\n"
+                f"   ₹{m['old_stop']:,.2f} → <b>₹{m['new_stop']:,.2f}</b>\n"
+                f"   Position {m['mtm_pct']:+.2f}% | high ₹{m['high_water']:,.2f}\n"
+            )
+        message += ("\n⚠️ Update the resting SL/GTT order for each of the above. An "
+                    "un-updated trail is not a trail.\n")
+
+        try:
+            import config
+            to_debug = getattr(config, 'DOUBLE_BOTTOM_ALERTS_TO_DEBUG', False)
+            success = self.send_debug(message) if to_debug else self._send_message(message)
+            if success:
+                logger.info(f"Double bottom stop-update alert sent ({len(moves)} position(s))")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send double bottom stop update: {e}")
             return False
 
     def _format_premarket_alert_message(
