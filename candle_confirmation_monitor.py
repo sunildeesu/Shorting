@@ -47,6 +47,14 @@ SERVICE_NAME = "candle_confirmation_monitor"
 CANDLE_MINUTES = 5
 
 
+def _candle_day(candle: Dict) -> str:
+    """Trading-day key ('YYYY-MM-DD') from a candle's date (datetime or ISO string)."""
+    d = candle.get('date')
+    if hasattr(d, 'strftime'):
+        return d.strftime('%Y-%m-%d')
+    return str(d)[:10]
+
+
 def drop_forming_candle(candles: List[Dict]) -> List[Dict]:
     """Return only CLOSED candles: drop the last one if its 5-min bucket hasn't ended yet.
 
@@ -95,6 +103,13 @@ def detect_reversal_confirmation(
 
     signal_candle = closed[-2]
     confirm = closed[-1]
+
+    # The confirmation must be intraday-contiguous with the signal candle. Skip cross-day pairs
+    # (e.g. yesterday's last candle "confirmed" by today's 09:15 open) — an overnight gap up/down
+    # isn't a genuine intraday reversal confirmation.
+    if _candle_day(signal_candle) != _candle_day(confirm):
+        return None
+
     vol_mult = config.CANDLE_CONFIRM_VOLUME_MULT
     # Baseline = average volume of up to 20 candles BEFORE the confirmation candle (its own
     # timeframe normal), so the ratio is a true "% above average" for this stock.
