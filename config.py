@@ -276,8 +276,12 @@ PRICE_ACTION_REGIME_SMA_PERIOD = int(os.getenv('PRICE_ACTION_REGIME_SMA_PERIOD',
 # ============================================
 # 5-min two-candle reversal signal: a hammer (bullish) or shooting star (bearish) followed by
 # a confirmation candle that closes beyond the signal candle's wick extreme, with above-average
-# volume. Posts to the DEBUG channel to start with. See candle_confirmation_monitor.py.
+# volume. See candle_confirmation_monitor.py.
 ENABLE_CANDLE_REVERSAL_ALERTS = os.getenv('ENABLE_CANDLE_REVERSAL_ALERTS', 'true').lower() == 'true'
+
+# Route candle-reversal alerts to the debug channel instead of the main channel. Was debug
+# while the signal was being observed; now promoted to main for both directions.
+CANDLE_ALERTS_TO_DEBUG = os.getenv('CANDLE_ALERTS_TO_DEBUG', 'false').lower() == 'true'
 ENABLE_HAMMER_SIGNAL = os.getenv('ENABLE_HAMMER_SIGNAL', 'true').lower() == 'true'          # bullish
 ENABLE_SHOOTING_STAR_SIGNAL = os.getenv('ENABLE_SHOOTING_STAR_SIGNAL', 'true').lower() == 'true'  # bearish
 CANDLE_DRY_RUN_MODE = os.getenv('CANDLE_DRY_RUN_MODE', 'false').lower() == 'true'

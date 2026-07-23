@@ -177,6 +177,14 @@ class TelegramNotifier:
             slots_free=slots_free
         )
 
+    def send_candle_reversal_alert(self, message: str) -> bool:
+        """
+        Send a candle-reversal (hammer / shooting star) alert
+
+        Delegates to PatternAlertNotifier, which routes on CANDLE_ALERTS_TO_DEBUG
+        """
+        return self.pattern_alerts.send_candle_reversal_alert(message=message)
+
     def send_double_bottom_stop_update(self, moves: list) -> bool:
         """
         Send the daily "move your stops" alert for tracked double-bottom positions

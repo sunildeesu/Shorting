@@ -224,12 +224,12 @@ class CandleConfirmationMonitor:
             f"💰 Entry: ₹{sig['entry']:.2f}\n"
             f"🎯 Target: ₹{sig['target']:.2f} ({gain:+.1f}%)\n"
             f"🛡️ Stop: ₹{sig['stop']:.2f} (-{risk_pct:.1f}%)  |  R:R 1:{sig['rr']:.1f}\n\n"
-            "⚠️ <i>Posted to debug for observation. Not financial advice.</i>"
+            "⚠️ <i>Not financial advice.</i>"
         )
         if self.dry_run:
             logger.info(f"[DRY RUN] Would send {sig['direction']} {sig['pattern']} for {symbol}")
             return
-        self.telegram.send_debug(msg)
+        self.telegram.send_candle_reversal_alert(msg)
 
     def monitor(self) -> Dict:
         cycle_start = time.time()

@@ -220,6 +220,31 @@ class PatternAlertNotifier(BaseNotifier):
             logger.error(f"Failed to send double bottom exit alert for {symbol}: {e}")
             return False
 
+    def send_candle_reversal_alert(self, message: str) -> bool:
+        """
+        Deliver a candle-reversal (hammer / shooting star) alert.
+
+        The monitor formats the message itself; this only decides the destination, so the
+        routing lives with every other alert's routing instead of being hardcoded.
+
+        Args:
+            message: fully formatted HTML message
+
+        Returns:
+            True if delivered (Telegram and/or Discord), False otherwise
+        """
+        try:
+            import config
+            to_debug = getattr(config, 'CANDLE_ALERTS_TO_DEBUG', False)
+            success = self.send_debug(message) if to_debug else self._send_message(message)
+            if success:
+                logger.info(f"Candle reversal alert sent to "
+                            f"{'debug' if to_debug else 'main'} channel")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send candle reversal alert: {e}")
+            return False
+
     def send_double_bottom_stop_update(self, moves: List[Dict]) -> bool:
         """
         Tell the user where to move their stop orders after the close.
