@@ -73,3 +73,10 @@ credentials/
 
 # Database files (too large for git)
 *.db
+
+# Local market data — not needed on GitHub
+data/
+
+# Runtime logs — keep the dir (via .gitkeep) but not the log files
+logs/
+!logs/.gitkeep
