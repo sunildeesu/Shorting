@@ -253,6 +253,8 @@ SECTOR_DROPBOX_FOLDER = os.getenv('SECTOR_DROPBOX_FOLDER', '/SectorAnalysis')  #
 # 5-minute candlestick pattern detection with confidence scoring
 
 ENABLE_PRICE_ACTION_ALERTS = os.getenv('ENABLE_PRICE_ACTION_ALERTS', 'true').lower() == 'true'
+# Toggle the EOD pattern-detection Telegram/Discord summary (eod_analyzer.py Step 9).
+ENABLE_EOD_PATTERN_ALERTS = os.getenv('ENABLE_EOD_PATTERN_ALERTS', 'true').lower() == 'true'
 # Route price-action alerts to the debug channel instead of main (observe without touching main).
 PRICE_ACTION_ALERTS_TO_DEBUG = os.getenv('PRICE_ACTION_ALERTS_TO_DEBUG', 'true').lower() == 'true'
 PRICE_ACTION_TIMEFRAME = '5minute'  # Timeframe for pattern detection
