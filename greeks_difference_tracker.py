@@ -894,9 +894,18 @@ class GreeksDifferenceTracker:
             date=datetime.now().strftime('%Y%m%d')
         )
 
+    def _is_state_from_today(self, baseline: Dict) -> bool:
+        """Daily state belongs to the trading day its baseline was captured on"""
+        captured_on = str(baseline.get('timestamp', ''))[:10]
+        return captured_on == datetime.now().strftime('%Y-%m-%d')
+
     def _save_baseline_to_cache(self):
         """Persist today's baseline, history and report state so a restart resumes the day"""
         if not self.baseline_greeks:
+            return
+
+        if not self._is_state_from_today(self.baseline_greeks):
+            logger.warning("In-memory state is from a previous trading day - not caching it as today's")
             return
 
         # UnifiedDataCache stores a list of dicts, so wrap the day's state in one dict
@@ -914,7 +923,7 @@ class GreeksDifferenceTracker:
 
         state = cached_state[0]
         baseline = state.get('baseline')
-        if not baseline:
+        if not baseline or not self._is_state_from_today(baseline):
             return False
 
         # JSON turns the integer strike keys into strings - restore them

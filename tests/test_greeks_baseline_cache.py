@@ -36,10 +36,10 @@ from unified_data_cache import UnifiedDataCache
 from greeks_difference_tracker import GreeksDifferenceTracker
 
 
-def make_baseline():
+def make_baseline(timestamp=None):
     """A baseline shaped exactly like capture_baseline_greeks() builds it"""
     return {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': timestamp or datetime.now().isoformat(),
         'nifty_spot': 24012.5,
         'atm_strike': 24000,
         'expiry': '2026-08-13',
@@ -170,6 +170,37 @@ class GreeksBaselineCacheTest(unittest.TestCase):
 
         today = self._tracker()
         self.assertFalse(today._load_baseline_from_cache())
+        self.assertEqual(today.history, [])
+        self.assertFalse(today.telegram_sent)
+
+    def test_state_carried_across_midnight_is_not_saved_as_todays(self):
+        # A process launched yesterday never exits, and today's 9:15 capture
+        # failed - so it still holds yesterday's baseline and rows in memory
+        crossed_midnight = self._tracker()
+        crossed_midnight.baseline_greeks = make_baseline(
+            timestamp=(datetime.now() - timedelta(days=1)).isoformat()
+        )
+        crossed_midnight.history = [{'time': '09:15', 'nifty': 23900.0}]
+
+        crossed_midnight._append_to_history(make_aggregated(24050.0, 0.12))
+
+        restarted = self._tracker()
+        self.assertFalse(restarted._load_baseline_from_cache())
+        self.assertEqual(restarted.history, [])
+
+    def test_previous_day_state_under_todays_key_is_rejected(self):
+        cache = UnifiedDataCache(cache_dir=self.cache_dir)
+        cache.set_data(self._tracker()._baseline_cache_key(), [{
+            'baseline': make_baseline(
+                timestamp=(datetime.now() - timedelta(days=1)).isoformat()
+            ),
+            'history': [{'time': '09:15', 'nifty': 23900.0}],
+            'telegram_sent': True
+        }], 'greeks_diff')
+
+        today = self._tracker()
+        self.assertFalse(today._load_baseline_from_cache())
+        self.assertEqual(today.baseline_greeks, {})
         self.assertEqual(today.history, [])
         self.assertFalse(today.telegram_sent)
 
