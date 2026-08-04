@@ -156,6 +156,10 @@ class GreeksDifferenceTracker:
                 'PE_vega': 0.00
             }]
 
+            # A new trading day starts with its report unsent
+            self.telegram_sent = False
+            self.cloud_link = None
+
             # Cache baseline for the day
             self._save_baseline_to_cache()
 
@@ -177,7 +181,16 @@ class GreeksDifferenceTracker:
         logger.info("Fetching live Greeks and calculating differences...")
 
         try:
-            # Check if baseline exists
+            # Check if baseline exists - state from a previous trading day counts
+            # as absent, so a process that crossed midnight cannot drift against
+            # yesterday's baseline or publish yesterday's rows as today's
+            if self.baseline_greeks and not self._is_state_from_today(self.baseline_greeks):
+                logger.warning("In-memory state is from a previous trading day - discarding it")
+                self.baseline_greeks = {}
+                self.history = []
+                self.telegram_sent = False
+                self.cloud_link = None
+
             if not self.baseline_greeks:
                 self._load_baseline_from_cache()
                 if not self.baseline_greeks:

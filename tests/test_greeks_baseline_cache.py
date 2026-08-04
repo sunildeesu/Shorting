@@ -84,8 +84,21 @@ class GreeksBaselineCacheTest(unittest.TestCase):
         tracker.baseline_greeks = {}
         tracker.history = []
         tracker.telegram_sent = False
+        tracker.cloud_link = None
         tracker.telegram = RecordingTelegram()
         return tracker
+
+    def _stub_market_inputs(self, tracker):
+        """Let the 9:15 capture run without a broker - data shaped like the live feed"""
+        tracker.strike_offsets = config.GREEKS_DIFF_STRIKE_OFFSETS
+        tracker._get_spot_indices_batch = lambda: {'nifty_spot': 24012.5,
+                                                   'india_vix': 0.11}
+        tracker._get_next_expiries = lambda count=1: [datetime(2026, 8, 13)]
+        tracker._fetch_greeks_for_strikes = lambda expiry, strikes: {
+            strike: {'CE': {'delta': 0.5, 'theta': -8.0, 'vega': 12.0},
+                     'PE': {'delta': -0.5, 'theta': -8.0, 'vega': 12.0}}
+            for strike in strikes
+        }
 
     def _morning_tracker(self):
         """Tracker that captured the 9:15 baseline and ran two 15-minute updates"""
@@ -203,6 +216,68 @@ class GreeksBaselineCacheTest(unittest.TestCase):
         self.assertEqual(today.baseline_greeks, {})
         self.assertEqual(today.history, [])
         self.assertFalse(today.telegram_sent)
+
+    def test_stale_in_memory_baseline_is_treated_as_absent(self):
+        # A process launched yesterday never exits, and today's 9:15 capture
+        # failed - the drift must not be measured against yesterday's baseline
+        crossed_midnight = self._tracker()
+        crossed_midnight.baseline_greeks = make_baseline(
+            timestamp=(datetime.now() - timedelta(days=1)).isoformat()
+        )
+        crossed_midnight.history = [{'time': '09:15', 'nifty': 23900.0}]
+        crossed_midnight.telegram_sent = True
+        crossed_midnight.cloud_link = 'https://drive/yesterday'
+
+        self.assertIsNone(crossed_midnight.fetch_live_and_calculate_diff())
+        self.assertEqual(crossed_midnight.baseline_greeks, {})
+        self.assertEqual(crossed_midnight.history, [])
+        self.assertFalse(crossed_midnight.telegram_sent)
+        self.assertIsNone(crossed_midnight.cloud_link)
+
+    def test_day_rollover_with_a_failed_capture_publishes_nothing(self):
+        crossed_midnight = self._tracker()
+        crossed_midnight.baseline_greeks = make_baseline(
+            timestamp=(datetime.now() - timedelta(days=1)).isoformat()
+        )
+        crossed_midnight.history = [{'time': '09:15', 'nifty': 23900.0},
+                                    {'time': '15:15', 'nifty': 23940.0}]
+        crossed_midnight.telegram_sent = True
+
+        exported = []
+        crossed_midnight.export_to_excel = lambda: exported.append(
+            list(crossed_midnight.history))
+
+        crossed_midnight._scheduled_update()
+
+        # Excel is written under today's fixed daily filename and synced to Drive,
+        # so exporting at all here would publish yesterday's rows as today's
+        self.assertEqual(exported, [])
+        self.assertEqual(crossed_midnight.telegram.messages, [])
+        self.assertEqual(crossed_midnight.history, [])
+        self.assertEqual(crossed_midnight.baseline_greeks, {})
+
+    def test_new_trading_day_sends_its_own_report(self):
+        # Yesterday's process sent its report and is still running today
+        tracker = self._tracker()
+        tracker.baseline_greeks = make_baseline(
+            timestamp=(datetime.now() - timedelta(days=1)).isoformat()
+        )
+        tracker.history = [{'time': '09:15', 'nifty': 23900.0}]
+        tracker.telegram_sent = True
+        tracker.cloud_link = 'https://drive/yesterday'
+        self._stub_market_inputs(tracker)
+
+        self.assertTrue(tracker.capture_baseline_greeks())
+        self.assertFalse(tracker.telegram_sent)
+        self.assertIsNone(tracker.cloud_link)
+
+        # A restart before 9:30 must not inherit yesterday's suppression either
+        restarted = self._tracker()
+        self.assertTrue(restarted._load_baseline_from_cache())
+        self.assertFalse(restarted.telegram_sent)
+
+        self.assertTrue(restarted.send_telegram_notification('https://drive/today'))
+        self.assertEqual(len(restarted.telegram.messages), 1)
 
 
 if __name__ == '__main__':
