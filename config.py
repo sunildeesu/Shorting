@@ -482,7 +482,7 @@ GREEKS_DIFF_GOOGLE_CREDENTIALS_PATH = os.getenv('GREEKS_DIFF_GOOGLE_CREDENTIALS_
 GREEKS_DIFF_DROPBOX_TOKEN = os.getenv('GREEKS_DIFF_DROPBOX_TOKEN', '')  # Dropbox access token
 
 # Storage
-GREEKS_BASELINE_CACHE_KEY = 'greeks_baseline_{date}'  # Persists for the day
+GREEKS_BASELINE_CACHE_KEY = 'greeks_baseline_{date}'  # Whole day's state: baseline, history, telegram_sent
 
 # ============================================
 # CPR FIRST TOUCH ALERT CONFIGURATION
