@@ -144,9 +144,6 @@ class GreeksDifferenceTracker:
                 'strikes': baseline
             }
 
-            # Cache baseline for the day
-            self._save_baseline_to_cache()
-
             # Initialize history with baseline (all diffs = 0.00)
             self.history = [{
                 'time': '09:15',
@@ -158,6 +155,9 @@ class GreeksDifferenceTracker:
                 'PE_theta': 0.00,
                 'PE_vega': 0.00
             }]
+
+            # Cache baseline for the day
+            self._save_baseline_to_cache()
 
             logger.info(f"✓ Baseline captured successfully: {len(baseline)} strikes")
             return True
@@ -380,6 +380,7 @@ class GreeksDifferenceTracker:
             self.telegram._send_message(message)
             self.telegram_sent = True
             self.cloud_link = cloud_link
+            self._save_baseline_to_cache()
 
             logger.info(f"✓ Telegram notification sent with cloud link")
             return True
@@ -668,6 +669,8 @@ class GreeksDifferenceTracker:
             'PE_vega': round(aggregated['PE']['vega_diff_sum'], 2)
         })
 
+        self._save_baseline_to_cache()
+
     def _upload_to_cloud(self, excel_path: str) -> Optional[str]:
         """
         Upload Excel file to cloud storage (Google Drive or Dropbox).
@@ -885,30 +888,42 @@ class GreeksDifferenceTracker:
         else:
             logger.info(f"Excel updated and uploaded to cloud at {datetime.now()}")
 
-    def _save_baseline_to_cache(self):
-        """Persist today's baseline so a restart can resume without re-capturing"""
-        cache_key = config.GREEKS_BASELINE_CACHE_KEY.format(
+    def _baseline_cache_key(self) -> str:
+        """Cache key for today's state - date-stamped so it never spans days"""
+        return config.GREEKS_BASELINE_CACHE_KEY.format(
             date=datetime.now().strftime('%Y%m%d')
         )
 
-        # UnifiedDataCache stores a list of dicts, so wrap the single baseline dict
-        self.cache.set_data(cache_key, [self.baseline_greeks], 'greeks_diff')
+    def _save_baseline_to_cache(self):
+        """Persist today's baseline, history and report state so a restart resumes the day"""
+        if not self.baseline_greeks:
+            return
+
+        # UnifiedDataCache stores a list of dicts, so wrap the day's state in one dict
+        self.cache.set_data(self._baseline_cache_key(), [{
+            'baseline': self.baseline_greeks,
+            'history': self.history,
+            'telegram_sent': self.telegram_sent
+        }], 'greeks_diff')
 
     def _load_baseline_from_cache(self) -> bool:
-        """Load baseline from cache if available"""
-        cache_key = config.GREEKS_BASELINE_CACHE_KEY.format(
-            date=datetime.now().strftime('%Y%m%d')
-        )
+        """Load today's baseline, history and report state from cache if available"""
+        cached_state = self.cache.get_data(self._baseline_cache_key(), 'greeks_diff')
+        if not cached_state:
+            return False
 
-        cached_baseline = self.cache.get_data(cache_key, 'greeks_diff')
-        if cached_baseline:
-            baseline = cached_baseline[0]
-            # JSON turns the integer strike keys into strings - restore them
-            baseline['strikes'] = {int(k): v for k, v in baseline['strikes'].items()}
-            self.baseline_greeks = baseline
-            logger.info("Baseline loaded from cache")
-            return True
-        return False
+        state = cached_state[0]
+        baseline = state.get('baseline')
+        if not baseline:
+            return False
+
+        # JSON turns the integer strike keys into strings - restore them
+        baseline['strikes'] = {int(k): v for k, v in baseline['strikes'].items()}
+        self.baseline_greeks = baseline
+        self.history = state.get('history', [])
+        self.telegram_sent = state.get('telegram_sent', False)
+        logger.info(f"Baseline loaded from cache ({len(self.history)} history rows)")
+        return True
 
     def _is_market_day(self) -> bool:
         """Check if today is a market day (Monday-Friday)"""
