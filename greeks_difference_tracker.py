@@ -145,10 +145,7 @@ class GreeksDifferenceTracker:
             }
 
             # Cache baseline for the day
-            cache_key = config.GREEKS_BASELINE_CACHE_KEY.format(
-                date=datetime.now().strftime('%Y%m%d')
-            )
-            self.cache.set_data(cache_key, self.baseline_greeks, 'greeks_diff')
+            self._save_baseline_to_cache()
 
             # Initialize history with baseline (all diffs = 0.00)
             self.history = [{
@@ -888,6 +885,15 @@ class GreeksDifferenceTracker:
         else:
             logger.info(f"Excel updated and uploaded to cloud at {datetime.now()}")
 
+    def _save_baseline_to_cache(self):
+        """Persist today's baseline so a restart can resume without re-capturing"""
+        cache_key = config.GREEKS_BASELINE_CACHE_KEY.format(
+            date=datetime.now().strftime('%Y%m%d')
+        )
+
+        # UnifiedDataCache stores a list of dicts, so wrap the single baseline dict
+        self.cache.set_data(cache_key, [self.baseline_greeks], 'greeks_diff')
+
     def _load_baseline_from_cache(self) -> bool:
         """Load baseline from cache if available"""
         cache_key = config.GREEKS_BASELINE_CACHE_KEY.format(
@@ -896,7 +902,10 @@ class GreeksDifferenceTracker:
 
         cached_baseline = self.cache.get_data(cache_key, 'greeks_diff')
         if cached_baseline:
-            self.baseline_greeks = cached_baseline
+            baseline = cached_baseline[0]
+            # JSON turns the integer strike keys into strings - restore them
+            baseline['strikes'] = {int(k): v for k, v in baseline['strikes'].items()}
+            self.baseline_greeks = baseline
             logger.info("Baseline loaded from cache")
             return True
         return False

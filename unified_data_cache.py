@@ -11,6 +11,7 @@ Data types supported:
 - historical_3year: 3-year daily candles (for value screener)
 - intraday_5d: 5-day 15-minute candles (for EOD volume analysis)
 - hourly_10d: 10-day hourly candles (for pre-market pattern detection)
+- greeks_diff: 9:15 AM Greeks baseline (for greeks_difference_tracker)
 
 Author: Sunil Kumar Durganaik
 """
@@ -40,7 +41,8 @@ class UnifiedDataCache:
         'intraday_5d': 1,        # 15-min candles - refresh hourly
         'intraday_1d': 0.25,     # 15-min candles - refresh every 15 min
         'intraday_1min': 0.25,   # 1-min candles - refresh every 15 min (for volume profile)
-        'hourly_10d': 6          # Hourly candles - refresh every 6 hours (for pre-market patterns)
+        'hourly_10d': 6,         # Hourly candles - refresh every 6 hours (for pre-market patterns)
+        'greeks_diff': 24        # Greeks baseline - one per trading day (date-stamped key)
     }
 
     def __init__(self, cache_dir: str = "data/unified_cache"):
@@ -61,7 +63,8 @@ class UnifiedDataCache:
             'intraday_5d': os.path.join(cache_dir, 'intraday_5d.json'),
             'intraday_1d': os.path.join(cache_dir, 'intraday_1d.json'),
             'intraday_1min': os.path.join(cache_dir, 'intraday_1min.json'),
-            'hourly_10d': os.path.join(cache_dir, 'hourly_10d.json')
+            'hourly_10d': os.path.join(cache_dir, 'hourly_10d.json'),
+            'greeks_diff': os.path.join(cache_dir, 'greeks_diff.json')
         }
 
         # Load all caches
