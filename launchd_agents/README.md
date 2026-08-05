@@ -9,8 +9,15 @@ Captured 2026-08-05. Every file in this directory was `cmp`-verified byte-for-by
 identical to the installed copy at capture time. 25 of the 28 are loaded; see
 Observations for the three that are installed but not loaded.
 
-One job that was present at capture time is **deliberately absent** from this directory —
-see "Retired jobs" below. Do not treat its absence as an omission to be repaired.
+Two jobs are **deliberate exceptions**, and they are exceptions of different kinds — do not
+confuse them:
+
+- One job present at capture time is **absent** from this directory: it was retired and is
+  never coming back. See "Retired jobs — do not reinstate". Do not treat its absence as an
+  omission to be repaired.
+- One job **is** in this directory but is **never loaded** by a restore: `com.stockmonitor.eod`
+  is paused pending improvement and will return. See "Paused jobs — stopped on purpose,
+  will return". Do not treat its plist's presence as permission to start it.
 
 Absolute paths (`/Users/sunilkumar/myProjects/ShortIndicator`) are baked in. That is
 deliberate: the purpose is restoring *this* machine. On a different machine or username,
@@ -40,8 +47,21 @@ The script refuses to install a job whose referenced paths do not resolve, so a 
 venv or a missing NewsBase checkout shows up as a `SKIP` line rather than a job that
 silently fails at 09:05 next Monday.
 
+It also **copies but never loads** any job named in `DO_NOT_AUTOLOAD.txt`, printing a
+`HELD` line with the reason:
+
+```
+HELD  com.stockmonitor.eod — copied to .../com.stockmonitor.eod.plist but DELIBERATELY NOT LOADED.
+      Reason: PAUSED PENDING IMPROVEMENT — ...
+```
+
+That file is required: if it is missing, malformed, or names a label with no matching
+plist, the script exits 1 without installing anything. It must never fail open, because a
+held-back job that gets loaded anyway is exactly the accident it exists to prevent.
+
 To restore a single job: `cp launchd_agents/<label>.plist ~/Library/LaunchAgents/` then
-`launchctl load ~/Library/LaunchAgents/<label>.plist`.
+`launchctl load ~/Library/LaunchAgents/<label>.plist`. **Check `DO_NOT_AUTOLOAD.txt` first
+— do not run the `load` step for a job listed there.**
 
 ## Cross-repo dependency: NewsBase
 
@@ -97,7 +117,7 @@ Derived from the plists in this directory. `Mon–Fri` means the plist carries e
 | `com.nse.alert.daily.update` | `daily_alert_price_update.sh` | 15:45 | EVERY DAY | yes |
 | `com.nse.central.backfill` | `central_data_backfill.py` | 15:45 | Mon–Fri | yes |
 | `com.nse.doublebottom.tracker` | `double_bottom_position_tracker.py` | 16:00 | EVERY DAY | yes |
-| `com.stockmonitor.eod` | `start_eod_analyzer.sh` | 16:00 | Mon–Fri | **NO** |
+| `com.stockmonitor.eod` | `start_eod_analyzer.sh` | 16:00 | Mon–Fri | **NO — paused on purpose, see below** |
 | `com.sunildeesu.weeklybacktest` | `weekly_backtest_runner.py` | 16:00 | **Fri only** | yes |
 | `com.nse.cpr.monitor` | `cpr_first_touch_monitor.py` | RunAtLoad + every 60s | continuous | yes |
 | `com.nse.candle.reversal.monitor` | `candle_confirmation_monitor.py` | RunAtLoad + every 300s | continuous | yes |
@@ -111,7 +131,42 @@ No plist contains a secret. The only `EnvironmentVariables` keys across all 28 a
 "token"/"secret"/"password" are filenames and labels only (`check_token.py`,
 `com.nse.token.reminder`, `logs/token_reminder.log`).
 
+## Paused jobs — stopped on purpose, will return
+
+**Not the same as "Retired" below.** A retired job is gone for good and its definition is
+deliberately not kept. A *paused* job is one the captain switched off on purpose, intends
+to improve, and intends to bring back — its definition is kept precisely so it can return.
+Do not merge these two sections, and do not move a job between them without the captain.
+
+### `com.stockmonitor.eod` — paused 2026-08-05, pending improvement
+
+**Current state, all of it deliberate:**
+
+- `com.stockmonitor.eod.plist` **is installed** in `~/Library/LaunchAgents/` but is **not
+  loaded**, so the job never fires. This is a choice, not a fault.
+- The crontab entry `setup_eod_cron.sh` would install (`0 16 * * 1-5 …
+  start_eod_analyzer.sh`) is **intentionally absent** — `crontab -l` reports *no crontab
+  for sunilkumar*. The EOD analyzer is meant to run by neither mechanism right now.
+- Its plist **stays versioned** in this directory. Losing the definition would be worse
+  than the current state, because the job is coming back.
+- `install_launch_agents.sh` copies it and refuses to load it, via `DO_NOT_AUTOLOAD.txt`.
+  Without that, a machine rebuild would restart a job the captain deliberately stopped —
+  silently reversing the decision during a recovery, the worst possible moment.
+
+**The captain stopped it in order to improve it, and will re-enable it when ready. That
+decision is theirs alone.** Do not "fix" it by loading the plist, do not run
+`setup_eod_cron.sh`, and do not follow the cron setup steps in `EOD_ANALYSIS_SYSTEM.md`.
+
+`eod_analyzer.py`, `start_eod_analyzer.sh` and `run_eod_for_date.py` all still work when
+run by hand. Only the *schedule* is off.
+
+To re-enable (captain only): delete the `com.stockmonitor.eod` line from
+`DO_NOT_AUTOLOAD.txt`, move this section's entry out, and load the plist.
+
 ## Retired jobs — do not reinstate
+
+Jobs here are **gone for good**. Nothing in this section is coming back; if you want a
+job that is switched off but *will* return, look under "Paused jobs" above instead.
 
 ### `com.shortindicator.volumeprofile` — retired 2026-08-05
 
@@ -141,9 +196,9 @@ None of the following was altered. Each is the captain's call.
 
 1. **Three jobs are installed but not loaded**, so they do not run at all:
    `com.nse.priceaction.monitor`, `com.stockmonitor.eod`, `com.nse.collector.watchdog`.
-   For `com.stockmonitor.eod` there is no fallback: `setup_eod_cron.sh` would install a
-   crontab entry instead, and `crontab -l` reports *no crontab for sunilkumar*. The EOD
-   analyzer currently runs by neither mechanism.
+   `com.stockmonitor.eod` is the one of the three that is **known to be deliberate** — it
+   is paused pending improvement; see "Paused jobs" above, which is now the authority on
+   it. The other two were not investigated and remain the captain's call.
 
 2. **Nine jobs carry no `Weekday` restriction and therefore fire seven days a week**,
    including on weekends and NSE holidays: `com.nse.token.reminder`,
@@ -163,12 +218,16 @@ None of the following was altered. Each is the captain's call.
 
 5. **`setup_eod_cron.sh` installs a cron job, not the launchd job** that is actually
    installed (`com.stockmonitor.eod`). The two mechanisms disagree about how the EOD
-   analyzer should be scheduled, and at present neither is active.
+   analyzer should be scheduled, and neither is active **by choice** — running that script
+   would re-enable a job the captain deliberately stopped. It now carries a banner saying
+   so, as does the cron setup section of `EOD_ANALYSIS_SYSTEM.md`.
 
 ## Maintaining this directory
 
 When a job is added, changed, or removed on the production machine, re-copy the plist here
-in the same change and update the table above. Re-verify with:
+in the same change and update the table above. If a job is deliberately stopped rather than
+removed, add it to `DO_NOT_AUTOLOAD.txt` **and** to "Paused jobs" or "Retired jobs" —
+whichever it actually is — in the same change. Re-verify with:
 
 ```bash
 for f in launchd_agents/*.plist; do

@@ -256,13 +256,16 @@ crontab -e
 
 ### 6. Set Up EOD Analyzer (Optional)
 
-The EOD analyzer runs daily at 4:00 PM to analyze patterns and generate reports.
+**Scheduled EOD runs are paused on purpose (2026-08-05) — do not automate this step.**
+The captain stopped the EOD analyzer to improve it and will re-enable it themselves; see
+`launchd_agents/README.md` → "Paused jobs — stopped on purpose, will return". Running it
+by hand, as below, is fine.
 
 ```bash
-# Test EOD analyzer manually
+# Run EOD analyzer manually
 ./eod_analyzer.py
 
-# For automation, use the provided script:
+# Manual run via the wrapper script (does NOT schedule anything):
 ./start_eod_analyzer.sh
 ```
 

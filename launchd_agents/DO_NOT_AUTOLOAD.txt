@@ -1,0 +1,17 @@
+# Jobs that install_launch_agents.sh must COPY but must NOT LOAD.
+#
+# A job listed here is deliberately stopped on the production machine. Its plist stays in
+# this directory on purpose so the definition is never lost — a restore copies it into
+# ~/Library/LaunchAgents/ and leaves it unloaded, exactly as the captain left it.
+#
+# This file is REQUIRED. install_launch_agents.sh refuses to run without it, refuses to
+# run if a label listed here has no matching .plist, and refuses to run if a line is
+# malformed. A held-back job that quietly gets loaded anyway is the bug this file exists
+# to prevent, so every failure here is loud.
+#
+# Format, one job per line:   <label>: <reason, printed verbatim when the job is skipped>
+# Lines starting with # and blank lines are ignored. The label must match exactly.
+#
+# To re-enable a job: delete its line here. That is the captain's decision alone.
+
+com.stockmonitor.eod: PAUSED PENDING IMPROVEMENT — the captain stopped the EOD analyzer on purpose and will bring it back once improved. It is installed-but-unloaded by choice, and the crontab entry setup_eod_cron.sh would add is intentionally absent. Not retired; not broken. See launchd_agents/README.md -> "Paused jobs".

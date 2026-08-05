@@ -1,8 +1,36 @@
 #!/bin/bash
 # Setup EOD Analysis Cron Job
 # Runs daily at 4:00 PM (after market close)
+#
+# ############################################################################
+# DO NOT RUN THIS. The EOD analyzer is PAUSED ON PURPOSE (2026-08-05).
+#
+# The captain stopped it to improve it and will re-enable it themselves. The
+# launchd job com.stockmonitor.eod is installed-but-unloaded by choice, and the
+# crontab entry this script installs is intentionally absent — `crontab -l`
+# reports "no crontab for sunilkumar". Running this script re-enables the EOD
+# analyzer and reverses that decision.
+#
+# The script is kept, not deleted, because the job is coming back. See
+# launchd_agents/README.md -> "Paused jobs — stopped on purpose, will return".
+#
+# To run the analyzer once by hand (which is fine), use ./start_eod_analyzer.sh
+# — that does not schedule anything.
+# ############################################################################
 
 set -e
+
+cat <<'PAUSED' >&2
+==================================================
+REFUSING TO INSTALL: the EOD analyzer is paused on purpose.
+
+Scheduling it is the captain's decision alone. See
+launchd_agents/README.md -> "Paused jobs — stopped on purpose, will return".
+
+To run the analyzer once by hand: ./start_eod_analyzer.sh
+==================================================
+PAUSED
+exit 1
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 CRON_JOB="0 16 * * 1-5 cd $SCRIPT_DIR && $SCRIPT_DIR/start_eod_analyzer.sh >> $SCRIPT_DIR/logs/eod_cron.log 2>&1"
