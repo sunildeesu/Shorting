@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Job Label -->
+    <key>Label</key>
+    <string>com.nse.doublebottom.tracker</string>
+
+    <!-- Program to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/double_bottom_position_tracker.py</string>
+    </array>
+
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
+
+    <!-- Once daily at 4:00 PM IST, after the 3:30 close so the daily candle is final -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>16</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Standard Output/Error Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/doublebottom-tracker-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/doublebottom-tracker-stderr.log</string>
+
+    <!-- Do not run on load: exits are only meaningful after the close -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment Variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process Type -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>ThrottleInterval</key>
+    <integer>300</integer>
+</dict>
+</plist>

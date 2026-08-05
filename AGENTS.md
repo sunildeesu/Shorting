@@ -104,6 +104,18 @@ This is a **live NSE stock monitoring and alerting system**. Changes to core inf
   later belongs in an append-only sibling log (`auto_trader._append_history` is the pattern,
   `tests/test_auto_trade_history_persists.py` pins it).
 
+**The production schedule lives in `launchd_agents/`** — verbatim copies of all 29 installed
+launchd jobs, plus `launchd_agents/README.md` (per-job table, restore procedure, known
+duplicate/unloaded jobs). It is the source of truth for *what is scheduled*; several
+`setup_*.sh` scripts still write their own plists and some have drifted, so check
+`launchd_agents/` before believing a setup script. If you change a job on the machine,
+re-copy it here in the same change.
+
+**Cross-repo dependency:** `start_collector.sh` (job `com.nse.central.collector`, 09:05
+Mon–Fri) refreshes the Kite token via `NewsBase`'s `data_feeds.token_refresh` and **exits 1
+if it fails**, so the central collector — and everything downstream of the quote DB —
+cannot start without the NewsBase repo present and working.
+
 **Python environment:** Use `venv/` (Python 3.13). Always run scripts from the project root.
 
 **`UnifiedDataCache`:** a data type only exists if it is registered in *both* `DEFAULT_TTL` and

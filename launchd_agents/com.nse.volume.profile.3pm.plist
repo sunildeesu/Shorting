@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nse.volume.profile.3pm</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/volume_profile_analyzer.py</string>
+        <string>--execution-time=3:00PM</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
+
+    <!-- Run daily at 3:00 PM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>15</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/volume_profile_3pm.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/volume_profile_3pm.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

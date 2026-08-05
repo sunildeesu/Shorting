@@ -172,7 +172,7 @@ notifier.send_test_message()
 
 ### Step 1: Update Plist File
 
-The `com.nse.stockmonitor.plist` file is already configured. Verify the paths are correct:
+The `launchd_agents/com.nse.stockmonitor.plist` file is already configured. Verify the paths are correct:
 
 - Python path: `/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3`
 - Script path: `/Users/sunildeesu/myProjects/ShortIndicator/main.py`
@@ -182,7 +182,7 @@ The `com.nse.stockmonitor.plist` file is already configured. Verify the paths ar
 
 ```bash
 # Copy plist to LaunchAgents directory
-cp com.nse.stockmonitor.plist ~/Library/LaunchAgents/
+cp launchd_agents/com.nse.stockmonitor.plist ~/Library/LaunchAgents/
 
 # Load the launch agent
 launchctl load ~/Library/LaunchAgents/com.nse.stockmonitor.plist
@@ -252,7 +252,7 @@ ShortIndicator/
 ├── config.py                    # Configuration
 ├── fo_stocks.json               # F&O stock list
 ├── requirements.txt             # Python dependencies
-├── com.nse.stockmonitor.plist  # Launchd configuration
+├── launchd_agents/            # Versioned launchd job definitions (all 29)
 ├── .env                        # Environment variables (create this)
 ├── .env.example                # Environment template
 ├── data/
@@ -306,7 +306,7 @@ MARKET_END_MINUTE = 25
 
 ### Change Check Interval
 
-Edit `com.nse.stockmonitor.plist`:
+Edit `launchd_agents/com.nse.stockmonitor.plist`:
 ```xml
 <key>StartInterval</key>
 <integer>600</integer>  <!-- 10 minutes = 600 seconds -->

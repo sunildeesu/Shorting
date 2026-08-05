@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Job Label -->
+    <key>Label</key>
+    <string>com.stockmonitor.premarket</string>
+
+    <!-- Program to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/premarket_analyzer.py</string>
+    </array>
+
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
+
+    <!-- Run daily at 9:00 AM (Monday-Friday) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Monday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Tuesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Wednesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Thursday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <!-- Friday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <!-- Standard Output/Error Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/premarket-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/premarket-stderr.log</string>
+
+    <!-- Don't run on load (only at scheduled time) -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Don't keep alive (run once per schedule) -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment Variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process Type -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

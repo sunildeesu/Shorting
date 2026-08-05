@@ -78,7 +78,7 @@ This will display:
 
 ### Automation Files
 
-- **`com.nse.token.reminder.plist`** - Launchd job configuration
+- **`launchd_agents/com.nse.token.reminder.plist`** - Launchd job configuration
 - **`setup_token_reminder.sh`** - Installation script for daily reminder
 
 ## How Token Validation Works

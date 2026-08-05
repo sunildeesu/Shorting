@@ -2,7 +2,9 @@
 # Setup Daily Token Reminder
 # This script installs a launchd job that checks token validity every day at 8:00 AM
 
-PLIST_SOURCE="com.nse.token.reminder.plist"
+# Source moved to launchd_agents/ when the production schedule was brought into version
+# control; that copy matches what is installed. See launchd_agents/README.md.
+PLIST_SOURCE="launchd_agents/com.nse.token.reminder.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.nse.token.reminder.plist"
 
 echo "============================================================"

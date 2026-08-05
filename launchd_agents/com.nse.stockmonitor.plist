@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Job Label -->
+    <key>Label</key>
+    <string>com.nse.stockmonitor</string>
+
+    <!-- Program to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/main.py</string>
+    </array>
+
+    <!-- Working Directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
+
+    <!-- Start at 9:25 AM on weekdays (Mon-Fri) -->
+    <!-- Service runs continuously until market close (3:25 PM) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Monday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>1</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <!-- Tuesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>2</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <!-- Wednesday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <!-- Thursday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>4</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+        <!-- Friday -->
+        <dict>
+            <key>Weekday</key>
+            <integer>5</integer>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>25</integer>
+        </dict>
+    </array>
+
+    <!-- Standard Output/Error Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/launchd-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/launchd-stderr.log</string>
+
+    <!-- Keep the job running (restart if it exits) -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment Variables (if .env is not working) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process Type -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Throttle interval (minimum time between restarts in seconds) -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+</dict>
+</plist>

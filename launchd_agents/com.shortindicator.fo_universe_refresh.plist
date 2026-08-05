@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- F&O Universe Refresh — runs every Monday at 9:00 AM -->
+    <!-- Updates fo_stocks.json (quarterly F&O list changes) and -->
+    <!-- futures_mapping.json (monthly contract rollover). -->
+
+    <key>Label</key>
+    <string>com.shortindicator.fo_universe_refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/refresh_fo_universe.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+        <key>Weekday</key>
+        <integer>1</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/refresh_fo_universe_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/refresh_fo_universe_launchd_error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+</dict>
+</plist>
