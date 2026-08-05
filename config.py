@@ -634,7 +634,41 @@ DOUBLE_BOTTOM_POSITIONS_FILE = os.getenv('DOUBLE_BOTTOM_POSITIONS_FILE',
 # AUTO-TRADING CONFIGURATION
 # ============================================
 # Automated trading based on 5-minute alerts via Zerodha Kite
-# Backtested: 97% win rate, +1.67% avg P&L over 181 trades (30 days)
+#
+# THE OLD CLAIM HERE ("97% win rate, +1.67% avg P&L over 181 trades (30 days)") HAD NO
+# SOURCE. It arrived with auto_trader.py's first commit (0bd742e, 2026-02-11); no script
+# in this repo produces it, no result file records it, and "181" appears nowhere else.
+# It is withdrawn, not corrected.
+#
+# What is actually measured, from the only per-alert outcome data the system keeps
+# (data/alerts/alert_pnl_tracker.xlsx, 411 alerts / 69 trading days / 2026-02-25 to
+# 2026-08-04), re-derivable with `venv/bin/python analyze_auto_trade_record.py`:
+#
+#   The auto-trader's own rule - first 5min / volume_spike / 5min_rise / volume_spike_rise
+#   alert per stock per day (prealert is NOT auto-traded; see rapid_drop_detector.
+#   _try_auto_trade) - gives 176 trades over 58 trading days, 163 of them with a completed
+#   exit price:
+#       exit at alert+15m:  46.6% win rate, +0.030% average per trade
+#       exit at alert+30m:  43.0% win rate, -0.162% average per trade
+#   The +0.030% average carries a 95% CI of -0.171% to +0.232%: statistically
+#   indistinguishable from zero, and before any cost. The claimed +1.67% is roughly 16
+#   standard errors away. No 30-trading-day window anywhere in the sample reaches even a
+#   60% win rate (best: 59.0%) or a +0.6% average (best: +0.532%).
+#
+# Caveats, all of them printed by the analysis script: the tracker exits at +15/+30 min
+# while the auto-trader exits after AUTO_TRADE_EXIT_MINUTES (10); it sizes 1 futures lot
+# while the auto-trader takes ~AUTO_TRADE_POSITION_SIZE of cash equity (so only the %
+# columns transfer); it skips symbols with no NFO lot size; it models no brokerage, taxes
+# or slippage (strictly optimistic - intraday equity round-trip costs of ~0.05-0.1% of
+# notional exceed the entire measured average); and the live alert_count gate is shared
+# with monitors this workbook does not log, so the real trade count would be lower.
+#
+# Bottom line: this strategy has no demonstrated edge in the data available. Nothing
+# resembling a 97% win rate or a +1.67% average exists anywhere in five months of alerts.
+# ENABLE_AUTO_TRADING is deliberately off. Do not turn it on against the old claim; if you
+# turn it on at all, do it in paper mode and judge it on data/auto_trade_history.jsonl,
+# which auto_trader.py now accumulates across days.
+#
 # IMPORTANT: Set ENABLE_AUTO_TRADING=true only after paper testing
 
 # Master switch (default: disabled for safety)
