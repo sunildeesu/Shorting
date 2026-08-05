@@ -3,13 +3,35 @@
 Auto-Trader - Automated Trading on 5-Min Alerts via Zerodha Kite
 
 Executes trades automatically when 5-min alerts are triggered.
-Based on backtested strategy with 97% win rate and +1.67% avg P&L.
+
+NO DEMONSTRATED EDGE. This module used to claim "97% win rate and +1.67% avg P&L".
+That claim had no source: it arrived with this file's first commit (0bd742e, 2026-02-11),
+no script in the repo produces it and no result file records it. It is withdrawn.
+
+Measured instead from data/alerts/alert_pnl_tracker.xlsx (411 alerts, 69 trading days,
+2026-02-25 to 2026-08-04) by replaying this module's own rule - first 5min /
+volume_spike / 5min_rise / volume_spike_rise alert per stock per day, per
+rapid_drop_detector._try_auto_trade(); `prealert` is not auto-traded:
+
+    176 trades over 58 trading days, 163 with a completed exit
+        exit at alert+15m:  46.6% win rate, +0.030% avg per trade (95% CI -0.171/+0.232)
+        exit at alert+30m:  43.0% win rate, -0.162% avg per trade
+
+That average is statistically indistinguishable from zero and is gross of costs; an
+intraday equity round trip costs more than it. Caveats (different exit window, futures
+lot sizing vs cash equity, F&O-only coverage, no costs modelled) are printed in full by
+`venv/bin/python analyze_auto_trade_record.py`, which re-derives these numbers.
+
+ENABLE_AUTO_TRADING is off by default and should stay off until a real record - see
+data/auto_trade_history.jsonl below - says otherwise.
 
 Key Features:
 - First-alert-only per stock per day
 - Fixed position size (default ₹10,000)
 - Auto-exit after 10 minutes
 - Paper mode for testing
+- Completed trades appended to data/auto_trade_history.jsonl (never rewritten), so the
+  record survives the nightly reset of the open-position file
 
 Author: Claude Opus 4.5
 Date: 2026-02-11
@@ -132,6 +154,62 @@ class AutoTrader:
 
         except Exception as e:
             logger.error(f"Failed to save positions: {e}")
+
+    def _history_file(self) -> str:
+        """
+        Path of the append-only completed-trade log, a sibling of the positions file.
+
+        Derived rather than configured on purpose: config.py's non-comment content is
+        deliberately unchanged by this record-keeping addition.
+        """
+        return os.path.join(
+            os.path.dirname(config.AUTO_TRADE_POSITIONS_FILE) or '.',
+            'auto_trade_history.jsonl'
+        )
+
+    def _append_history(self, symbol: str, pos: Dict, exit_info: Dict, exit_time: datetime):
+        """
+        Append one completed trade to the history log. Record-keeping only.
+
+        AUTO_TRADE_POSITIONS_FILE holds the CURRENT day and is reset every morning by
+        _load_positions(), so before this existed every closed trade was erased overnight
+        and no track record could ever accumulate. This log is JSON Lines, opened in
+        append mode and never rewritten, so a crash or a concurrent writer can lose at
+        most the line being written - never the history.
+
+        Growth: one line is ~350 bytes and at most AUTO_TRADE_MAX_POSITIONS trades can be
+        open at once; the measured alert rate is ~3 auto-tradeable alerts per trading day,
+        so ~1 KB/day, i.e. well under 0.5 MB/year. No rotation needed.
+
+        Never raises: a logging failure must not disturb the exit path.
+        """
+        try:
+            entry_time = pos.get('entry_time')
+            record = {
+                'date': exit_time.strftime('%Y-%m-%d'),
+                'symbol': symbol,
+                'direction': pos.get('direction'),
+                'transaction_type': pos.get('transaction_type'),
+                'quantity': pos.get('quantity'),
+                'entry_time': entry_time.isoformat() if isinstance(entry_time, datetime) else entry_time,
+                'entry_price': pos.get('entry_price'),
+                'exit_time': exit_time.isoformat(),
+                'exit_price': exit_info.get('exit_price'),
+                'hold_minutes': exit_info.get('hold_time'),
+                'pnl': exit_info.get('pnl'),
+                'pnl_pct': exit_info.get('pnl_pct'),
+                'paper_mode': exit_info.get('paper_mode'),
+                'order_id': pos.get('order_id'),
+                'exit_order_id': exit_info.get('exit_order_id'),
+            }
+
+            path = self._history_file()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'a') as f:
+                f.write(json.dumps(record) + '\n')
+
+        except Exception as e:
+            logger.error(f"Failed to append trade history for {symbol}: {e}")
 
     def should_trade(self, symbol: str, direction: str) -> tuple:
         """
@@ -332,6 +410,9 @@ class AutoTrader:
                 }
 
                 exits.append(exit_info)
+
+                # Record-keeping only: keep the closed trade after tonight's reset
+                self._append_history(symbol, pos, exit_info, now)
 
                 # Remove from active positions
                 del self.positions[symbol]

@@ -96,6 +96,13 @@ This is a **live NSE stock monitoring and alerting system**. Changes to core inf
   before day *i* plus day *i*'s open/high/low, never its close and never a later bar;
   `tests/test_double_bottom_backtest_lookahead.py` pins that contract for the one that was
   fixed. If you re-derive numbers, re-derive the config comment in the same change.
+  A second set — the auto-trader's "97% win rate / +1.67%" — had no producing script at all;
+  the measured record is ~46.6% / +0.03%, re-derivable with `analyze_auto_trade_record.py`.
+  Treat an unsourced performance figure as false until a script in-repo reproduces it.
+- Live P&L evidence must outlive the trading day. `data/*_positions.json` files are
+  current-day state and are reset on date change; anything you want to judge a strategy by
+  later belongs in an append-only sibling log (`auto_trader._append_history` is the pattern,
+  `tests/test_auto_trade_history_persists.py` pins it).
 
 **Python environment:** Use `venv/` (Python 3.13). Always run scripts from the project root.
 
