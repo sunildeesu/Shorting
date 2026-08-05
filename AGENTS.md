@@ -80,6 +80,12 @@ This is a **live NSE stock monitoring and alerting system**. Changes to core inf
 **Monitors that run live (launchd agents):**
 - `stock_monitor.py`, `onemin_monitor.py`, `nifty_option_monitor.py`, `cpr_first_touch_monitor.py`, `atr_breakout_monitor.py`
 - Changes to these require confirming the launchd `.plist` is reloaded after deployment.
+- Launchers start monitors *before* the market opens (e.g. 09:12) but `market_utils.is_market_open()`
+  is only true 09:25–15:25 (`config.MARKET_*`), so "market is closed" alone must never end a monitor —
+  it would die at launch every morning. A monitor that is meant to be one-process-per-day exits on its
+  own end-of-day condition instead; `vwap_mover_monitor._shutdown_reason()` is the worked example, and
+  `tests/test_vwap_mover_monitor_daily_exit.py` pins it. Monitors that instead span midnight need
+  day-rollover handling (`_check_day_reset`) — check which kind you are editing before changing a loop.
 
 **Before changing signal/alert logic:**
 - Understand the full detection → filter → alert pipeline first.
