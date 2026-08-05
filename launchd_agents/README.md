@@ -1,12 +1,16 @@
 # Production schedule (launchd)
 
-All 29 launchd jobs that drive ShortIndicator's scheduled services. Each file here is a
+All 28 launchd jobs that drive ShortIndicator's scheduled services. Each file here is a
 **verbatim copy** of what is installed in `~/Library/LaunchAgents/` on the production
 machine — not a template. Copying one back into `~/Library/LaunchAgents/` and loading it
 restores that job exactly.
 
 Captured 2026-08-05. Every file in this directory was `cmp`-verified byte-for-byte
-identical to the installed copy at capture time.
+identical to the installed copy at capture time. 25 of the 28 are loaded; see
+Observations for the three that are installed but not loaded.
+
+One job that was present at capture time is **deliberately absent** from this directory —
+see "Retired jobs" below. Do not treat its absence as an omission to be repaired.
 
 Absolute paths (`/Users/sunilkumar/myProjects/ShortIndicator`) are baked in. That is
 deliberate: the purpose is restoring *this* machine. On a different machine or username,
@@ -89,7 +93,6 @@ Derived from the plists in this directory. `Mon–Fri` means the plist carries e
 | `com.nse.volume.profile.3pm` | `volume_profile_analyzer.py --execution-time=3:00PM` | 15:00 | EVERY DAY | yes |
 | `com.nse.volume.profile.315pm` | `volume_profile_analyzer.py --execution-time=3:15PM` | 15:15 | EVERY DAY | yes |
 | `com.nse.volume.profile.325pm` | `volume_profile_analyzer.py --execution-time=3:25PM` | 15:25 | EVERY DAY | yes |
-| `com.shortindicator.volumeprofile` | `start_volume_profile.sh` (→ same analyzer, 3:25PM) | 15:25 | Mon–Fri | yes |
 | `com.nse.alert.eod.updater` | `update_eod_prices.py` | 15:30 | EVERY DAY | yes |
 | `com.nse.alert.daily.update` | `daily_alert_price_update.sh` | 15:45 | EVERY DAY | yes |
 | `com.nse.central.backfill` | `central_data_backfill.py` | 15:45 | Mon–Fri | yes |
@@ -102,45 +105,63 @@ Derived from the plists in this directory. `Mon–Fri` means the plist carries e
 | `com.nse.intraday.candles` | `central_data_collector.py --intraday` | RunAtLoad + every 300s | continuous | yes |
 | `com.nse.collector.watchdog` | `collector_watchdog.sh` | every 600s | continuous | **NO** |
 
-No plist contains a secret. The only `EnvironmentVariables` keys across all 29 are `PATH`
-(25 files) and `TZ=Asia/Kolkata` (3: `com.nifty.option.monitor`,
+No plist contains a secret. The only `EnvironmentVariables` keys across all 28 are `PATH`
+(24 files) and `TZ=Asia/Kolkata` (3: `com.nifty.option.monitor`,
 `com.nse.central.collector`, `com.nse.collector.watchdog`). Matches on
 "token"/"secret"/"password" are filenames and labels only (`check_token.py`,
 `com.nse.token.reminder`, `logs/token_reminder.log`).
+
+## Retired jobs — do not reinstate
+
+### `com.shortindicator.volumeprofile` — retired 2026-08-05
+
+**It was a duplicate, not a loss.** It ran `start_volume_profile.sh` at 15:25 Mon–Fri,
+which invokes `volume_profile_analyzer.py` with a hardcoded `EXECUTION_TIME="3:25PM"` —
+exactly the work `com.nse.volume.profile.325pm` already does at 15:25 with
+`--execution-time 3:25PM`.
+
+The duplication was **confirmed empirically from the production log**: at `15:25:01` on
+2026-08-05 the analyzer's startup banner appears twice, milliseconds apart — two processes
+doing identical work.
+
+The captain kept `com.nse.volume.profile.325pm` because it matches its 3:00 and 3:15
+siblings in invocation style, and retired the wrapper-based job. On the machine it was
+unloaded and its plist moved out of `~/Library/LaunchAgents` to
+`~/Library/LaunchAgents.disabled-2026-08-05/`, where the disabled copy is kept.
+
+If you are restoring after a machine loss: **do not recreate this job.** The three
+surviving `com.nse.volume.profile.*` jobs cover 15:00, 15:15 and 15:25 completely.
+
+`start_volume_profile.sh` itself was **not** deleted and is still in the repo — it remains
+usable by hand (`./start_volume_profile.sh`). It is simply no longer scheduled.
 
 ## Observations — reported, not changed
 
 None of the following was altered. Each is the captain's call.
 
-1. **Duplicate volume-profile job at 15:25.** `com.nse.volume.profile.325pm` runs
-   `volume_profile_analyzer.py --execution-time=3:25PM` at 15:25 every day;
-   `com.shortindicator.volumeprofile` runs `start_volume_profile.sh` at 15:25 Mon–Fri,
-   which runs the same analyzer with a hardcoded `EXECUTION_TIME="3:25PM"`. Both are
-   loaded. Confirmed duplicate — the analyzer runs twice at 15:25 on weekdays.
-
-2. **Three jobs are installed but not loaded**, so they do not run at all:
+1. **Three jobs are installed but not loaded**, so they do not run at all:
    `com.nse.priceaction.monitor`, `com.stockmonitor.eod`, `com.nse.collector.watchdog`.
    For `com.stockmonitor.eod` there is no fallback: `setup_eod_cron.sh` would install a
    crontab entry instead, and `crontab -l` reports *no crontab for sunilkumar*. The EOD
    analyzer currently runs by neither mechanism.
 
-3. **Nine jobs carry no `Weekday` restriction and therefore fire seven days a week**,
+2. **Nine jobs carry no `Weekday` restriction and therefore fire seven days a week**,
    including on weekends and NSE holidays: `com.nse.token.reminder`,
    `com.nifty.option.monitor`, the three `com.nse.volume.profile.*` jobs,
    `com.nse.alert.eod.updater`, `com.nse.alert.daily.update`,
    `com.nse.doublebottom.tracker` — plus the four `StartInterval` jobs, which are
-   continuous by construction. Some wrappers self-guard (`start_volume_profile.sh` exits
-   on `date +%u > 5`); the bare-Python ones do not visibly do so from the plist.
+   continuous by construction. These are bare-Python invocations and do not visibly
+   self-guard from the plist.
 
-4. **All referenced paths currently resolve.** Every `ProgramArguments` and
-   `WorkingDirectory` path across the 29 was checked and exists.
+3. **All referenced paths currently resolve.** Every `ProgramArguments` and
+   `WorkingDirectory` path across the 28 was checked and exists.
 
-5. **`setup_price_action_launchd.sh` is obsolete and would install a broken job.** It
+4. **`setup_price_action_launchd.sh` is obsolete and would install a broken job.** It
    hardcodes `/Users/sunildeesu/myProjects/ShortIndicator` — the old username. The
    installed plist uses `/Users/sunilkumar/...`. The schedule it generates matches the
    installed one; only the paths are stale. It was not edited.
 
-6. **`setup_eod_cron.sh` installs a cron job, not the launchd job** that is actually
+5. **`setup_eod_cron.sh` installs a cron job, not the launchd job** that is actually
    installed (`com.stockmonitor.eod`). The two mechanisms disagree about how the EOD
    analyzer should be scheduled, and at present neither is active.
 
