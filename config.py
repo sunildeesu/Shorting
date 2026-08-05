@@ -544,9 +544,14 @@ DOUBLE_BOTTOM_TOUCH_TOLERANCE_PCT = float(os.getenv('DOUBLE_BOTTOM_TOUCH_TOLERAN
 # the cut where a level is demonstrably support rather than an incidental low.
 DOUBLE_BOTTOM_MIN_TOUCHES = int(os.getenv('DOUBLE_BOTTOM_MIN_TOUCHES', '3'))
 
-# Only buy support inside an uptrend: live price must be above its own SMA. This was the
-# single largest edge found and the only filter that also improved out-of-sample
-# (win rate 70.0% -> 81.2% OOS in a 3y/195-stock test).
+# Only buy support inside an uptrend: live price must be above its own SMA. Still the
+# strongest single filter, but much smaller than once believed: the "70.0% -> 81.2% win
+# rate" claim came from a backtest whose trend gate compared the day's own CLOSE against
+# an SMA that included that day (bias L1). Re-measured on the de-biased 195-stock candidate
+# tables (no date filter, so slightly wider than the 3y portfolio window), both arms
+# counting only positions that closed inside the data: gate ON  +1.71%/trade, 64.9% win
+# (376 of 382 signals); gate OFF +1.09%/trade, 60.4% win (2167 of 2213). Real, worth
+# keeping, not decisive.
 DOUBLE_BOTTOM_REQUIRE_UPTREND = os.getenv('DOUBLE_BOTTOM_REQUIRE_UPTREND', 'true').lower() == 'true'
 DOUBLE_BOTTOM_TREND_SMA_PERIOD = int(os.getenv('DOUBLE_BOTTOM_TREND_SMA_PERIOD', '50'))
 
@@ -572,13 +577,21 @@ DOUBLE_BOTTOM_ALERTS_TO_DEBUG = os.getenv('DOUBLE_BOTTOM_ALERTS_TO_DEBUG', 'true
 # Sizing for reference: capital / MAX_SLOTS per position.
 #
 # Regime-segmented backtest (backtest_double_bottom_portfolio.py --by-year, 195 F&O
-# stocks, ₹1L, 4 slots, these defaults) — compare return to the MEDIAN STOCK, not to zero:
-#   2023-07..2024-07  BULL  median stock +57.1%  ->  +101.1%
-#   2024-07..2025-07  FLAT  median stock  +1.8%  ->   +43.4%
-#   2025-07..2026-07  FLAT  median stock  +1.1%  ->   +40.8%
-#   full 3y: +295.9%, CAGR 59.4%, max drawdown 11.6%, 176 trades, 76.1% win
-# A sustained DOWNTREND has never been tested - no such year exists in the data. Re-run
-# the script periodically; it labels each period's regime automatically.
+# stocks, ₹1L, 4 slots, these defaults) over 2023-07-24..2026-07-23, from the DE-BIASED
+# backtest — compare return to the MEDIAN STOCK, not to zero:
+#   2023-07..2024-07  BULL  median stock +57.1%  ->  +34.3%
+#   2024-07..2025-07  FLAT  median stock  +1.8%  ->  +19.3%
+#   2025-07..2026-07  FLAT  median stock  +1.1%  ->  +10.3%
+#   full 3y: +83.2%, CAGR 22.8%, max drawdown 13.3%, 139 trades, 63.3% win
+#           against a +70.2% median stock (85% of stocks up) over the same window.
+# The earlier figures here (+101.1/+43.4/+40.8, full 3y +295.9%, 76.1% win) came from a
+# version of that script carrying three look-ahead biases; they are not reproducible.
+# The window is strongly bullish and the universe is TODAY's F&O list replayed over
+# history, so both columns are survivorship-inflated. Against a random-entry control on
+# the same dates the pattern is worth +0.34%/trade (Welch t = 0.90, not significant) —
+# see DOUBLE_BOTTOM_BACKTEST_AUDIT.md, which recommends keeping alerts on the debug
+# channel. A sustained DOWNTREND has never been tested - no such year exists in the data.
+# Re-run the script periodically; it labels each period's regime automatically.
 DOUBLE_BOTTOM_MAX_SLOTS = int(os.getenv('DOUBLE_BOTTOM_MAX_SLOTS', '4'))
 
 # Exit geometry. The stop is evaluated on the CLOSE (intraday wicks through support were
@@ -587,14 +600,22 @@ DOUBLE_BOTTOM_MAX_SLOTS = int(os.getenv('DOUBLE_BOTTOM_MAX_SLOTS', '4'))
 #
 # TARGET_PCT is NOT a hard exit: it is the level at which the trade ARMS. On touching it
 # the stop jumps to that price (locking the gain) and then trails TRAIL_PCT below the
-# running high of completed daily bars, so winners can run. Backtest 3y/195 stocks/4 slots:
-# fixed +6% exit -> +171.7%; arm at +6% then trail 1.5% -> +295.9%, with win rate (76%)
-# and max drawdown (11.6%) unchanged. 129 of 176 trades armed; 120 finished at or above
-# +6%, 9 gapped through the lock overnight (worst still +5.5%), none turned into a loss.
+# running high of completed daily bars, so winners can run. De-biased backtest, same
+# 3y/195 stocks/4 slots: fixed +6% exit -> +26.1%; arm at +6% then trail 1.5% -> +83.2%,
+# with win rate (63.3%) and max drawdown (13.3%) unchanged. 86 of 139 trades armed; 85
+# finished at or above +6%, and the single one that did not was an overnight gap through
+# the lock at +5.84%. 7 trades gapped through the lock overnight in all, 6 of them still
+# finishing at or above +6%. No armed trade turned into a loss. The backtest prints this
+# breakdown in its summary, so it can be re-derived rather than taken on trust. Arming is
+# what earns the return here: without it the strategy trails its own benchmark badly.
+# (Pre-audit figures were +171.7% / +295.9%.)
 DOUBLE_BOTTOM_TARGET_PCT = float(os.getenv('DOUBLE_BOTTOM_TARGET_PCT', '6.0'))
 
-# How far below the running high the armed stop trails. 1.0-2.0% are statistically tied;
-# 1.5% earns the same as 1.0% while halving overnight-gap exits (17 vs 24 over 3 years).
+# How far below the running high the armed stop trails. De-biased backtest, same
+# 3y/195 stocks/4 slots: 1.0% -> +78.4% (12 overnight-gap exits), 1.5% -> +83.2% (7),
+# 2.0% -> +85.3% (5). A ~7-point spread over 139 trades is inside the noise, so 1.0-2.0%
+# remain statistically tied and 1.5% is kept as the incumbent; the pre-audit claim that
+# 1.5% merely halved gap exits at equal return came from the biased backtest.
 DOUBLE_BOTTOM_TRAIL_PCT = float(os.getenv('DOUBLE_BOTTOM_TRAIL_PCT', '1.5'))
 DOUBLE_BOTTOM_STOP_ATR_MULT = float(os.getenv('DOUBLE_BOTTOM_STOP_ATR_MULT', '2.0'))
 DOUBLE_BOTTOM_STOP_MIN_PCT = float(os.getenv('DOUBLE_BOTTOM_STOP_MIN_PCT', '3.0'))

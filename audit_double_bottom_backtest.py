@@ -218,7 +218,7 @@ def run(rows, data, all_dates, lo, hi, slots, size_div, target, one_per_day=True
     period_rows = [r for r in rows if lo <= r['date'] < hi]
     curve, trades, missed, extra = simulate(period_rows, data, dates, slots, size_div,
                                             target, one_per_day)
-    perf = performance(curve, trades, missed)
+    perf = performance(curve, trades, missed, target)
     perf.update(extra)
     return perf, trades
 
