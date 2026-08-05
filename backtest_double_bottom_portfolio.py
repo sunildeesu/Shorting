@@ -154,8 +154,10 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
     """
     One row per (symbol, day) where the live monitor would have flagged a retest.
 
-    Mirrors DoubleBottomSupportMonitor._evaluate(): nearest unbroken level within the
-    proximity band, price above its SMA, enough touches.
+    Mirrors DoubleBottomSupportMonitor._evaluate(): an unbroken level within the proximity
+    band, price above its SMA, enough touches. When a day's range intersects more than one
+    level's band, the most-recent level is taken, which live path order need not agree
+    with — see the tie-break note under L3.
 
     EVERY boundary below is drawn so the decision uses only what the live monitor knows at
     the moment it fires — intraday, hours before day i's close exists. Three look-ahead
@@ -216,8 +218,22 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
             # level*(1-max_below), so the binding lower edge is whichever of the two is
             # tighter (both default to 1.0%). Entry is the first band price the day's path
             # must have touched — down through the top if it opened above, up through the
-            # bottom if it opened below, else the open. Setups are most-recent-first, so
-            # the first match is the nearest unbroken level, as live takes matches[0].
+            # bottom if it opened below, else the open.
+            #
+            # TIE-BREAK, when a day's range intersects more than one setup's band: the
+            # most-recent setup wins, because find_double_bottom_setups returns setups
+            # most-recent-first and this loop breaks on the first intersecting one. Live
+            # _evaluate() runs per quote and fires on whichever band the price PATH reaches
+            # first, which is not necessarily the most recent level, so the two rules can
+            # pick different levels. That divergence cannot be removed here: intraday path
+            # order is not recoverable from a daily OHLC bar. It is a limit of the data, not
+            # an unfinished piece of work — do not "fix" it by inventing a path assumption.
+            # Measured across all 382 de-biased signals: 45 span more than one setup band,
+            # and the level selected differs from live path order in exactly 1 (UNIONBANK
+            # 2025-04-07, whose open 106.91 sits BETWEEN the two bands while low 105.71 and
+            # high 112.06 mean the path touched both, so which came first is genuinely
+            # unknowable from a daily bar). No signal is gained or lost by the tie-break;
+            # only the level and the fill differ.
             bar = cd[i]
             hit = entry = None
             for s in setups:

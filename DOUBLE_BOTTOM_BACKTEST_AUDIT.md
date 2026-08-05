@@ -88,6 +88,16 @@ The alert band is written as the live gate verbatim — `|price - level| ≤ pro
 `price ≥ level × (1 - max_below)` — so the lower edge is whichever bound is tighter. Both
 default to 1.0%.
 
+The band and the fill are exact; **which level is chosen when a day's range intersects
+several bands is not**. The backtest takes the most-recent setup, because
+`find_double_bottom_setups` returns them most-recent-first and the loop breaks on the first
+intersecting one; live `_evaluate()` fires on whichever band the price *path* reaches first.
+Intraday path order is not recoverable from a daily OHLC bar, so this cannot be resolved
+here — it is a limit of the data, not unfinished work. Measured over all 382 de-biased
+signals: 45 span more than one band, and the level chosen differs from live path order in
+exactly 1 (UNIONBANK 2025-04-07). No signal is gained or lost by the tie-break; only the
+level and the fill differ.
+
 **No configuration value, threshold, or runtime behaviour changed.** Verified mechanically:
 all 323 module-level names in `config.py` compare equal to `HEAD`.
 

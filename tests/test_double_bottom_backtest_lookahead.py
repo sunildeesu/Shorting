@@ -61,6 +61,35 @@ def redirect_table_cache(cls):
     backtest.TABLE_CACHE = os.path.join(tmp, 'table.pkl')
 
 
+# The detection parameters make_series() is hand-calibrated to. config.py calls
+# load_dotenv() at import, so without pinning these the fixture would be scored against
+# whatever the machine's ambient .env happens to set — and a machine that raises, say,
+# DOUBLE_BOTTOM_MIN_TOUCHES would report "[] != [140]", a config-environment difference
+# dressed up as a look-ahead regression.
+PINNED_DETECTION_PARAMS = {
+    'DOUBLE_BOTTOM_LOOKBACK_DAYS': 50,
+    'DOUBLE_BOTTOM_MIN_RALLY_PCT': 8.0,
+    'DOUBLE_BOTTOM_PIVOT_BARS': 3,
+    'DOUBLE_BOTTOM_MIN_DAYS_AGO': 5,
+    'DOUBLE_BOTTOM_MAX_DAYS_AGO': 40,
+    'DOUBLE_BOTTOM_MIN_STRENGTH': 0.0,
+    'DOUBLE_BOTTOM_TOUCH_TOLERANCE_PCT': 1.0,
+    'DOUBLE_BOTTOM_MIN_TOUCHES': 3,
+    'DOUBLE_BOTTOM_PROXIMITY_PCT': 1.0,
+    'DOUBLE_BOTTOM_MAX_BELOW_PCT': 1.0,
+    'DOUBLE_BOTTOM_REQUIRE_UPTREND': True,
+    'DOUBLE_BOTTOM_TREND_SMA_PERIOD': 50,
+    'DOUBLE_BOTTOM_ATR_PERIOD': 14,
+}
+
+
+def pin_detection_params(cls):
+    """Hold config at the values make_series() is calibrated to, for the class's lifetime."""
+    for name, value in PINNED_DETECTION_PARAMS.items():
+        cls.addClassCleanup(setattr, config, name, getattr(config, name))
+        setattr(config, name, value)
+
+
 LEVEL = 100.0          # the support level the synthetic series is built around
 SIGNAL_INDEX = 140     # bar the retest lands on, given the layout in make_series()
 
@@ -85,8 +114,14 @@ def make_series():
                                               lowest low, so it is the one unbroken setup
         13 bars rally to 1.125                the middle peak of the W (>= MIN_RALLY_PCT)
          9 bars drift 1.115 -> 1.025          stays clear of the band, so no earlier signal
-      1 bar     the retest: opens 1.012, dips to 0.999, closes 1.010
+      1 bar     the retest: opens 1.012, dips to 0.985, closes 1.010
       3 bars    rally away, so no later bar signals either
+
+    The retest's LOW sits BELOW the completed-bar 50-SMA (99.542, the mean of cd[90:140])
+    while its open, high and close sit above it. That is what gives
+    test_signal_day_close_cannot_change_the_signal its teeth: forcing the close down to the
+    low crosses the trend gate, so a gate that compared day i's close against the SMA would
+    drop the day and the test would notice.
     """
     candles = []
     start = datetime(2024, 1, 1)
@@ -111,7 +146,7 @@ def make_series():
     push(1.005, 1.020, 1.000, 1.016)           # touch 3 == the level, closes in upper half
     ramp(13, 1.030, 1.120)                     # the intervening rally
     ramp(9, 1.115, 1.025)                      # drift back toward the level
-    push(1.012, 1.015, 0.999, 1.010)           # <- the retest (SIGNAL_INDEX)
+    push(1.012, 1.015, 0.985, 1.010)           # <- the retest (SIGNAL_INDEX)
     ramp(3, 1.040, 1.080)                      # away again
 
     return candles, LEVEL
@@ -121,6 +156,7 @@ class LookaheadContractTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        pin_detection_params(cls)
         redirect_table_cache(cls)
         cls.candles, cls.level = make_series()
         cls.data = {'SYNTH': cls.candles}
@@ -202,8 +238,19 @@ class LookaheadContractTest(unittest.TestCase):
 
         Slamming the close to the day's low is the case the old code got wrong: it dropped
         the day because close <= SMA, keeping only the dips that recovered into the bell.
+
+        For that subtest to have teeth the mutated close must actually cross the trend gate,
+        so it is checked against the completed-bar SMA the corrected gate uses rather than
+        against a hardcoded number: if the fixture is ever retuned so the low no longer sits
+        below the SMA, this fails loudly instead of silently testing nothing.
         """
         signal_i = min(r['i'] for r in self.rows)
+        window = self.candles[max(0, signal_i - backtest.INDICATOR_BARS):signal_i]
+        trend = sma(window, config.DOUBLE_BOTTOM_TREND_SMA_PERIOD)
+        self.assertLess(self.candles[signal_i]['low'], trend,
+                        "the fixture's signal-day low no longer crosses the trend gate, so "
+                        "the close-at-the-low subtest cannot detect a close-based gate")
+
         for label, pick in (('close at the low', lambda c: c['low']),
                             ('close at the high', lambda c: c['high'])):
             with self.subTest(label):
