@@ -600,10 +600,13 @@ DOUBLE_BOTTOM_MAX_SLOTS = int(os.getenv('DOUBLE_BOTTOM_MAX_SLOTS', '4'))
 # the stop jumps to that price (locking the gain) and then trails TRAIL_PCT below the
 # running high of completed daily bars, so winners can run. De-biased backtest, same
 # 3y/195 stocks/4 slots: fixed +6% exit -> +26.1%; arm at +6% then trail 1.5% -> +83.2%,
-# with win rate (63.3%) and max drawdown (13.3%) unchanged. 86 of 139 trades armed; 82
-# finished at or above +6%, 7 gapped through the lock overnight (worst still +5.8%), none
-# of the armed trades turned into a loss. Arming is what earns the return here: without it
-# the strategy trails its own benchmark badly. (Pre-audit figures were +171.7% / +295.9%.)
+# with win rate (63.3%) and max drawdown (13.3%) unchanged. 86 of 139 trades armed; 85
+# finished at or above +6%, and the single one that did not was an overnight gap through
+# the lock at +5.84%. 7 trades gapped through the lock overnight in all, 6 of them still
+# finishing at or above +6%. No armed trade turned into a loss. The backtest prints this
+# breakdown in its summary, so it can be re-derived rather than taken on trust. Arming is
+# what earns the return here: without it the strategy trails its own benchmark badly.
+# (Pre-audit figures were +171.7% / +295.9%.)
 DOUBLE_BOTTOM_TARGET_PCT = float(os.getenv('DOUBLE_BOTTOM_TARGET_PCT', '6.0'))
 
 # How far below the running high the armed stop trails. De-biased backtest, same

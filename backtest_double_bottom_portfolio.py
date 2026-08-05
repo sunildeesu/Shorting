@@ -348,7 +348,18 @@ def market_condition(data: Dict[str, List[Dict]], lo: str, hi: str) -> Dict:
     return {'median': med, 'breadth': breadth, 'label': label, 'n': len(rets)}
 
 
-def performance(curve, trades, missed) -> Dict:
+# Tolerance, in PERCENTAGE POINTS, for comparing a trade's P&L against the target.
+# A trade that exits exactly at the armed lock fills at entry*(1+target/100), and that
+# round trip lands a hair BELOW the target in binary floating point — entry 105.70 gives
+# 5.999999999999998 against a 6.0 threshold. A bare `>=` therefore counts exactly-at-target
+# fills as misses (it under-reported the config.py arming figure by 3 trades). 1e-9 of a
+# percentage point is orders of magnitude below any real price move, so it absorbs only
+# IEEE-754 representation error. Do not simplify this back to a bare `>=`.
+PNL_EPS_PCT = 1e-9
+
+
+def performance(curve, trades, missed,
+                target_pct: float = config.DOUBLE_BOTTOM_TARGET_PCT) -> Dict:
     eq = [e for _, e in curve]
     if not eq:
         return {}
@@ -363,6 +374,21 @@ def performance(curve, trades, missed) -> Dict:
     wins = [t['pnl'] for t in trades if t['pnl'] > 0]
     losses = [t['pnl'] for t in trades if t['pnl'] <= 0]
     years = len(eq) / 252
+
+    # Arming breakdown — this is the evidence the DOUBLE_BOTTOM_TARGET_PCT comment in
+    # config.py quotes, so it is derived here rather than in a throwaway script.
+    # target/trail/gap are reachable only from the armed state. A time stop can also fire
+    # while armed, and when it does the exit is provably at or above the lock: the armed
+    # branch of replay() returns before the time check unless the bar stayed above the
+    # locked stop, which is itself never below the lock.
+    def at_target(t):
+        return t['pnl'] >= target_pct - PNL_EPS_PCT
+
+    armed = [t for t in trades
+             if t['reason'] in ('target', 'trail', 'gap')
+             or (t['reason'] == 'time' and at_target(t))]
+    gaps = [t for t in trades if t['reason'] == 'gap']
+
     return {
         'final': eq[-1],
         'return': (eq[-1] / START_CAPITAL - 1) * 100,
@@ -373,6 +399,12 @@ def performance(curve, trades, missed) -> Dict:
         'avg_loss': sum(losses) / len(losses) if losses else 0.0,
         'worst': min((t['pnl'] for t in trades), default=0.0),
         'missed': missed,
+        'armed': len(armed),
+        'armed_at_target': sum(1 for t in armed if at_target(t)),
+        'armed_losses': sum(1 for t in armed if t['pnl'] <= 0),
+        'gaps': len(gaps),
+        'gaps_at_target': sum(1 for t in gaps if at_target(t)),
+        'worst_gap': min((t['pnl'] for t in gaps), default=None),
     }
 
 
@@ -380,7 +412,7 @@ def run_period(rows, data, all_dates, lo, hi, slots, target, hold) -> Tuple[Dict
     dates = [d for d in all_dates if lo <= d < hi]
     period_rows = [r for r in rows if lo <= r['date'] < hi]
     curve, trades, missed = simulate(period_rows, data, dates, slots, target, hold)
-    return performance(curve, trades, missed), market_condition(data, lo, hi)
+    return performance(curve, trades, missed, target), market_condition(data, lo, hi)
 
 
 def print_row(label: str, perf: Dict, mkt: Dict) -> None:
@@ -457,6 +489,12 @@ def main():
               f"worst trade {perf['worst']:.1f}%")
         print(f"{perf['missed']} signal(s) skipped for lack of a free slot — "
               f"more capital or more slots would have taken them.")
+        gap_note = (f", worst {perf['worst_gap']:+.2f}%, {perf['gaps_at_target']} of them "
+                    f"still at or above +{args.target:.0f}%" if perf['gaps'] else "")
+        print(f"Arming: {perf['armed']} of {perf['n']} trades reached the +{args.target:.0f}% "
+              f"lock; {perf['armed_at_target']} finished at or above it and "
+              f"{perf['armed_losses']} turned into a loss. "
+              f"{perf['gaps']} gapped through the lock overnight{gap_note}.")
         print("\nRegime note: compare the return column against the market-median column, "
               "not against zero.\nOn de-biased entries this strategy beats a FLAT market "
               "and loses to a rising one: the trailing\nexit takes ~6-8% and stands aside "

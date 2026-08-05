@@ -153,11 +153,24 @@ Re-derived on the de-biased table (the fixed-target variant was validated agains
 | fixed +6% exit | +171.7% | **+26.1%** |
 | arm at +6%, trail 1.5% | +295.9% | **+83.2%** |
 | trades armed | 129 of 176 | **86 of 139** |
-| finished at or above +6% | 120 | **82** |
-| overnight-gap exits (worst) | 9 (+5.5%) | **7 (+5.8%)** |
+| finished at or above +6% | 120 | **85** |
+| overnight-gap exits (worst) | 9 (+5.5%) | **7 (+5.84%)** |
 | armed trades that became losses | 0 | **0** |
 | trail 1.0% / 1.5% / 2.0% | "tied; 1.5% halves gaps" | **+78.4% (12 gaps) / +83.2% (7) / +85.3% (5)** |
 | trend gate on vs off | 70.0% → 81.2% win | **+1.71%/trade, 64.9% win vs +1.09%/trade, 60.4% win** |
+
+The arming rows are not a partition and should not be read as one. The 139 trades divide by
+exit reason into target 43, trail 36, gap 7 — the 86 armed trades — plus stop 46 and time 7.
+Of the 86 armed, **85 finished at or above +6%**, and the single one that did not is the
+worst overnight gap, **+5.84%**. The gap row *overlaps* the at-or-above row: 6 of the 7 gaps
+still finished at or above +6%, because by then the trail had ratcheted above the lock. No
+armed trade turned into a loss.
+
+The +82 first published here came from a bare `pnl >= 6.0` float comparison in a throwaway
+script: a fill exactly at the lock is `entry * 1.06`, whose percentage P&L round-trips to
+5.999999999999997, so three exactly-at-target trades were scored as misses. `performance()`
+in `backtest_double_bottom_portfolio.py` now derives this breakdown with an explicit
+tolerance and the backtest prints it, so it is reproducible from committed code.
 
 Two of these are worth the captain's attention as *recommendations only* — no value was
 changed:

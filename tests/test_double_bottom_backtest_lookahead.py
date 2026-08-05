@@ -20,7 +20,9 @@ Runs offline on synthetic candles: no cached data file, no broker, no credential
 """
 
 import os
+import shutil
 import sys
+import tempfile
 import types
 import unittest
 from datetime import datetime, timedelta
@@ -40,7 +42,23 @@ import config
 import backtest_double_bottom_portfolio as backtest
 from double_bottom_support_monitor import find_double_bottom_setups, atr_percent, sma
 
-BUILD_KWARGS = dict(refresh=True)   # never read or write the shared table pickle
+BUILD_KWARGS = dict(refresh=True)   # never READ the shared table pickle
+
+
+def redirect_table_cache(cls):
+    """
+    Send build_table()'s pickle to a temp dir for the lifetime of a test class.
+
+    refresh=True alone is not enough: it skips the cache read, but build_table() writes
+    its pickle unconditionally, so from the project root these tests would overwrite the
+    real candidate table in data/ (and create data/ if absent) with a one-symbol synthetic
+    one. Nothing under data/ may be created, modified or deleted by this suite — it also
+    holds the cached candle file, which cannot be rebuilt without spending broker quota.
+    """
+    tmp = tempfile.mkdtemp(prefix='dbb_backtest_table_')
+    cls.addClassCleanup(shutil.rmtree, tmp, True)
+    cls.addClassCleanup(setattr, backtest, 'TABLE_CACHE', backtest.TABLE_CACHE)
+    backtest.TABLE_CACHE = os.path.join(tmp, 'table.pkl')
 
 
 LEVEL = 100.0          # the support level the synthetic series is built around
@@ -103,6 +121,7 @@ class LookaheadContractTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        redirect_table_cache(cls)
         cls.candles, cls.level = make_series()
         cls.data = {'SYNTH': cls.candles}
         cls.rows = backtest.build_table(cls.data, **BUILD_KWARGS)
@@ -267,6 +286,76 @@ class TableCacheKeyTest(unittest.TestCase):
                                 "a table built by older detection logic would be reused")
         finally:
             backtest.TABLE_LOGIC_VERSION = original
+
+    def test_the_pickle_is_written_where_TABLE_CACHE_points(self):
+        """
+        What lets a test redirect the write away from the captain's data/ directory.
+
+        build_table() writes its table unconditionally — refresh=True only skips the read —
+        so the module constant is the single knob containing that write.
+        """
+        redirect_table_cache(type(self))
+        backtest.build_table({'SYNTH': make_series()[0]}, **BUILD_KWARGS)
+        self.assertTrue(os.path.exists(backtest.TABLE_CACHE),
+                        "build_table did not write where TABLE_CACHE points")
+
+
+class ArmingBreakdownTest(unittest.TestCase):
+    """
+    performance()'s arming counts are the figures the config.py TARGET_PCT comment quotes.
+
+    The boundary is the point: a trade exiting exactly at the armed lock fills at
+    entry*(1+target/100), whose percentage P&L round-trips to a hair BELOW the target in
+    floating point, so a bare `pnl >= target` scores those trades as misses.
+    """
+
+    TARGET = 6.0
+    CURVE = [('2024-01-01', backtest.START_CAPITAL)]
+
+    @staticmethod
+    def trade(pnl, reason):
+        return {'symbol': 'SYNTH', 'pnl': pnl, 'reason': reason,
+                'date': '2024-01-02', 'days': 3}
+
+    def perf(self, *trades):
+        return backtest.performance(self.CURVE, list(trades), 0, self.TARGET)
+
+    def test_a_fill_exactly_at_the_lock_counts_as_at_or_above_target(self):
+        for entry in (105.70, 250.15):
+            pnl = (entry * (1 + self.TARGET / 100) - entry) / entry * 100
+            with self.subTest(entry=entry, pnl=repr(pnl)):
+                self.assertLess(pnl, self.TARGET,
+                                "fixture no longer exercises the float boundary")
+                self.assertEqual(self.perf(self.trade(pnl, 'target'))['armed_at_target'], 1)
+
+    def test_the_observed_boundary_value_counts(self):
+        """5.999999999999997 is a value the real run actually produced (IDEA)."""
+        self.assertEqual(self.perf(self.trade(5.999999999999997, 'target'))
+                         ['armed_at_target'], 1)
+
+    def test_a_genuine_miss_below_the_lock_is_not_counted(self):
+        """The tolerance is representation error only — it must not absorb a real gap."""
+        perf = self.perf(self.trade(5.838, 'gap'))
+        self.assertEqual((perf['armed'], perf['armed_at_target']), (1, 0))
+        self.assertEqual((perf['gaps'], perf['gaps_at_target'], perf['worst_gap']),
+                         (1, 0, 5.838))
+
+    def test_armed_is_every_exit_that_reached_the_lock(self):
+        perf = self.perf(self.trade(6.5, 'target'), self.trade(7.2, 'trail'),
+                         self.trade(5.838, 'gap'), self.trade(9.0, 'time'),
+                         self.trade(-4.0, 'stop'), self.trade(1.2, 'time'))
+        # the +9.0% time exit armed (an unarmed one cannot finish above the lock);
+        # the +1.2% one did not, and the stop never can.
+        self.assertEqual((perf['armed'], perf['armed_at_target'], perf['armed_losses']),
+                         (4, 3, 0))
+
+    def test_an_armed_trade_that_became_a_loss_is_counted(self):
+        perf = self.perf(self.trade(-0.5, 'gap'), self.trade(6.5, 'target'))
+        self.assertEqual((perf['armed_losses'], perf['worst_gap']), (1, -0.5))
+
+    def test_worst_gap_is_absent_when_nothing_gapped(self):
+        perf = self.perf(self.trade(6.5, 'target'))
+        self.assertEqual((perf['gaps'], perf['worst_gap']), (0, None))
 
 
 if __name__ == '__main__':
