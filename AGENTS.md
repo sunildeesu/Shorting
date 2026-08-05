@@ -84,6 +84,12 @@ This is a **live NSE stock monitoring and alerting system**. Changes to core inf
 **Before changing signal/alert logic:**
 - Understand the full detection → filter → alert pipeline first.
 - Prefer backtesting (`backtest_*.py`) to verify behavior before touching live monitors.
+- Backtest figures quoted in `config.py` comments are not self-verifying. One set was found
+  to be ~3.5x inflated by look-ahead in the backtest's own entry logic — see
+  `DOUBLE_BOTTOM_BACKTEST_AUDIT.md`. A `backtest_*.py` entry decision may use bars strictly
+  before day *i* plus day *i*'s open/high/low, never its close and never a later bar;
+  `tests/test_double_bottom_backtest_lookahead.py` pins that contract for the one that was
+  fixed. If you re-derive numbers, re-derive the config comment in the same change.
 
 **Python environment:** Use `venv/` (Python 3.13). Always run scripts from the project root.
 

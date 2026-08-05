@@ -15,9 +15,15 @@ so a backtest result can never drift away from what the running system does.
 Regime matters for this strategy, so every run prints the market condition of each period
 (median stock return and breadth, measured from the universe itself) beside the strategy
 result. Measured over 2023-07..2026-07 at 4 slots with the locked-trail exit: BULL year
-+101.1% against a +57.1% median stock, FLAT years +43.4% and +40.8% against +1.8% and
-+1.1%. It beats the market in every regime tested, by the widest *relative* margin when
-the market goes nowhere. A sustained DOWNTREND is untested — no such year is in the data.
++34.3% against a +57.1% median stock, FLAT years +19.3% and +10.3% against +1.8% and
++1.1%. Full 3 years +83.2% against a +70.2% median stock. It beats a flat market and
+LOSES to a rising one — the trailing exit caps the winners the market hands out for free.
+
+The entry logic here was de-biased in 2026-08 after audit_double_bottom_backtest.py found
+three look-ahead biases in it (see build_table). The numbers above are the corrected ones.
+The figures this file used to quote — +101.1% / +43.4% / +40.8%, full 3y +295.9% — were
+produced by the biased version and are not reproducible; do not restore them.
+A sustained DOWNTREND is untested — no such year is in the data.
 
 Usage:
     venv/bin/python3 backtest_double_bottom_portfolio.py --years 1 --slots 4
@@ -62,6 +68,13 @@ DP_FEE = 20.0        # flat per-sell charge; hurts small positions disproportion
 # Bars of history handed to the indicators — the live monitor fetches ~70 trading bars,
 # so the backtest sees exactly the same amount when computing SMA/ATR.
 INDICATOR_BARS = 70
+
+# Bumped whenever build_table's detection logic changes. It is part of the table cache key
+# so a table pickled by an earlier (look-ahead) version can never be silently reused —
+# the parameter fingerprint alone does not notice that the CODE changed.
+#   1 = original, look-ahead entry logic
+#   2 = de-biased entry logic (see build_table)
+TABLE_LOGIC_VERSION = 2
 
 
 # ----------------------------------------------------------------------------- data
@@ -132,7 +145,7 @@ def _params_key(data: Dict) -> str:
              config.DOUBLE_BOTTOM_MIN_STRENGTH, config.DOUBLE_BOTTOM_TREND_SMA_PERIOD,
              config.DOUBLE_BOTTOM_ATR_PERIOD, config.DOUBLE_BOTTOM_PROXIMITY_PCT,
              config.DOUBLE_BOTTOM_MAX_BELOW_PCT, config.DOUBLE_BOTTOM_MIN_TOUCHES,
-             config.DOUBLE_BOTTOM_REQUIRE_UPTREND, INDICATOR_BARS,
+             config.DOUBLE_BOTTOM_REQUIRE_UPTREND, INDICATOR_BARS, TABLE_LOGIC_VERSION,
              len(data), len(dates), min(dates), max(dates)]
     return hashlib.md5('|'.join(str(p) for p in parts).encode()).hexdigest()[:12]
 
@@ -142,8 +155,14 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
     One row per (symbol, day) where the live monitor would have flagged a retest.
 
     Mirrors DoubleBottomSupportMonitor._evaluate(): nearest unbroken level within the
-    proximity band, price above its SMA, enough touches. The day's LOW stands in for the
-    live price, since that is the lowest the stock traded that session.
+    proximity band, price above its SMA, enough touches.
+
+    EVERY boundary below is drawn so the decision uses only what the live monitor knows at
+    the moment it fires — intraday, hours before day i's close exists. Three look-ahead
+    biases were found here by audit_double_bottom_backtest.py and are corrected in place;
+    each fix is marked L1/L2/L3 and explained where it sits. Do not widen these windows
+    back to `i + 1` without re-reading those comments: doing so inflated the published
+    3-year return from +83% to +296%.
     """
     key = _params_key(data)
     if os.path.exists(TABLE_CACHE) and not refresh:
@@ -166,7 +185,13 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
         if len(cd) < warmup + 5:
             continue
         for i in range(warmup, len(cd) - 1):
-            window = cd[i - lookback + 1:i + 1]
+            # L2 — levels come from COMPLETED bars only: days [i-lookback, i-1].
+            # The old window was cd[i-lookback+1 : i+1], which let day i's own final low
+            # decide whether a level was still unbroken (find_double_bottom_setups drops a
+            # low that anything after it traded below), how far the middle-peak rally ran,
+            # and how many touches the level had. Live, _compute_levels() runs off history
+            # and day i's low is still being formed, so none of that is knowable.
+            window = cd[i - lookback:i]
             setups = find_double_bottom_setups(
                 window,
                 min_rally_pct=config.DOUBLE_BOTTOM_MIN_RALLY_PCT,
@@ -180,23 +205,49 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
             if not setups:
                 continue
 
-            # Nearest unbroken level the day's price actually retested (live: matches[0]).
-            low, close = cd[i]['low'], cd[i]['close']
-            hit = next((s for s in setups
-                        if abs(low - s['level']) / s['level'] * 100 <= prox
-                        and low >= s['level'] * (1 - max_below / 100)), None)
+            # L3 — a day fires if its PATH crossed the alert band, not if its final low
+            # happened to settle inside it. _evaluate() runs on every quote, so the alert
+            # goes out the first tick price is in the band; that price then carrying on
+            # down through support is a loss the trade already owns. The old trigger
+            # (low >= level*(1-max_below)) deleted exactly those days, erasing the
+            # breakdowns from the sample.
+            #
+            # The band is the live gate verbatim: |price-level| <= prox AND price >=
+            # level*(1-max_below), so the binding lower edge is whichever of the two is
+            # tighter (both default to 1.0%). Entry is the first band price the day's path
+            # must have touched — down through the top if it opened above, up through the
+            # bottom if it opened below, else the open. Setups are most-recent-first, so
+            # the first match is the nearest unbroken level, as live takes matches[0].
+            bar = cd[i]
+            hit = entry = None
+            for s in setups:
+                top = s['level'] * (1 + prox / 100)
+                bottom = s['level'] * (1 - min(prox, max_below) / 100)
+                if bar['low'] > top or bar['high'] < bottom:
+                    continue
+                op = bar['open']
+                entry = top if op > top else (bottom if op < bottom else op)
+                hit = s
+                break
             if not hit:
                 continue
 
-            ind = cd[max(0, i - INDICATOR_BARS + 1):i + 1]
+            # L1 — trend gate on COMPLETED bars, judged at the ENTRY price. The old code
+            # took the SMA over a window ending at day i and compared it to day i's close,
+            # which keeps precisely the dips that recovered by the bell and drops the ones
+            # that kept falling. Live, the SMA is yesterday's and the price on the other
+            # side of the comparison is the retest price, near the day's low.
+            ind = cd[max(0, i - INDICATOR_BARS):i]
             trend_sma = sma(ind, config.DOUBLE_BOTTOM_TREND_SMA_PERIOD)
-            if config.DOUBLE_BOTTOM_REQUIRE_UPTREND and (trend_sma is None or close <= trend_sma):
+            if config.DOUBLE_BOTTOM_REQUIRE_UPTREND and (trend_sma is None or entry <= trend_sma):
                 continue
 
             rows.append({
-                'symbol': symbol, 'i': i, 'date': cd[i]['date'],
+                'symbol': symbol, 'i': i, 'date': bar['date'], 'entry_price': entry,
                 'level': hit['level'], 'strength': hit['strength'],
                 'touches': hit['touches'], 'rally': hit['rally_pct'],
+                # Same completed-bar window: the ATR that sizes the stop cannot use the
+                # range of the day it is sizing.
                 'atr_pct': atr_percent(ind, config.DOUBLE_BOTTOM_ATR_PERIOD),
             })
         if n % 25 == 0:
@@ -251,7 +302,9 @@ def simulate(rows: List[Dict], data: Dict[str, List[Dict]], dates: List[str],
                     missed += 1
                 else:
                     best = max(free, key=lambda r: (r['strength'], r['rally']))
-                    entry = best['level'] * (1 + config.DOUBLE_BOTTOM_PROXIMITY_PCT / 100)
+                    # Fill comes from the row: with the L3 fix the entry is no longer
+                    # always the top of the band (see build_table).
+                    entry = best['entry_price']
                     equity = cash + sum(pp['shares'] * prices[pp['symbol']].get(d, pp['entry'])
                                         for pp in open_pos)
                     alloc = min(equity / slots, cash)
@@ -404,12 +457,15 @@ def main():
               f"worst trade {perf['worst']:.1f}%")
         print(f"{perf['missed']} signal(s) skipped for lack of a free slot — "
               f"more capital or more slots would have taken them.")
-        print("\nRegime note: this buys support and rides a trailing stop, so it beat the "
-              "market in every regime\ntested — by ~40 points in FLAT years (the median "
-              "stock did ~+1%) and by ~44 in the BULL year.\nA sustained DOWNTREND has "
-              "never been tested; no such year exists in the data, and the SMA trend gate "
-              "is\nthe only thing standing between this strategy and one. Compare the "
-              "return column against the\nmarket-median column, not against zero.")
+        print("\nRegime note: compare the return column against the market-median column, "
+              "not against zero.\nOn de-biased entries this strategy beats a FLAT market "
+              "and loses to a rising one: the trailing\nexit takes ~6-8% and stands aside "
+              "while the median stock compounds. A sustained DOWNTREND has\nnever been "
+              "tested; no such year exists in the data, and the SMA trend gate is the only "
+              "thing\nstanding between this strategy and one.")
+        print("Both columns are inflated by survivorship — the universe is TODAY's F&O list "
+              "replayed over\nhistory. See DOUBLE_BOTTOM_BACKTEST_AUDIT.md before trusting "
+              "either number.")
 
 
 if __name__ == '__main__':
