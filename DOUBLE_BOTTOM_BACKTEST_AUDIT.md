@@ -98,6 +98,26 @@ signals: 45 span more than one band, and the level chosen differs from live path
 exactly 1 (UNIONBANK 2025-04-07). No signal is gained or lost by the tie-break; only the
 level and the fill differ.
 
+Two further places a daily bar cannot reproduce the live path. Both follow from the
+corrections; neither is a look-ahead bias.
+
+- **The trend gate is evaluated once per day, at the entry price.** Live, `_evaluate()`
+  runs on every quote against `_compute_levels`'s date-cached SMA, so it can fire on any
+  in-band price — and the band is only ~2% wide, so a 50-day SMA can sit inside it. Where
+  the first band price the path reaches is below the SMA but a later in-band price is above
+  it, live alerts and the backtest drops the day entirely; the same applies on a gap-down
+  open, where the entry is the band bottom. This direction is **conservative**: the
+  backtest *under-counts* signals relative to live, it does not flatter itself. It must not
+  be "corrected" by gating on a more favourable price of the day.
+- **The recency window shifts by one bar.** `find_double_bottom_setups` measures `bars_ago`
+  from the last bar of the window it is handed. Live that bar is today's forming bar, so
+  `MIN/MAX_DAYS_AGO` (5/40) count from day *i*; the corrected window ends at *i-1*, so the
+  effective window becomes 6..41 bars before day *i* — a first bottom exactly 5 days old is
+  excluded and one 41 days old is included. This is an unavoidable consequence of the
+  correct fix, not an oversight: the only way to realign the boundary is to put day *i*
+  back in the window, which is precisely bias L2. Its practical impact is small, because a
+  qualifying level is normally eligible on adjacent days too.
+
 **No configuration value, threshold, or runtime behaviour changed.** Verified mechanically:
 all 323 module-level names in `config.py` compare equal to `HEAD`.
 
@@ -121,10 +141,19 @@ all 323 module-level names in `config.py` compare equal to `HEAD`.
 | max drawdown | 11.6% | **13.3%** |
 | trades | 176 | **139** |
 | win rate | 76.1% | **63.3%** |
-| signals found | 503 | **382** |
+| signals found (candidate-table rows) | 503 | **382** |
 | longest underwater | 123 days | **175 days** |
 
 Roughly three-quarters of the advertised return was look-ahead.
+
+Three signal counts appear in this document and in `config.py`, over three different
+populations. **382** is the de-biased candidate table itself: every (symbol, day)
+`build_table()` flags, before any exit or portfolio constraint. **376** is those same 382
+minus the 6 whose position never closed inside the data window (`find_exit` returns `None`
+because the trade was still open at the end of the data) — the cohort every per-trade
+figure below is measured over. **374** is that identical subtraction applied to the
+*audit's* own table, which is 2 rows smaller for the warmup reason set out immediately
+below.
 
 ### Reconciliation with the audit — they agree
 
@@ -168,6 +197,10 @@ Re-derived on the de-biased table (the fixed-target variant was validated agains
 | armed trades that became losses | 0 | **0** |
 | trail 1.0% / 1.5% / 2.0% | "tied; 1.5% halves gaps" | **+78.4% (12 gaps) / +83.2% (7) / +85.3% (5)** |
 | trend gate on vs off | 70.0% → 81.2% win | **+1.71%/trade, 64.9% win vs +1.09%/trade, 60.4% win** |
+
+The trend-gate row compares 376 gate-on signals — the closed-exit cohort of the 382-row
+table, as above — against 2,167 gate-off signals, the same table rebuilt with the gate
+disabled.
 
 The arming rows are not a partition and should not be read as one. The 139 trades divide by
 exit reason into target 43, trail 36, gap 7 — the 86 armed trades — plus stop 46 and time 7.
@@ -219,6 +252,11 @@ double-bottom signals      374   +1.71%/trade   65.0% win
 random stock, same dates  7279   +1.37%/trade   61.3% win
 edge over random selection: +0.34%/trade  (Welch t = +0.90)
 ```
+
+The `374` there is the audit harness's own gate-on cohort: its candidate table minus the
+same 6 still-open positions, two rows smaller than the backtest's 376 for the warmup
+off-by-one reconciled in section 3. Same measurement, same per-trade edge, tables differing
+by two rows that fall outside the evaluation window.
 
 t ≈ 0.90 is roughly p ≈ 0.37. There is no statistical basis for claiming the double-bottom
 *pattern* is doing the work. What return there is comes overwhelmingly from the exit

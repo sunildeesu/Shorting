@@ -193,6 +193,16 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
             # low that anything after it traded below), how far the middle-peak rally ran,
             # and how many touches the level had. Live, _compute_levels() runs off history
             # and day i's low is still being formed, so none of that is knowable.
+            #
+            # Dropping day i also shifts the recency boundary by one bar, unavoidably:
+            # find_double_bottom_setups measures bars_ago from the LAST bar it is handed,
+            # which live is today's forming bar, so MIN/MAX_DAYS_AGO (5/40) count from day
+            # i. Here the window ends at i-1, making the effective window 6..41 bars before
+            # day i — a first bottom exactly 5 days old is excluded, one 41 days old is
+            # included. The only way to realign that boundary is to put day i back in the
+            # window, which IS bias L2, so this is a consequence of the correct fix and not
+            # an oversight. Impact is small: a qualifying level is normally eligible on
+            # adjacent days too.
             window = cd[i - lookback:i]
             setups = find_double_bottom_setups(
                 window,
@@ -253,6 +263,16 @@ def build_table(data: Dict[str, List[Dict]], refresh: bool) -> List[Dict]:
             # which keeps precisely the dips that recovered by the bell and drops the ones
             # that kept falling. Live, the SMA is yesterday's and the price on the other
             # side of the comparison is the retest price, near the day's low.
+            #
+            # The gate is evaluated ONCE per day, at the entry price. Live, _evaluate()
+            # runs on every quote against _compute_levels()'s date-cached SMA, so it can
+            # fire on any in-band price — and the band is only ~2% wide, so a 50-day SMA
+            # can sit inside it. Where the first band price the path reaches is below the
+            # SMA but a later in-band price is above it, live alerts and this drops the day
+            # entirely; same on a gap-down open, where entry is the band bottom. That
+            # direction is CONSERVATIVE — the backtest UNDER-counts signals relative to
+            # live, it does not flatter itself. It is not a look-ahead bias and must not be
+            # "fixed" by gating on some more favourable price of the day.
             ind = cd[max(0, i - INDICATOR_BARS):i]
             trend_sma = sma(ind, config.DOUBLE_BOTTOM_TREND_SMA_PERIOD)
             if config.DOUBLE_BOTTOM_REQUIRE_UPTREND and (trend_sma is None or entry <= trend_sma):
