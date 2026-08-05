@@ -232,7 +232,7 @@ tail -50 logs/stock_monitor.log
 # - Working directory: /path/to/your/ShortIndicator
 
 # Copy plist to LaunchAgents
-cp com.nse.stockmonitor.plist ~/Library/LaunchAgents/
+cp launchd_agents/com.nse.stockmonitor.plist ~/Library/LaunchAgents/
 
 # Load the launch agent
 launchctl load ~/Library/LaunchAgents/com.nse.stockmonitor.plist

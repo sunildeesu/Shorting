@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Launch Agent for Greeks Difference Tracker -->
+    <!-- Runs daily at 9:14 AM on weekdays (Mon-Fri) -->
+
+    <key>Label</key>
+    <string>com.shortindicator.greekstracker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/start_greeks_tracker.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>14</integer>
+        <!-- Weekday: 1=Monday, 5=Friday (0=Sunday, 6=Saturday) -->
+        <key>Weekday</key>
+        <integer>1</integer>
+    </dict>
+
+    <!-- Additional runs for Tue-Fri -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Monday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>14</integer>
+            <key>Weekday</key>
+            <integer>1</integer>
+        </dict>
+        <!-- Tuesday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>14</integer>
+            <key>Weekday</key>
+            <integer>2</integer>
+        </dict>
+        <!-- Wednesday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>14</integer>
+            <key>Weekday</key>
+            <integer>3</integer>
+        </dict>
+        <!-- Thursday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>14</integer>
+            <key>Weekday</key>
+            <integer>4</integer>
+        </dict>
+        <!-- Friday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>14</integer>
+            <key>Weekday</key>
+            <integer>5</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/greeks_tracker_launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/greeks_tracker_launchd_error.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+</dict>
+</plist>

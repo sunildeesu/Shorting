@@ -36,8 +36,13 @@ logs/*.log
 .DS_Store
 Thumbs.db
 
-# LaunchDaemon and automation configs (contain local paths)
+# LaunchDaemon and automation configs (contain local paths).
+# Still ignored everywhere so plists written by setup_*.sh into the repo root, or
+# dropped in by tooling, do not get committed by accident. The single exception is
+# launchd_agents/, which is the versioned copy of the production schedule
+# (see launchd_agents/README.md).
 *.plist
+!launchd_agents/*.plist
 
 # Shell scripts that may contain sensitive commands
 refresh_token_quick.sh

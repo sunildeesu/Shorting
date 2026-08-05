@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- EFFICIENT 1-Minute Alert Monitor -->
+    <!-- Starts ONCE at 9:29 AM on weekdays -->
+    <!-- Runs continuous loop from 9:30 AM to 3:25 PM -->
+    <!-- Exits after market close -->
+
+    <key>Label</key>
+    <string>com.nse.onemin.monitor.efficient</string>
+
+    <!-- Command to run -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/onemin_monitor_continuous.py</string>
+    </array>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
+
+    <!-- Start at 9:29 AM on weekdays (Mon-Fri) -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <!-- Monday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>29</integer>
+            <key>Weekday</key>
+            <integer>1</integer>
+        </dict>
+        <!-- Tuesday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>29</integer>
+            <key>Weekday</key>
+            <integer>2</integer>
+        </dict>
+        <!-- Wednesday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>29</integer>
+            <key>Weekday</key>
+            <integer>3</integer>
+        </dict>
+        <!-- Thursday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>29</integer>
+            <key>Weekday</key>
+            <integer>4</integer>
+        </dict>
+        <!-- Friday -->
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>29</integer>
+            <key>Weekday</key>
+            <integer>5</integer>
+        </dict>
+    </array>
+
+    <!-- Do NOT restart on exit (process exits after market close) -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Do NOT run on load (only run at scheduled time) -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Standard output log -->
+    <key>StandardOutPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/onemin-stdout.log</string>
+
+    <!-- Standard error log -->
+    <key>StandardErrorPath</key>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/onemin-stderr.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process type (background) -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Nice value (lower priority) -->
+    <key>Nice</key>
+    <integer>1</integer>
+
+</dict>
+</plist>

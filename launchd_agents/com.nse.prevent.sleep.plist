@@ -11,14 +11,14 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/start_caffeinate_if_trading_day.sh</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/start_caffeinate_if_trading_day.sh</string>
     </array>
 
     <!-- Working directory -->
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
 
-    <!-- Schedule: Run at 9:00 AM on weekdays (wrapper will skip if holiday) -->
+    <!-- Schedule: Run at 7:50 AM on weekdays (wrapper will skip if holiday) -->
     <key>StartCalendarInterval</key>
     <array>
         <!-- Monday -->
@@ -26,51 +26,51 @@
             <key>Weekday</key>
             <integer>1</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>7</integer>
             <key>Minute</key>
-            <integer>0</integer>
+            <integer>50</integer>
         </dict>
         <!-- Tuesday -->
         <dict>
             <key>Weekday</key>
             <integer>2</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>7</integer>
             <key>Minute</key>
-            <integer>0</integer>
+            <integer>50</integer>
         </dict>
         <!-- Wednesday -->
         <dict>
             <key>Weekday</key>
             <integer>3</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>7</integer>
             <key>Minute</key>
-            <integer>0</integer>
+            <integer>50</integer>
         </dict>
         <!-- Thursday -->
         <dict>
             <key>Weekday</key>
             <integer>4</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>7</integer>
             <key>Minute</key>
-            <integer>0</integer>
+            <integer>50</integer>
         </dict>
         <!-- Friday -->
         <dict>
             <key>Weekday</key>
             <integer>5</integer>
             <key>Hour</key>
-            <integer>9</integer>
+            <integer>7</integer>
             <key>Minute</key>
-            <integer>0</integer>
+            <integer>50</integer>
         </dict>
     </array>
 
-    <!-- Keep running until 4:00 PM (use TimeOut to kill after 7 hours = 25200 seconds) -->
+    <!-- Keep running until 6:30 PM (7:50 AM to 6:30 PM = 10h40min = 38400 seconds) -->
     <key>TimeOut</key>
-    <integer>25200</integer>
+    <integer>38400</integer>
 
     <!-- Keep process alive (restart if crashes) - only during market hours -->
     <key>KeepAlive</key>
@@ -81,11 +81,11 @@
 
     <!-- Standard output log -->
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/caffeinate-stdout.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/caffeinate-stdout.log</string>
 
     <!-- Standard error log -->
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/caffeinate-stderr.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/caffeinate-stderr.log</string>
 
     <!-- Process type (background, low priority) -->
     <key>ProcessType</key>

@@ -7,12 +7,12 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/check_token.py</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/check_token.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -23,10 +23,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/token_reminder.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/token_reminder.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/token_reminder_error.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/token_reminder_error.log</string>
 
     <key>RunAtLoad</key>
     <false/>

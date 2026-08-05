@@ -4,18 +4,19 @@
 <dict>
     <!-- Job Label -->
     <key>Label</key>
-    <string>com.nse.stockmonitor</string>
+    <string>com.nse.intraday.candles</string>
 
-    <!-- Program to run -->
+    <!-- Program to run: shared 5-min candle collector into the central DB -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/main.py</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/venv/bin/python3</string>
+        <string>/Users/sunilkumar/myProjects/ShortIndicator/central_data_collector.py</string>
+        <string>--intraday</string>
     </array>
 
     <!-- Working Directory -->
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator</string>
 
     <!-- Run every 5 minutes (300 seconds) -->
     <key>StartInterval</key>
@@ -23,10 +24,10 @@
 
     <!-- Standard Output/Error Logs -->
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/launchd-stdout.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/intraday-candles-stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/launchd-stderr.log</string>
+    <string>/Users/sunilkumar/myProjects/ShortIndicator/logs/intraday-candles-stderr.log</string>
 
     <!-- Run on load (when launchd starts) -->
     <key>RunAtLoad</key>
@@ -36,7 +37,7 @@
     <key>KeepAlive</key>
     <false/>
 
-    <!-- Environment Variables (if .env is not working) -->
+    <!-- Environment Variables -->
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -49,6 +50,6 @@
 
     <!-- Throttle interval (minimum time between restarts in seconds) -->
     <key>ThrottleInterval</key>
-    <integer>60</integer>
+    <integer>300</integer>
 </dict>
 </plist>
