@@ -123,6 +123,23 @@ cannot start without the NewsBase repo present and working.
 no exception, so writes silently vanish. Payloads must be a `List[Dict]` — `set_data` copies each
 element.
 
+**NFO option symbols:** never build a trading symbol with a format string. NSE uses one
+convention for weekly expiries (`NIFTY2681125700CE`, 2026-08-11) and another for monthly
+(`NIFTY26AUG25350CE`, 2026-08-25), plus month letters O/N/D and holiday-shifted dates.
+Formatting every symbol the weekly way is what recorded every monthly position at premium ₹0
+(`data/nifty_options/position_state.json`, frozen 2026-07-20). Resolve against
+`kite.instruments("NFO")` instead — `nifty_option_analyzer._resolve_option_symbol` is the
+worked example, pinned by `tests/test_nifty_option_analyzer_measurement.py`. Conventions are
+verifiable without a broker: NSE's F&O bhavcopy is public and unauthenticated
+(`https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip`,
+`FinInstrmNm` holds the trading symbol).
+
+**A failed lookup must never become a number.** Kite's `quote()` returns neither `greeks` nor
+`implied_volatility`, and a missing quote has no `last_price`. Defaulting either — premium 0,
+or the old hardcoded 20% IV — records a fabricated measurement as if it were observed. Refuse
+(`OptionDataError` in `nifty_option_analyzer.py`) so the monitor's `if 'error' in result`
+branch drops the cycle. Greeks come from inverting Black-Scholes on the observed premium.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
