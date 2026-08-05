@@ -2,8 +2,11 @@
 
 **Date:** 2026-08-05
 **Scope:** `backtest_double_bottom_portfolio.py` (entry logic), `config.py` (comments only)
-**Data:** cached `data/double_bottom_backtest_candles.json` — 195 F&O stocks,
-2023-07-24 .. 2026-07-23. No broker calls were made; no configuration value was changed.
+**Data:** cached `data/double_bottom_backtest_candles.json` — 195 F&O stocks, spanning
+**2023-02-24 .. 2026-07-23**. The portfolio **evaluation window** is the last three years
+of that span, **2023-07-24 .. 2026-07-23**, which `main()` derives as `end - years*365`;
+the five earlier months are warmup padding for the 50-bar lookback and the 70-bar indicator
+windows. No broker calls were made; no configuration value was changed.
 
 ---
 
@@ -148,12 +151,18 @@ Roughly three-quarters of the advertised return was look-ahead.
 
 Three signal counts appear in this document and in `config.py`, over three different
 populations. **382** is the de-biased candidate table itself: every (symbol, day)
-`build_table()` flags, before any exit or portfolio constraint. **376** is those same 382
-minus the 6 whose position never closed inside the data window (`find_exit` returns `None`
-because the trade was still open at the end of the data) — the cohort every per-trade
-figure below is measured over. **374** is that identical subtraction applied to the
-*audit's* own table, which is 2 rows smaller for the warmup reason set out immediately
-below.
+`build_table()` flags across the whole data span, before any exit, date or portfolio
+constraint. **376** is those same 382 minus the 6 whose position never closed inside the
+data (`find_exit` returns `None` because the trade was still open at the end of it) — the
+cohort every per-trade figure below is measured over. **374** is that identical subtraction
+applied to the *audit's* own table, which is 2 rows smaller for the warmup reason set out
+immediately below.
+
+All three are counted over the **whole data span**, not the evaluation window: the
+per-trade comparisons (the trend-gate table below, and the audit's PART 3 and PART 4) apply
+no date filter, whereas the portfolio simulation restricts rows to `lo <= date < hi` in
+`run_period()` and in the audit's `run()`. The two populations are not interchangeable, and
+which one a figure belongs to is stated wherever both appear.
 
 ### Reconciliation with the audit — they agree
 
@@ -170,10 +179,16 @@ tables through the two portfolio engines isolates it completely:
 
 The tables are interchangeable. Field-by-field, the 380 rows they share are **identical** —
 zero mismatches across `date`, `entry_price`, `level`, `strength`, `touches`, `rally`,
-`atr_pct`. The corrected table has 2 extra rows, both at bar index 50, because the audit
-uses a warmup of `max(...) + 1` where the backtest uses `max(...)`; both rows fall outside
-the 3-year evaluation window and change nothing (restricting to `i >= 51` reproduces the
-audit exactly).
+`atr_pct`. The corrected table has 2 extra rows — ADANIGREEN and BANKINDIA, both at bar
+index 50, both dated 2023-05-15 — because the audit uses a warmup of `max(...) + 1` where
+the backtest uses `max(...)`.
+
+Those 2 rows sit in each population differently, which is why two true statements about
+them can look contradictory. In the **portfolio** result they change nothing: 2023-05-15 is
+in the warmup padding, before the evaluation window opens on 2023-07-24, so `run_period()`
+filters them out (restricting to `i >= 51` reproduces the audit exactly). In the
+**per-trade** cohorts they are present and both positions did close, which is precisely the
+376-vs-374 difference.
 
 The residual return difference is a **pre-existing, deliberate** difference between the two
 portfolio engines, documented in the audit's own docstring: `backtest.simulate()` sizes at
@@ -198,9 +213,11 @@ Re-derived on the de-biased table (the fixed-target variant was validated agains
 | trail 1.0% / 1.5% / 2.0% | "tied; 1.5% halves gaps" | **+78.4% (12 gaps) / +83.2% (7) / +85.3% (5)** |
 | trend gate on vs off | 70.0% → 81.2% win | **+1.71%/trade, 64.9% win vs +1.09%/trade, 60.4% win** |
 
-The trend-gate row compares 376 gate-on signals — the closed-exit cohort of the 382-row
-table, as above — against 2,167 gate-off signals, the same table rebuilt with the gate
-disabled.
+The trend-gate row is like-for-like: **376 of the 382-row** gate-on table against **2,167
+of the 2,213-row** gate-off table, the same build rerun with the gate disabled. Both arms
+count only signals whose position closed inside the data, and both drop the rest for the
+same reason — a per-trade average and a win rate do not exist for a position that never
+closed.
 
 The arming rows are not a partition and should not be read as one. The 139 trades divide by
 exit reason into target 43, trail 36, gap 7 — the 86 armed trades — plus stop 46 and time 7.
@@ -254,9 +271,10 @@ edge over random selection: +0.34%/trade  (Welch t = +0.90)
 ```
 
 The `374` there is the audit harness's own gate-on cohort: its candidate table minus the
-same 6 still-open positions, two rows smaller than the backtest's 376 for the warmup
-off-by-one reconciled in section 3. Same measurement, same per-trade edge, tables differing
-by two rows that fall outside the evaluation window.
+same 6 still-open positions, two rows smaller than the backtest's 376 because the audit's
+larger warmup never generates the two 2023-05-15 rows reconciled in section 3. Like the
+backtest's 376, it is counted over the whole data span with no date filter. Same
+measurement, same per-trade edge, on tables that differ by those two rows.
 
 t ≈ 0.90 is roughly p ≈ 0.37. There is no statistical basis for claiming the double-bottom
 *pattern* is doing the work. What return there is comes overwhelmingly from the exit

@@ -547,10 +547,11 @@ DOUBLE_BOTTOM_MIN_TOUCHES = int(os.getenv('DOUBLE_BOTTOM_MIN_TOUCHES', '3'))
 # Only buy support inside an uptrend: live price must be above its own SMA. Still the
 # strongest single filter, but much smaller than once believed: the "70.0% -> 81.2% win
 # rate" claim came from a backtest whose trend gate compared the day's own CLOSE against
-# an SMA that included that day (bias L1). Re-measured on de-biased signals over 3y/195
-# stocks: gate ON  +1.71%/trade, 64.9% win (376 signals — the 382-row de-biased candidate
-# table minus the 6 whose position was still open at the end of the data); gate OFF
-# +1.09%/trade, 60.4% win (2167 signals). Real, worth keeping, not decisive.
+# an SMA that included that day (bias L1). Re-measured on the de-biased 195-stock candidate
+# tables (no date filter, so slightly wider than the 3y portfolio window), both arms
+# counting only positions that closed inside the data: gate ON  +1.71%/trade, 64.9% win
+# (376 of 382 signals); gate OFF +1.09%/trade, 60.4% win (2167 of 2213). Real, worth
+# keeping, not decisive.
 DOUBLE_BOTTOM_REQUIRE_UPTREND = os.getenv('DOUBLE_BOTTOM_REQUIRE_UPTREND', 'true').lower() == 'true'
 DOUBLE_BOTTOM_TREND_SMA_PERIOD = int(os.getenv('DOUBLE_BOTTOM_TREND_SMA_PERIOD', '50'))
 
