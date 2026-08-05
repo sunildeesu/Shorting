@@ -32,8 +32,38 @@ from central_db_reader import fetch_nifty_vix, report_cycle_complete
 logger = logging.getLogger(__name__)
 
 
+class OptionDataError(Exception):
+    """
+    Base error for "this contract cannot be measured honestly".
+
+    Raised instead of returning a placeholder. A contract that cannot be
+    resolved, quoted or priced used to come back as premium 0 with zero
+    Greeks, and the monitor recorded that as a real ENTERED position - see
+    data/nifty_options/position_state.json, frozen since 2026-07-20 with
+    three layers at premium 0. Anything derived from a failed lookup must
+    surface as an error, never as a number.
+    """
+
+
+class OptionQuoteUnavailable(OptionDataError):
+    """The contract is not listed, or no usable quote came back for it."""
+
+
+class GreeksUnavailable(OptionDataError):
+    """Greeks cannot be derived from the observed premium."""
+
+
 class NiftyOptionAnalyzer:
     """Analyzes NIFTY options for selling opportunities"""
+
+    # Risk-free rate used by every Black-Scholes calculation here
+    # (approximate India 10Y bond yield)
+    RISK_FREE_RATE = 0.07
+
+    # Bracket searched when inverting Black-Scholes on an observed premium.
+    # A premium outside the prices these produce is reported as unmeasurable.
+    IV_SEARCH_MIN = 0.01   # 1%
+    IV_SEARCH_MAX = 3.00   # 300%
 
     def __init__(self, kite: KiteConnect):
         """
@@ -1111,6 +1141,13 @@ class NiftyOptionAnalyzer:
                 }
             }
 
+        except OptionDataError as e:
+            # A contract we cannot price or measure must not be scored. Swallowing
+            # this into a per-expiry error dict would leave _generate_recommendation
+            # scoring an empty analysis; let it fail the whole run instead, so the
+            # monitor sees 'error' and records nothing.
+            logger.error(f"Cannot measure options for expiry {expiry_date}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error analyzing expiry {expiry_date}: {e}")
             return {
@@ -1140,16 +1177,14 @@ class NiftyOptionAnalyzer:
             Dict with keys: 'straddle_call', 'straddle_put', 'strangle_call', 'strangle_put'
         """
         try:
-            # Build all 4 option symbols for batch call
-            year_short = str(expiry.year)[-2:]
-            month = str(expiry.month)  # No leading zero
-            day = str(expiry.day).zfill(2)  # Day needs leading zero
-
+            # Resolve all 4 trading symbols against the exchange's own instrument list
+            # (weekly and monthly expiries use different conventions - see
+            # _resolve_option_symbol)
             symbols = {
-                'straddle_call': f"NFO:NIFTY{year_short}{month}{day}{straddle_strikes['call']}CE",
-                'straddle_put': f"NFO:NIFTY{year_short}{month}{day}{straddle_strikes['put']}PE",
-                'strangle_call': f"NFO:NIFTY{year_short}{month}{day}{strangle_strikes['call']}CE",
-                'strangle_put': f"NFO:NIFTY{year_short}{month}{day}{strangle_strikes['put']}PE"
+                'straddle_call': self._resolve_option_symbol('CE', expiry, straddle_strikes['call']),
+                'straddle_put': self._resolve_option_symbol('PE', expiry, straddle_strikes['put']),
+                'strangle_call': self._resolve_option_symbol('CE', expiry, strangle_strikes['call']),
+                'strangle_put': self._resolve_option_symbol('PE', expiry, strangle_strikes['put'])
             }
 
             # Single batch API call for all 4 options (Tier 2 optimization)
@@ -1166,6 +1201,8 @@ class NiftyOptionAnalyzer:
                          strangle_strikes['call'] if 'strangle_call' in key else \
                          strangle_strikes['put']
 
+                last_price = self._require_premium(symbol, option_data)
+
                 # Extract Greeks if available
                 greeks = {}
                 if 'greeks' in option_data and option_data['greeks']:
@@ -1176,20 +1213,21 @@ class NiftyOptionAnalyzer:
                         'vega': option_data['greeks'].get('vega', 0)
                     }
                 else:
-                    # Fallback: Calculate approximate Greeks using Black-Scholes
-                    logger.warning(f"Greeks not available in API for {symbol}, using approximation")
+                    # Kite's quote() carries no Greeks, so derive them from the
+                    # premium this contract actually traded at.
                     spot_for_greeks = nifty_spot if nifty_spot else strike
-                    greeks = self._approximate_greeks(
+                    greeks = self._greeks_from_premium(
                         option_type=option_type,
                         spot=spot_for_greeks,
                         strike=strike,
                         expiry=expiry,
-                        iv=option_data.get('implied_volatility', 20) / 100
+                        premium=last_price,
+                        symbol=symbol
                     )
 
                 results[key] = {
                     'symbol': symbol,
-                    'last_price': option_data.get('last_price', 0),
+                    'last_price': last_price,
                     'greeks': greeks,
                     'oi': option_data.get('oi', 0),
                     'volume': option_data.get('volume', 0)
@@ -1198,6 +1236,10 @@ class NiftyOptionAnalyzer:
             logger.info(f"Successfully fetched all 4 options via batch call")
             return results
 
+        except OptionDataError:
+            # Not a transport failure - retrying one contract at a time would
+            # return the same unpriceable contract. Let it surface.
+            raise
         except Exception as e:
             logger.error(f"Error in batch options fetch: {e}. Falling back to individual calls...")
             # Fallback to individual calls if batch fails
@@ -1226,18 +1268,18 @@ class NiftyOptionAnalyzer:
 
         Returns:
             Dict with option data
+
+        Raises:
+            OptionDataError: the contract could not be resolved, quoted or priced.
         """
         try:
-            # Build symbol using date format: NIFTY2610626150CE
-            # Format: NIFTY + YYMMDD + STRIKE + CE/PE (month and day without leading zeros)
-            year_short = str(expiry.year)[-2:]
-            month = str(expiry.month)  # No leading zero
-            day = str(expiry.day).zfill(2)  # Day needs leading zero
-            symbol = f"NFO:NIFTY{year_short}{month}{day}{strike}{option_type}"
+            symbol = self._resolve_option_symbol(option_type, expiry, strike)
 
             # Fetch quote
             quote = self.kite.quote([symbol])
             option_data = quote.get(symbol, {})
+
+            last_price = self._require_premium(symbol, option_data)
 
             # Extract Greeks if available
             greeks = {}
@@ -1250,35 +1292,232 @@ class NiftyOptionAnalyzer:
                     'vega': option_data['greeks'].get('vega', 0)
                 }
             else:
-                # Fallback: Calculate approximate Greeks using Black-Scholes
-                logger.warning(f"Greeks not available in API for {symbol}, using approximation")
+                # Kite's quote() carries no Greeks, so derive them from the
+                # premium this contract actually traded at.
                 # Use NIFTY spot price if provided, otherwise use strike as fallback
                 spot_for_greeks = nifty_spot if nifty_spot else strike
-                greeks = self._approximate_greeks(
+                greeks = self._greeks_from_premium(
                     option_type=option_type,
                     spot=spot_for_greeks,  # NIFTY spot price (underlying)
                     strike=strike,
                     expiry=expiry,
-                    iv=option_data.get('implied_volatility', 20) / 100  # Convert to decimal
+                    premium=last_price,
+                    symbol=symbol
                 )
 
             return {
                 'symbol': symbol,
-                'last_price': option_data.get('last_price', 0),
+                'last_price': last_price,
                 'greeks': greeks,
                 'oi': option_data.get('oi', 0),
                 'volume': option_data.get('volume', 0)
             }
 
+        except OptionDataError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching option data for {option_type} {strike}: {e}")
-            return {
-                'symbol': f"{option_type}_{strike}",
-                'last_price': 0,
-                'greeks': {'delta': 0, 'theta': 0, 'gamma': 0, 'vega': 0},
-                'oi': 0,
-                'volume': 0
-            }
+            raise OptionQuoteUnavailable(
+                f"Quote failed for NIFTY {option_type} {strike} expiry "
+                f"{expiry.date() if isinstance(expiry, datetime) else expiry}: {e}"
+            ) from e
+
+    def _resolve_option_symbol(
+        self,
+        option_type: str,
+        expiry: datetime,
+        strike: int
+    ) -> str:
+        """
+        Resolve the NFO trading symbol for one NIFTY option contract.
+
+        NSE uses two different conventions, which no single format string covers:
+            weekly   NIFTY{YY}{M}{DD}{strike}{CE|PE}   e.g. NIFTY2681125700CE (2026-08-11)
+            monthly  NIFTY{YY}{MMM}{strike}{CE|PE}     e.g. NIFTY26AUG25350CE (2026-08-25)
+        (both read off the NSE F&O bhavcopy for 2026-08-05). This code used to
+        build every symbol in the weekly form, so monthly contracts resolved to a
+        symbol that does not exist - NIFTY2672824250CE instead of NIFTY26JUL24250CE
+        on 2026-07-20 - the quote came back empty and the position was recorded at
+        premium 0.
+
+        Rather than encode the conventions (they also carry month letters O/N/D and
+        holiday-shifted expiry dates), look the contract up in the NFO instrument
+        dump, which is the exchange's own list of trading symbols and is already
+        fetched and cached for the expiry list.
+
+        Returns:
+            Symbol prefixed for the quote API, e.g. "NFO:NIFTY26AUG25350CE"
+
+        Raises:
+            OptionQuoteUnavailable: no such contract is listed.
+        """
+        expiry_date = expiry.date() if isinstance(expiry, datetime) else expiry
+
+        for instrument in self._get_nfo_instruments():
+            if instrument.get('name') != 'NIFTY':
+                continue
+            if instrument.get('instrument_type') != option_type:
+                continue
+
+            inst_expiry = instrument.get('expiry')
+            if isinstance(inst_expiry, datetime):
+                inst_expiry = inst_expiry.date()
+            if inst_expiry != expiry_date:
+                continue
+
+            if int(instrument.get('strike', 0)) != int(strike):
+                continue
+
+            return f"NFO:{instrument['tradingsymbol']}"
+
+        raise OptionQuoteUnavailable(
+            f"No listed NIFTY {option_type} contract at strike {strike} "
+            f"for expiry {expiry_date}"
+        )
+
+    @staticmethod
+    def _require_premium(symbol: str, option_data: Dict) -> float:
+        """
+        Return the traded premium, or refuse if the quote did not carry one.
+
+        A NIFTY option that the analyzer is willing to sell cannot be worth 0.
+        Returning a silent zero here is what turned a failed lookup into an
+        ENTERED position at premium 0.
+
+        Raises:
+            OptionQuoteUnavailable: no usable last price in the quote.
+        """
+        last_price = option_data.get('last_price', 0) if option_data else 0
+
+        if not last_price or last_price <= 0:
+            raise OptionQuoteUnavailable(
+                f"No usable quote for {symbol} (last_price={last_price!r}) - "
+                f"refusing to treat it as a tradeable premium"
+            )
+
+        return float(last_price)
+
+    def _greeks_from_premium(
+        self,
+        option_type: str,
+        spot: float,
+        strike: int,
+        expiry: datetime,
+        premium: float,
+        symbol: str = ''
+    ) -> Dict:
+        """
+        Greeks for one contract, at the volatility implied by its own premium.
+
+        Kite's quote() returns neither `greeks` nor `implied_volatility`, so the
+        fallback branch always ran and always used the literal default of 20% IV.
+        Real NIFTY ATM IV was 11.13% on 2026-08-05; gamma and theta roughly double
+        between 11% and 20%, so Theta_Score / Gamma_Score / Vega_Score in the log
+        were scored off a constant rather than off the market. Invert Black-Scholes
+        on the observed premium instead - the premium is already in hand.
+
+        Returns:
+            The Greeks, plus `implied_vol` (decimal) so the measurement that
+            produced them is visible alongside them.
+
+        Raises:
+            GreeksUnavailable: the premium is not consistent with any volatility
+                in the search range, so no Greek can be computed honestly. Never
+                substitute a default - a constant masquerading as a measurement is
+                the defect being fixed here.
+        """
+        iv = self._implied_volatility(option_type, spot, strike, expiry, premium)
+
+        if iv is None:
+            raise GreeksUnavailable(
+                f"Cannot recover implied volatility for {symbol or f'{option_type} {strike}'} "
+                f"from premium {premium} (spot={spot}, expiry="
+                f"{expiry.date() if isinstance(expiry, datetime) else expiry}) - "
+                f"Greeks unavailable"
+            )
+
+        greeks = self._approximate_greeks(
+            option_type=option_type,
+            spot=spot,
+            strike=strike,
+            expiry=expiry,
+            iv=iv
+        )
+        greeks['implied_vol'] = round(iv, 4)
+        return greeks
+
+    def _implied_volatility(
+        self,
+        option_type: str,
+        spot: float,
+        strike: int,
+        expiry: datetime,
+        premium: float
+    ) -> Optional[float]:
+        """
+        Recover implied volatility from an observed premium, by bisection.
+
+        Bisection rather than Newton-Raphson because the Black-Scholes price is
+        monotone in volatility: a bracket that does not contain the observed
+        premium is a definitive "this price is not consistent with the model",
+        which is exactly the failure that must be reported rather than papered
+        over. (`black_scholes_greeks.BlackScholesGreeks` already inverts BS, but
+        its solver returns a hardcoded 0.20 when Newton-Raphson fails to converge
+        - the same silent-constant defect - and it is shared with
+        greeks_difference_tracker.py and the greeks backtests, so it is left
+        alone here.)
+
+        Returns:
+            Implied volatility as a decimal, or None if the premium falls outside
+            [price(IV_SEARCH_MIN), price(IV_SEARCH_MAX)] - e.g. a stale quote
+            below intrinsic value - or the contract has effectively expired.
+        """
+        if premium <= 0 or spot <= 0 or strike <= 0:
+            return None
+
+        t = self._time_to_expiry(expiry)
+
+        low, high = self.IV_SEARCH_MIN, self.IV_SEARCH_MAX
+        try:
+            price_low = self._bs_price(option_type, spot, strike, t, low)
+            price_high = self._bs_price(option_type, spot, strike, t, high)
+        except (ValueError, ZeroDivisionError, OverflowError):
+            return None
+
+        if not price_low <= premium <= price_high:
+            return None
+
+        while high - low > 1e-6:
+            mid = (low + high) / 2
+            if self._bs_price(option_type, spot, strike, t, mid) < premium:
+                low = mid
+            else:
+                high = mid
+
+        return (low + high) / 2
+
+    def _bs_price(
+        self,
+        option_type: str,
+        spot: float,
+        strike: int,
+        t: float,
+        iv: float
+    ) -> float:
+        """Black-Scholes price, on the same rate and conventions as _approximate_greeks"""
+        d1 = (math.log(spot / strike) + (self.RISK_FREE_RATE + 0.5 * iv ** 2) * t) / (iv * math.sqrt(t))
+        d2 = d1 - iv * math.sqrt(t)
+        discounted_strike = strike * math.exp(-self.RISK_FREE_RATE * t)
+
+        if option_type == 'CE':
+            return spot * self._norm_cdf(d1) - discounted_strike * self._norm_cdf(d2)
+        return discounted_strike * self._norm_cdf(-d2) - spot * self._norm_cdf(-d1)
+
+    @staticmethod
+    def _time_to_expiry(expiry: datetime) -> float:
+        """Time to expiry in years, floored so same-day expiries stay computable"""
+        days_to_expiry = (expiry.date() - datetime.now().date()).days
+        return max(days_to_expiry / 365.0, 0.001)  # Avoid division by zero
 
     def _approximate_greeks(
         self,
@@ -1289,17 +1528,17 @@ class NiftyOptionAnalyzer:
         iv: float
     ) -> Dict:
         """
-        Approximate Greeks using simplified Black-Scholes
+        Greeks from Black-Scholes at a given implied volatility
 
-        This is a fallback if Greeks are not available from API
+        Used when Greeks are not available from the API. Callers must pass an IV
+        measured from the market (see _greeks_from_premium), not a default.
         """
         try:
             # Time to expiry in years
-            days_to_expiry = (expiry.date() - datetime.now().date()).days
-            t = max(days_to_expiry / 365.0, 0.001)  # Avoid division by zero
+            t = self._time_to_expiry(expiry)
 
             # Risk-free rate (approximate India 10Y bond yield)
-            r = 0.07  # 7%
+            r = self.RISK_FREE_RATE
 
             # Calculate d1 and d2
             d1 = (math.log(spot / strike) + (r + 0.5 * iv ** 2) * t) / (iv * math.sqrt(t))
@@ -1336,8 +1575,10 @@ class NiftyOptionAnalyzer:
             }
 
         except Exception as e:
-            logger.error(f"Error approximating Greeks: {e}")
-            return {'delta': 0, 'theta': 0, 'gamma': 0, 'vega': 0}
+            logger.error(f"Error calculating Greeks: {e}")
+            raise GreeksUnavailable(
+                f"Black-Scholes failed for {option_type} {strike} at IV {iv}: {e}"
+            ) from e
 
     @staticmethod
     def _norm_cdf(x: float) -> float:
