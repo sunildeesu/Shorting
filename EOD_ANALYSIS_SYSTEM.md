@@ -1,5 +1,18 @@
 # End-of-Day Stock Analysis System
 
+> **SCHEDULING IS PAUSED ON PURPOSE (2026-08-05) — do not follow "Step 2: Set Up Cron Job"
+> below.** The captain stopped the EOD analyzer to improve it and will re-enable it
+> themselves. The launchd job `com.stockmonitor.eod` is installed-but-unloaded by choice,
+> and the crontab entry described below is intentionally absent (`crontab -l` reports *no
+> crontab for sunilkumar*). `setup_eod_cron.sh` now refuses to run for the same reason.
+>
+> This is **paused, not retired** — it is coming back, which is why the plist stays in
+> `launchd_agents/` and this document stays here. See `launchd_agents/README.md` →
+> "Paused jobs — stopped on purpose, will return".
+>
+> Everything else here still applies, and running the analyzer **by hand** is fine
+> (`./start_eod_analyzer.sh`, `./run_eod_for_date.py`). Only the schedule is off.
+
 ## Overview
 
 Automated daily analysis system that detects volume spikes and chart patterns for F&O stocks after market close (4:00 PM). Generates Excel reports organized by month/year with actionable insights.
@@ -195,7 +208,11 @@ cd /Users/sunildeesu/myProjects/ShortIndicator
 ./venv/bin/pip install openpyxl
 ```
 
-### Step 2: Set Up Cron Job
+### Step 2: Set Up Cron Job — ⛔ PAUSED, DO NOT DO THIS
+
+**Skip this step.** Scheduling the EOD analyzer is paused on purpose and is the captain's
+decision alone — see the banner at the top of this file. The steps are kept for when it is
+re-enabled. Go to Step 3, which runs it by hand and is fine.
 
 **Edit crontab:**
 ```bash
