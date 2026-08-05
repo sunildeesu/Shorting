@@ -33,7 +33,7 @@ The launcher script handles:
 The tracker runs continuously:
 - **9:15 AM**: Captures baseline Greeks + fetches India VIX
 - **9:30 AM - 3:30 PM**: Updates every 15 minutes (25 updates total)
-- **After 3:30 PM**: Automatically stops
+- **After 3:30 PM**: Idles until the process is stopped (it does not exit on its own)
 
 ---
 
@@ -48,7 +48,7 @@ The tracker runs continuously:
 | 10:00 AM | Update                                          |
 | ...      | ... (every 15 minutes)                          |
 | 3:30 PM  | Final update                                    |
-| 3:31 PM  | Tracker stops automatically                     |
+| 3:31 PM  | Tracker idles; runs until the process is stopped |
 
 ---
 

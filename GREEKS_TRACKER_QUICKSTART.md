@@ -168,7 +168,7 @@ GREEKS_DIFF_ENABLE_TELEGRAM=true
 
 ```
 ShortIndicator/
-├── greeks_difference_tracker.py   # Main module (809 lines)
+├── greeks_difference_tracker.py   # Main module
 ├── config.py                       # Updated with new config
 ├── .env                           # Dropbox token added
 ├── test_dropbox.py                # Test script

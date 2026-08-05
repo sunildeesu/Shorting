@@ -15,6 +15,25 @@ The Greeks Difference Tracker monitors intraday changes in option Greeks (Delta,
 3. **9:30 AM (first update)**: Sends ONE Telegram message with cloud link
 4. **Result**: 25 rows of data by end of day, accessible from any device
 
+## Daily State and Restarts
+
+The day's state - the 9:15 AM baseline, every history row written so far, and whether the
+Telegram report has been sent - is persisted after each update under a date-stamped key
+(`GREEKS_BASELINE_CACHE_KEY` in `config.py`) in the shared `greeks_diff` cache, so it
+survives the process ending:
+
+- A separate `--update` process (cron usage below) reuses the baseline captured earlier by
+  `--capture-baseline`.
+- A tracker restarted mid-day resumes the same day: the Excel report keeps the earlier rows
+  instead of restarting from the time of the restart, and the Telegram report is not sent a
+  second time.
+- State from a previous trading day is treated as absent, so a process left running across
+  midnight never measures drift against yesterday's baseline.
+
+The baseline itself is only captured by the 9:15 AM job. If the **first** process of the day
+starts after 9:15 AM there is nothing to restore and nothing is captured until the next day -
+start the tracker before 9:15 AM.
+
 ## Prerequisites
 
 ### 1. Python Dependencies
