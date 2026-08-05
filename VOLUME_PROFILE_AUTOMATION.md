@@ -1,5 +1,18 @@
 # Volume Profile Analyzer - Automation Setup
 
+> **HISTORICAL — the launchd job described here was retired on 2026-08-05.**
+> `com.shortindicator.volumeprofile` duplicated `com.nse.volume.profile.325pm` (same
+> analyzer, same `3:25PM` execution time, same 15:25 slot); the duplication was confirmed
+> from the production log, where the analyzer's startup banner appeared twice at
+> `15:25:01`. The job was unloaded and its plist moved to
+> `~/Library/LaunchAgents.disabled-2026-08-05/`, and it is no longer in
+> `launchd_agents/`. **Do not follow the `launchctl load` steps below to reinstate it** —
+> see `launchd_agents/README.md` → "Retired jobs".
+>
+> `start_volume_profile.sh` still exists and still works when run by hand; only the
+> scheduled job is gone. Scheduled volume-profile runs are now covered by
+> `com.nse.volume.profile.3pm` / `.315pm` / `.325pm`.
+
 ## Problem Solved
 
 The volume profile analyzer was **NOT running automatically** despite being fully functional. It required manual execution every day.
