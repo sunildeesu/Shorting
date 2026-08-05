@@ -21,6 +21,11 @@ Strategy (trend-following):
   - EOD exit at 3:20 PM
 
 Reads from data/central_quotes.db — no live Kite API calls.
+
+Lifecycle: one process per trading day. It exits once the day's work is finished
+(EOD_SUMMARY_TIME, summary sent, no open trades) — see _shutdown_reason(); the
+9:12 AM launchd job starts the next one. All daily state is per-day, so a fresh
+process each morning is equivalent to _check_day_reset().
 """
 
 import json
@@ -46,6 +51,8 @@ MARKET_OPEN_TIME = "09:15"        # VWAP calculation starts here
 ALERT_START_TIME = "10:00"        # no alerts before this (improvement #2)
 EXIT_TIME        = "13:00"        # trailing SL positions close here (backtest: best avg/trade)
 EOD_SUMMARY_TIME = "13:05"        # EOD P&L summary sent here
+# End of the is_market_open() window (15:25) — backstop exit time, see _shutdown_reason()
+MARKET_CLOSE_TIME = f"{config.MARKET_END_HOUR:02d}:{config.MARKET_END_MINUTE:02d}"
 
 TRAILING_SL_PCT        = 0.50    # 0.5% trailing SL (best config from backtest)
 CONFIRM_OFFSET         = 3       # enter at T+3 candle if it confirms direction (#8)
@@ -788,6 +795,48 @@ class VWAPMoverMonitor:
             }
             self.cooldown_until[symbol] = now + timedelta(minutes=ALERT_COOLDOWN_MINUTES)
 
+    # ── End of day shutdown ──────────────────────────────────────────────────
+
+    def _shutdown_reason(self) -> Optional[str]:
+        """
+        Why the process should stop for the day, or None to keep looping.
+
+        The day's work ends with the EOD summary: no entry is queued or confirmed
+        after EXIT_TIME, every tracked trade is force-closed there, and the summary
+        goes out at EOD_SUMMARY_TIME. Once that is done there is nothing left for
+        the loop to do, so the process exits and the 9:12 launcher starts a fresh
+        one next trading day.
+
+        The market-close backstop covers the case where the summary can never be
+        marked sent (e.g. Telegram down): after MARKET_CLOSE_TIME no further work
+        is possible either way, so the process must not outlive the day.
+        """
+        now_str = datetime.now().strftime("%H:%M")
+        if now_str >= EOD_SUMMARY_TIME and self.eod_summary_sent and not self.active_trades:
+            return "day's work complete (EOD summary sent, no open trades)"
+        if now_str >= MARKET_CLOSE_TIME:
+            return f"market closed ({MARKET_CLOSE_TIME})"
+        return None
+
+    def _shutdown(self, reason: str):
+        """Clean end-of-day exit: log it, notify, close the DB connection."""
+        logger.info("=" * 80)
+        logger.info(f"Exiting for the day — {reason} | trades: {len(self.day_trade_log)} | "
+                    f"EOD summary sent: {self.eod_summary_sent} | "
+                    f"open trades: {len(self.active_trades)}")
+        logger.info("=" * 80)
+        self.notifier.send_debug(
+            f"🌙 <b>VWAP Monitor Exiting for the Day</b>\n"
+            f"{datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
+            f"Reason: {reason}\n"
+            f"Trades today: {len(self.day_trade_log)}\n"
+            f"Restarts on the next trading day at 9:12 AM."
+        )
+        try:
+            self.db.close()
+        except Exception as exc:
+            logger.warning(f"DB close failed: {exc}")
+
     # ── Run loop ─────────────────────────────────────────────────────────────
 
     def run(self):
@@ -806,28 +855,34 @@ class VWAPMoverMonitor:
         while True:
             self._check_day_reset()
 
-            if not is_market_open():
+            if is_market_open():
+                cycle_start = time.time()
+                try:
+                    self._run_cycle()
+                except Exception as e:
+                    logger.error(f"Cycle error: {e}", exc_info=True)
+                    self.notifier.send_debug(
+                        f"❌ <b>Cycle Error</b>\n"
+                        f"{datetime.now().strftime('%I:%M %p')}\n"
+                        f"<code>{type(e).__name__}: {e}</code>"
+                    )
+
+                elapsed    = time.time() - cycle_start
+                sleep_time = max(0, LOOP_INTERVAL_SECONDS - elapsed)
+                logger.debug(f"Cycle took {elapsed:.1f}s, sleeping {sleep_time:.1f}s")
+            else:
                 # Still try to send EOD summary even after market closes
                 # (handles the race where market closes at exactly 15:25)
                 self._maybe_send_eod_summary()
-                logger.info("Market closed — sleeping 60s")
-                time.sleep(60)
-                continue
+                logger.info("Market closed")
+                sleep_time = 60
 
-            cycle_start = time.time()
-            try:
-                self._run_cycle()
-            except Exception as e:
-                logger.error(f"Cycle error: {e}", exc_info=True)
-                self.notifier.send_debug(
-                    f"❌ <b>Cycle Error</b>\n"
-                    f"{datetime.now().strftime('%I:%M %p')}\n"
-                    f"<code>{type(e).__name__}: {e}</code>"
-                )
+            # The day's work is done — exit so the 9:12 launcher owns the next start
+            reason = self._shutdown_reason()
+            if reason is not None:
+                self._shutdown(reason)
+                return
 
-            elapsed    = time.time() - cycle_start
-            sleep_time = max(0, LOOP_INTERVAL_SECONDS - elapsed)
-            logger.debug(f"Cycle took {elapsed:.1f}s, sleeping {sleep_time:.1f}s")
             time.sleep(sleep_time)
 
 

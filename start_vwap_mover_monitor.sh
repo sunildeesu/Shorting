@@ -59,7 +59,7 @@ if [ -n "$EXISTING_PIDS" ]; then
 fi
 
 log "✓ Launching VWAP Mover Monitor..."
-log "✓ Alerts fire after 10:00 AM, monitor exits when market closes (3:30 PM)"
+log "✓ Alerts fire after 10:00 AM; monitor exits once the EOD summary is sent (see EOD_SUMMARY_TIME)"
 log ""
 
 "$VENV_PYTHON" "$MONITOR_SCRIPT" 2>&1 | tee -a "$LOG_FILE"
