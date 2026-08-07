@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from black_scholes_greeks import BlackScholesGreeks
+from market_utils import get_next_weekly_expiry
 
 
 class GreeksBacktest:
@@ -138,18 +139,15 @@ class GreeksBacktest:
 
     def get_option_expiry(self, date: datetime) -> datetime:
         """Get next week expiry for given date"""
-        # For simplicity, assume next Thursday (weekly expiry)
-        days_ahead = 3 - date.weekday()  # Thursday = 3
-        if days_ahead <= 0:
-            days_ahead += 7
-
-        expiry = date + timedelta(days=days_ahead)
+        # Expiry weekday (Thursday before 2025-09-02, Tuesday after) and holiday shifts
+        # come from market_utils.get_next_weekly_expiry()
+        expiry = get_next_weekly_expiry(date)
 
         # Ensure expiry is at least 7 days away
-        if (expiry - date).days < 7:
-            expiry += timedelta(days=7)
+        while (expiry - date.date()).days < 7:
+            expiry = get_next_weekly_expiry(expiry)
 
-        return expiry
+        return date + timedelta(days=(expiry - date.date()).days)
 
     def simulate_day_greeks(self, date: datetime, nifty_data: pd.DataFrame) -> Dict:
         """

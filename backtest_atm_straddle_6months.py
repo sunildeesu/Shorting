@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import config
 from kiteconnect import KiteConnect
 from token_manager import TokenManager
-from market_utils import is_nse_holiday
+from market_utils import is_nse_holiday, get_next_weekly_expiry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,35 +95,31 @@ class ATMStraddleBacktest:
 
     def get_next_weekly_expiry_days(self, trade_date: datetime) -> int:
         """
-        Calculate days to NEXT WEEK's expiry (Thursday)
+        Calculate days to NEXT WEEK's expiry
 
-        ALWAYS uses next week's Thursday, NOT current week.
+        ALWAYS uses next week's expiry, NOT current week.
         This avoids trading current week expiries (1-3 DTE) which have high gamma risk.
+
+        The expiry weekday itself comes from market_utils.get_next_weekly_expiry(), which
+        knows the Thursday->Tuesday change and holiday shifts. Note that since NSE moved to
+        Tuesday expiries (2025-09-02) "next week's expiry" viewed from a Friday is 3-4 days
+        out, not the 6 the Thursday-era version of this rule produced.
 
         Args:
             trade_date: Date of trade
 
         Returns:
-            Days to next week's Thursday expiry
+            Days to next week's expiry
         """
-        # Thursday = 3 (weekday)
-        current_weekday = trade_date.weekday()
+        trade_day = trade_date.date() if isinstance(trade_date, datetime) else trade_date
 
-        # Calculate days to this week's Thursday
-        days_to_this_thursday = (3 - current_weekday) % 7
+        expiry = get_next_weekly_expiry(trade_day)
 
-        # If today is Monday, Tuesday, or Wednesday: Skip current week's Thursday
-        # Use next week's Thursday instead (add 7 days)
-        if current_weekday in [0, 1, 2]:  # Monday, Tuesday, Wednesday
-            days_to_next_thursday = days_to_this_thursday + 7
-        # If today is Thursday: Use next week's Thursday
-        elif current_weekday == 3:  # Thursday (expiry day)
-            days_to_next_thursday = 7
-        # If today is Friday: Next Thursday is 6 days away (already next week)
-        else:  # Friday (weekday 4)
-            days_to_next_thursday = days_to_this_thursday
+        # Skip the current week's expiry (1-3 DTE, high gamma risk)
+        if expiry.isocalendar()[:2] == trade_day.isocalendar()[:2]:
+            expiry = get_next_weekly_expiry(expiry)
 
-        return days_to_next_thursday
+        return (expiry - trade_day).days
 
     def estimate_atm_straddle_premium(
         self,
@@ -666,7 +662,7 @@ class ATMStraddleBacktest:
             f.write(f"**Backtest Date:** {datetime.now().strftime('%B %d, %Y')}\n")
             f.write(f"**Period:** {results[0]['date']} to {results[-1]['date']}\n")
             f.write(f"**Strategy:** Sell ATM Call + Put at 10:05 AM, Close at 3:10 PM (Next Week Expiry ONLY)\n")
-            f.write(f"**Expiry Policy:** ALWAYS next week Thursday (6-10 DTE), NEVER current week (avoids 1-3 DTE gamma risk)\n")
+            f.write(f"**Expiry Policy:** ALWAYS next week's expiry, NEVER current week (avoids 1-3 DTE gamma risk)\n")
             f.write(f"**Position Size:** {self.lots_traded} lot ({self.lot_size} qty)\n\n")
 
             f.write("---\n\n")

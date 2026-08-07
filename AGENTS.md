@@ -134,6 +134,15 @@ verifiable without a broker: NSE's F&O bhavcopy is public and unauthenticated
 (`https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_YYYYMMDD_F_0000.csv.zip`,
 `FinInstrmNm` holds the trading symbol).
 
+**NIFTY weekly expiry is not "next Thursday".** NSE moved weekly expiry to Tuesday effective
+2025-09-01 — last Thursday expiry 2025-08-28, first Tuesday expiry 2025-09-02 — and holidays
+shift an expiry BACK one session, never forward. Never write weekday arithmetic; call
+`market_utils.get_next_weekly_expiry()`, whose docstring carries the rule and its two known
+limitations (Muhurat sessions, and dependence on the 2025–2026-only `NSE_HOLIDAYS` table).
+`tests/test_weekly_expiry_resolver.py` pins it against NSE-confirmed expiry dates. The live
+path is separate and already correct: `nifty_option_analyzer.py` resolves from the NFO
+instrument dump and computes no weekday.
+
 **A failed lookup must never become a number.** Kite's `quote()` returns neither `greeks` nor
 `implied_volatility`, and a missing quote has no `last_price`. Defaulting either — premium 0,
 or the old hardcoded 20% IV — records a fabricated measurement as if it were observed. Refuse

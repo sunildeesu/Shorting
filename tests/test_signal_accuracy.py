@@ -14,12 +14,13 @@ Author: Sunil Kumar Durganaik
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from kiteconnect import KiteConnect
 import config
 from token_manager import TokenManager
 from nifty_option_analyzer import NiftyOptionAnalyzer
 from telegram_notifier import TelegramNotifier
+from market_utils import get_next_weekly_expiry
 import json
 
 class SignalAccuracyTest:
@@ -488,11 +489,13 @@ class SignalAccuracyTest:
                 else:
                     self.log_error(f"Expiry {i} Days", f"Expected {expected_days}, got {days_to_expiry}")
 
-                # Verify it's a weekly/monthly expiry (Thursday)
-                if expiry_dt.weekday() == 3:  # Thursday
-                    self.log_pass(f"Expiry {i} Day", "Thursday (correct)")
+                # Verify it lands on a valid weekly expiry day for its era
+                # (Thursday up to 2025-08-28, Tuesday from 2025-09-02, shifted back off holidays)
+                expected_expiry = get_next_weekly_expiry(expiry_dt.date() - timedelta(days=1))
+                if expected_expiry == expiry_dt.date():
+                    self.log_pass(f"Expiry {i} Day", f"{expiry_dt.strftime('%A')} (valid weekly expiry)")
                 else:
-                    self.log_warning(f"Expiry {i} Day", f"Not Thursday (weekday {expiry_dt.weekday()})")
+                    self.log_warning(f"Expiry {i} Day", f"Not a weekly expiry day (expected {expected_expiry})")
 
         except Exception as e:
             self.log_error("Expiry Dates", str(e))
