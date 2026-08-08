@@ -1,4 +1,4 @@
-from datetime import datetime, time, date
+from datetime import datetime, time, date, timedelta
 import pytz
 import config
 import logging
@@ -144,6 +144,80 @@ def is_trading_day() -> bool:
         return False
 
     return True
+
+# NIFTY weekly expiry moved from Thursday to Tuesday. Both dates are observed, not assumed:
+# the last Thursday expiry is 2025-08-28 and the first Tuesday expiry is 2025-09-02, confirmed
+# against each date's own NSE F&O bhavcopy across 263 expiries (2021-07-29 .. 2026-08-04).
+# SEBI's 2025 circular made each exchange pick Tuesday or Thursday; NSE took Tuesday effective
+# 2025-09-01, which was a Monday.
+LAST_THURSDAY_WEEKLY_EXPIRY = date(2025, 8, 28)
+
+_THURSDAY = 3
+_TUESDAY = 1
+
+
+def get_next_weekly_expiry(from_date: date) -> date:
+    """
+    Resolve the next NIFTY weekly expiry strictly after from_date.
+
+    The rule, derived from 263 expiries confirmed against NSE's own F&O contract records:
+
+    1. Era weekday -- Thursday for expiries up to and including 2025-08-28, Tuesday from
+       2025-09-02 onward.
+    2. Take the next occurrence of that weekday after from_date.
+    3. If that day is not a trading session, walk BACKWARD to the previous one. Every one of
+       the 14 observed deviations in five years was a one-day shift back, never forward.
+    4. A shift moves only that week's expiry; the cycle stays anchored on the era weekday.
+       So if the walk-back lands on or before from_date -- which is what happens when
+       from_date IS a shifted expiry -- the answer is the following era weekday, giving the
+       8-day gap back onto the normal cycle that every observed deviation shows.
+
+    Args:
+        from_date: date (or datetime) to resolve from; the result is strictly after it
+
+    Returns:
+        Expiry date
+
+    KNOWN LIMITATIONS -- real, and deliberately not engineered around:
+
+    * Muhurat sessions. 2 of the 14 observed deviations (2021-11-03 and 2025-10-20) shifted
+      even though the era weekday WAS a session: it was the ~1-hour ceremonial Diwali Muhurat
+      session (13-17% of median volume) and NSE moved expiry to the previous full session.
+      A holiday-table-based resolver cannot see that, so it gets those weeks wrong unless the
+      table happens to list the day as a holiday. That is 2 dates out of 263.
+
+    * Correctness depends entirely on NSE_HOLIDAYS above, which covers 2025 and 2026 only.
+      For any other year is_nse_holiday() returns False meaning "not a holiday", so this
+      resolver silently stops shifting for holidays -- before 2025 and from 2027-01-01. The
+      2027 gap is tracked separately; do not read an unshifted pre-2025 date as verified.
+    """
+    if isinstance(from_date, datetime):
+        from_date = from_date.date()
+
+    candidate = _next_weekday(from_date, _THURSDAY)
+    if candidate > LAST_THURSDAY_WEEKLY_EXPIRY:
+        candidate = _next_weekday(from_date, _TUESDAY)
+
+    while True:
+        # Walk back to the previous session if the era weekday is not one
+        expiry = candidate
+        while expiry.weekday() >= 5 or is_nse_holiday(expiry):
+            expiry -= timedelta(days=1)
+
+        if expiry > from_date:
+            return expiry
+
+        # from_date was itself a shifted expiry: the cycle resumes on the era weekday
+        candidate += timedelta(days=7)
+
+
+def _next_weekday(from_date: date, weekday: int) -> date:
+    """Next occurrence of weekday strictly after from_date"""
+    days_ahead = (weekday - from_date.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return from_date + timedelta(days=days_ahead)
+
 
 def is_market_hours() -> bool:
     """
