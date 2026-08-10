@@ -283,7 +283,8 @@ class OrderFlowMonitor:
           7. Per-cycle cap — only the top ORDER_FLOW_MAX_ALERTS_PER_CYCLE directional
              alerts (ranked by score) fire per 30s cycle to prevent burst flooding.
 
-        Absorption bypasses all confluence gates (structural signal).
+        Absorption bypasses the confluence gates 2–7 (structural signal) but is still
+        subject to Gate 1, the minimum price.
         Walls appear as context lines within directional alerts only — no standalone
         wall alerts are sent, since a wall without directional flow is unactionable.
         """
@@ -314,6 +315,13 @@ class OrderFlowMonitor:
             abs_signal   = m['absorption_signal']
             abs_strength = m['absorption_strength']
 
+            # Gate 1: skip penny stocks — tick size makes % moves unreliable.
+            # Applies to absorption too: the absorption block used to sit above this
+            # check and `continue` past it, so absorption fired at any price (observed
+            # down to ₹12.77) — exactly the tick-size-noise regime this gate excludes.
+            if price < config.ORDER_FLOW_MIN_STOCK_PRICE:
+                continue
+
             # --- Absorption alert ---
             # Requires a significant wall (≥ ORDER_FLOW_ABSORPTION_WALL_MIN_RATIO) to avoid
             # triggering on routine 5× depth imbalances that occur in every liquid stock.
@@ -324,10 +332,6 @@ class OrderFlowMonitor:
                     (abs_strength, symbol, abs_signal, price, wall_side,
                      wall_qty, wall_price, volume_delta)
                 )
-                continue
-
-            # Gate 1: skip penny stocks — tick size makes % moves unreliable
-            if price < config.ORDER_FLOW_MIN_STOCK_PRICE:
                 continue
 
             # Pre-compute wall qualification — used to enrich directional alerts only.
@@ -468,8 +472,20 @@ class OrderFlowMonitor:
         Fire "Overnight Hold" alerts during the 2:00–3:15 PM closing window.
 
         Strategy: buy at today's EOD close, sell next day at 9:25 AM.
-        Backtest (Apr 21–23, 62 trades, 3 days): 37% win rate overall.
-        Good days (recovery/neutral market): 62%+ win. Bad days (crash continuation): 0%.
+
+        NEVER FIRES, and no performance is claimed for it. Measured 2026-08-10 over
+        logs/order_flow_monitor.log covering 2026-05-21 → 2026-08-10: zero
+        OVERNIGHT_BULL lines in 52 trading days. The gate conjunction below (futures
+        BAI shift AND cash execution AND cash BAI shift AND score AND price AND the
+        breadth gate, all inside a 75-minute window) is empirically unsatisfiable.
+
+        This docstring previously cited a backtest ("Apr 21–23, 62 trades, 37% win"),
+        and config.py cited a different one ("3 days, 5 trades, 80% win, +0.80%") for
+        the same signal. Neither has a producing script in this repo and the two
+        contradict each other, so per CLAUDE.md both are treated as false and struck
+        rather than used to justify the thresholds. The gates are left exactly as they
+        are: no threshold here has any evidence behind it, and inventing new ones to
+        make the signal fire would manufacture the same problem again.
 
         Quality gates (stricter than general alerts):
           - Score ≥ ORDER_FLOW_OVERNIGHT_SCORE_MIN (default 7)

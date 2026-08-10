@@ -372,12 +372,6 @@ class TelegramNotifier:
             symbol, signal_type, price, wall_side, wall_qty,
             wall_price, absorption_strength, volume_delta)
 
-    def send_order_flow_wall(self, symbol: str, wall_side: str, wall_price: float,
-                             wall_qty: int, wall_ratio: float, current_price: float) -> bool:
-        """Send massive wall detection alert. Delegates to OrderFlowAlertNotifier."""
-        return self.order_flow_alerts.send_wall_alert(
-            symbol, wall_side, wall_price, wall_qty, wall_ratio, current_price)
-
     def send_order_flow_overnight_bullish(self, symbol: str, price: float,
                                          score: int, signals: str,
                                          bai: float, fut_bai_delta: float) -> bool:

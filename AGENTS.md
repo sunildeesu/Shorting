@@ -102,7 +102,17 @@ This is a **live NSE stock monitoring and alerting system**. Changes to core inf
 - Live P&L evidence must outlive the trading day. `data/*_positions.json` files are
   current-day state and are reset on date change; anything you want to judge a strategy by
   later belongs in an append-only sibling log (`auto_trader._append_history` is the pattern,
-  `tests/test_auto_trade_history_persists.py` pins it).
+  `tests/test_auto_trade_history_persists.py` pins it). Same trap inside a database: a
+  cooldown table keyed `PRIMARY KEY (symbol, alert_type)` and written `INSERT OR REPLACE`
+  keeps only the last fire — `order_flow.db` needed a separate append-only `alert_log`
+  beside `alert_history` for that reason (`tests/test_order_flow_alert_history.py`).
+
+- **Order flow signals were measured (2026-08-10) to have no tradeable edge** — 611 alerts
+  over 15 trading days, 0 of 12 tests surviving Bonferroni, largest gross edge 0.090%
+  against a 0.15% round-trip cost floor. They route to the debug Telegram channel by the
+  captain's decision. Fix defects there; do not retune thresholds hunting for edge.
+  `OVERNIGHT_BULL` has never fired (its gate conjunction is empirically unsatisfiable) and
+  standalone wall alerts were removed as dead code.
 
 **The production schedule lives in `launchd_agents/`** — verbatim copies of all 29 installed
 launchd jobs, plus `launchd_agents/README.md` (per-job table, restore procedure, known

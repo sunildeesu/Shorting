@@ -60,7 +60,10 @@ class OrderFlowAlertNotifier(BaseNotifier):
         """
         Overnight Hold alert — institutional BULLISH signal in closing window.
         Strategy: buy at today's EOD close, sell next day at 9:25 AM.
-        Backtest: 80% win rate, +0.80% avg on quality BULLISH signals after 2 PM.
+
+        No measured performance is claimed here: the gate that would call this has
+        not fired once in 52 trading days of logs — see
+        OrderFlowMonitor._check_overnight_alerts.
         """
         msg = (
             f"🌙 <b>OVERNIGHT HOLD — Institutional Buying</b>\n\n"
@@ -105,27 +108,6 @@ class OrderFlowAlertNotifier(BaseNotifier):
             f"📦 <b>Volume Delta:</b> {delta_str}\n"
             f"💪 <b>Absorption Strength:</b> {absorption_strength:.2f}/1.0\n\n"
             f"{verdict}"
-        )
-        return self.send_debug(msg)
-
-    def send_wall_alert(self, symbol: str, wall_side: str, wall_price: float,
-                        wall_qty: int, wall_ratio: float, current_price: float) -> bool:
-        """Massive single-level wall detected (> 10× average level size)."""
-        if wall_side == 'BID':
-            side_label = "BID (support)"
-            context = "Institutional support level — watch for bounce or absorption"
-        else:
-            side_label = "ASK (resistance)"
-            context = "Institutional resistance level — watch for breakout or rejection"
-
-        msg = (
-            f"🧱 <b>ORDER FLOW: Massive Wall Detected</b>\n\n"
-            f"📌 <b>{symbol}</b>  ₹{current_price:,.2f}\n"
-            f"⏰ {datetime.now().strftime('%I:%M %p')}\n\n"
-            f"📍 <b>Wall Type:</b> {side_label}\n"
-            f"💰 <b>Wall Price:</b> ₹{wall_price:,.2f}\n"
-            f"📦 <b>Wall Size:</b> {wall_qty:,} qty  ({wall_ratio:.1f}× avg level)\n\n"
-            f"⚡ {context}"
         )
         return self.send_debug(msg)
 

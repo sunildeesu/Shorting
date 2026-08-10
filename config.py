@@ -751,10 +751,16 @@ ORDER_FLOW_MIN_CONFLUENCE_SCORE  = int(os.getenv('ORDER_FLOW_MIN_CONFLUENCE_SCOR
 ORDER_FLOW_MIN_STOCK_PRICE       = float(os.getenv('ORDER_FLOW_MIN_STOCK_PRICE', '50.0'))        # skip stocks below ₹50 — tick-size noise dominates small moves
 ORDER_FLOW_FUT_MIN_TICK_COUNT    = int(os.getenv('ORDER_FLOW_FUT_MIN_TICK_COUNT', '15'))         # min futures trades in window before trusting FUT cum_delta (< 15 = ±100% trivially)
 
-# Overnight hold alert — fires in closing window for BULLISH signals only
-# Backtest (3 days, 5 trades): 80% win rate, +0.80% avg P&L when buying EOD close, selling 9:25 AM next day
+# Overnight hold alert — closing-window BULLISH signal. HAS NEVER FIRED: zero
+# OVERNIGHT_BULL alerts in 52 trading days of logs (2026-05-21 → 2026-08-10, measured
+# 2026-08-10). The win-rate figures previously quoted here ("3 days, 5 trades: 80% win,
+# +0.80%") and in order_flow_monitor._check_overnight_alerts ("Apr 21–23, 62 trades, 37%
+# win") have no producing script in this repo and contradict each other, so per CLAUDE.md
+# both are struck as unsourced. These thresholds are therefore unjustified as well as
+# unsatisfiable — do not tune them to make the signal fire; that would re-manufacture an
+# unsourced number.
 # BEARISH overnight shorts tested at 24% win rate — do NOT use for overnight holds
-ORDER_FLOW_OVERNIGHT_SCORE_MIN     = int(os.getenv('ORDER_FLOW_OVERNIGHT_SCORE_MIN', '7'))    # ≥7 pts required (score=7 had 43% win intraday but better overnight)
+ORDER_FLOW_OVERNIGHT_SCORE_MIN     = int(os.getenv('ORDER_FLOW_OVERNIGHT_SCORE_MIN', '7'))    # ≥7 pts required
 ORDER_FLOW_OVERNIGHT_WINDOW_START  = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_START', '14'))  # 2:00 PM (hour)
 ORDER_FLOW_OVERNIGHT_WINDOW_END    = int(os.getenv('ORDER_FLOW_OVERNIGHT_WINDOW_END', '15'))    # 3:00 PM (hour, exclusive end = 3:15 PM via minute check)
 
@@ -775,6 +781,14 @@ ORDER_FLOW_FUT_BAI_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BEA
 ORDER_FLOW_FUT_BAI_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_BAI_DELTA_BULLISH',  '0.20'))  # sustained futures book shift — kept at 0.20
 ORDER_FLOW_FUT_CUM_DELTA_BEARISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BEARISH', '-0.30'))
 ORDER_FLOW_FUT_CUM_DELTA_BULLISH = float(os.getenv('ORDER_FLOW_FUT_CUM_DELTA_BULLISH',  '0.30'))
+# Basis thresholds are ASYMMETRIC, and the asymmetry is larger than it looks. Live basis
+# has a median of +0.196% (fair carry, measured 2026-08-10), not 0, so relative to where
+# basis actually sits the bearish trigger is ~0.40 pp below the median while the bullish
+# trigger is ~0.40 pp above it — i.e. roughly symmetric in distance, despite the 3× ratio
+# of the raw numbers. Both are reachable: 6 of 14 bullish alerts over 52 days cite basis
+# (+0.71% to +0.84%), and basis contributes to 64% of bearish vs 43% of bullish alerts.
+# No rationale for the exact values is recorded anywhere in the repo — treat them as
+# unverified rather than deliberate until the captain confirms which they are.
 ORDER_FLOW_BASIS_BEARISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BEARISH_PCT', '-0.20'))  # futures at 0.20% discount → aggressive selling
 ORDER_FLOW_BASIS_BULLISH_PCT     = float(os.getenv('ORDER_FLOW_BASIS_BULLISH_PCT',  '0.60'))  # futures at 0.60% premium → aggressive buying
 
