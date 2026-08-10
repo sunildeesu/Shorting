@@ -10,7 +10,8 @@ CONCURRENCY DESIGN (mirrors central_quote_db.py):
 Tables:
 - tick_snapshots: Raw WebSocket ticks (ring buffer, last 10 minutes)
 - flow_metrics:   Computed order flow metrics per stock (updated every 30s)
-- alert_history:  Alert cooldown tracking
+- alert_history:  Alert cooldown tracking (last fire per symbol+type, overwritten)
+- alert_log:      Append-only record of every alert fired (evidence, never overwritten)
 - metadata:       Collector health and diagnostics
 """
 
@@ -194,12 +195,30 @@ class OrderFlowDB:
                 basis_pct           REAL DEFAULT 0   -- (fut_price - cash_price) / cash_price * 100
             );
 
+            -- Cooldown state, NOT a history: one row per (symbol, alert_type), replaced
+            -- on every fire. Correct for was_alert_sent_recently(); see alert_log below
+            -- for the record of what actually fired.
             CREATE TABLE IF NOT EXISTS alert_history (
                 symbol      TEXT NOT NULL,
                 alert_type  TEXT NOT NULL,
                 fired_at    TEXT NOT NULL,
                 PRIMARY KEY (symbol, alert_type)
             );
+
+            -- Append-only: one row per alert actually sent, never updated or deleted.
+            -- alert_history keeps only the LAST fire per (symbol, alert_type), so before
+            -- this table existed the subsystem discarded its own evidence and no study
+            -- could go back further than the application log's retention window.
+            -- Growth: ~30 alerts/day at ~50 bytes/row, i.e. well under 1 MB/year.
+            CREATE TABLE IF NOT EXISTS alert_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol      TEXT NOT NULL,
+                alert_type  TEXT NOT NULL,
+                fired_at    TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_alert_log_fired_at
+                ON alert_log(fired_at);
 
             CREATE TABLE IF NOT EXISTS metadata (
                 key        TEXT PRIMARY KEY,
@@ -296,7 +315,18 @@ class OrderFlowDB:
             self.conn.commit()
 
     def record_alert(self, symbol: str, alert_type: str) -> None:
-        """Record that an alert was fired (for cooldown tracking)."""
+        """
+        Record that an alert was fired.
+
+        Two separate concerns, deliberately kept apart:
+          * alert_history — cooldown state. One row per (symbol, alert_type), replaced
+            on every fire, which is exactly what was_alert_sent_recently() needs.
+          * alert_log — the evidence. Appended to, never overwritten, so the fire is
+            still there after the same pair fires again.
+
+        The cooldown write is committed first and the append is best-effort: a failure
+        to keep records must never leave an alert uncooled and re-firing every cycle.
+        """
         with self._lock:
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             self.conn.execute("""
@@ -304,6 +334,15 @@ class OrderFlowDB:
                 VALUES (?, ?, ?)
             """, (symbol, alert_type, now_str))
             self.conn.commit()
+
+            try:
+                self.conn.execute("""
+                    INSERT INTO alert_log (symbol, alert_type, fired_at)
+                    VALUES (?, ?, ?)
+                """, (symbol, alert_type, now_str))
+                self.conn.commit()
+            except sqlite3.Error as e:
+                logger.error(f"alert_log append failed for {symbol}/{alert_type}: {e}")
 
     def cleanup_old_ticks(self, minutes: int = None) -> int:
         """Delete tick_snapshots older than N minutes. Returns deleted row count."""
