@@ -1,14 +1,18 @@
 import os
 from dotenv import load_dotenv
 
+# Secrets come from the macOS Keychain (see credentials.py), with a temporary
+# .env fallback. Every other setting below stays a plain os.getenv() of .env.
+from credentials import get_secret
+
 # Load environment variables
 load_dotenv()
 
 # Telegram Configuration
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
-TELEGRAM_DEBUG_BOT_TOKEN = os.getenv('TELEGRAM_DEBUG_BOT_TOKEN')
-TELEGRAM_DEBUG_CHANNEL_ID = os.getenv('TELEGRAM_DEBUG_CHANNEL_ID')
+TELEGRAM_BOT_TOKEN = get_secret('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHANNEL_ID = get_secret('TELEGRAM_CHANNEL_ID')
+TELEGRAM_DEBUG_BOT_TOKEN = get_secret('TELEGRAM_DEBUG_BOT_TOKEN')
+TELEGRAM_DEBUG_CHANNEL_ID = get_secret('TELEGRAM_DEBUG_CHANNEL_ID')
 # Base host for the Telegram Bot API. Override with a Cloudflare Worker relay URL
 # (e.g. https://relay.example.workers.dev/r/<secret>) when api.telegram.org is blocked
 # on the direct connection. Defaults to direct. Affects Telegram delivery only.
@@ -168,9 +172,9 @@ DEMO_MODE = os.getenv('DEMO_MODE', 'false').lower() == 'true'
 DATA_SOURCE = os.getenv('DATA_SOURCE', 'nsepy').lower()  # Options: 'nsepy', 'yahoo', or 'kite'
 
 # Kite Connect Configuration
-KITE_API_KEY = os.getenv('KITE_API_KEY')
-KITE_API_SECRET = os.getenv('KITE_API_SECRET')
-KITE_ACCESS_TOKEN = os.getenv('KITE_ACCESS_TOKEN')
+KITE_API_KEY = get_secret('KITE_API_KEY')
+KITE_API_SECRET = get_secret('KITE_API_SECRET')
+KITE_ACCESS_TOKEN = get_secret('KITE_ACCESS_TOKEN')
 
 # Rate Limiting Configuration
 # Kite Connect allows 3 requests/second for quote API

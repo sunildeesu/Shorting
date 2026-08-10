@@ -167,6 +167,20 @@ their own `requests.post(.../sendMessage)` stamp at the payload too. Never hand-
 service label into a message body; if the derived name is wrong, call
 `alert_provenance.set_service()` at process start. `tests/test_alert_provenance.py` pins it.
 
+**Secrets come from the Keychain; never `os.getenv` them and never truncate `.env`.**
+`credentials.get_secret()` is the only way to read one (macOS Keychain, service
+`ShortIndicator`, account = the key name), with a *temporary* `.env` fallback that phase 2
+deletes. The ~200 non-secret tuning settings stay ordinary `os.getenv` reads of `.env`.
+Any write to `.env` goes through `credentials.update_env_atomic()` — temp file + fsync +
+`os.replace`. This is not style: on 2026-08-09 two token-refresh writers landed 514 µs
+apart, one read inside the other's `open(path,'w')` truncate window, and `.env` came back
+as a single line — 22 settings lost, including the Telegram tokens that would have raised
+the alarm, so twelve services were silently down for 90 minutes of live trading.
+`tests/test_credentials_keychain.py` pins it, and proves the harness by running the
+pre-incident algorithm through it and catching the empty file. Cross-repo: NewsBase's
+`data_feeds/token_refresh.py` calls `TokenManager.update_env_file()` after `chdir(SI_PATH)`
+— keep that name and signature.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
