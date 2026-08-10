@@ -25,6 +25,7 @@ from typing import Dict, List, Set, Tuple
 from kiteconnect import KiteConnect
 
 import config
+import alert_provenance
 from telegram_notifier import TelegramNotifier
 
 logging.basicConfig(
@@ -172,7 +173,7 @@ def send_telegram_change_alert(
         url = f"https://api.telegram.org/bot{notifier.bot_token}/sendMessage"
         requests.post(url, json={
             "chat_id": notifier.channel_id,
-            "text": msg,
+            "text": alert_provenance.stamp(msg),
             "parse_mode": "HTML",
         }, timeout=10)
         logger.info("Telegram notification sent")

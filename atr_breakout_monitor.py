@@ -23,6 +23,7 @@ import pandas_ta as ta
 from kiteconnect import KiteConnect
 
 import config
+import alert_provenance
 from telegram_notifier import TelegramNotifier
 from alert_history_manager import AlertHistoryManager
 from alert_excel_logger import AlertExcelLogger
@@ -659,7 +660,7 @@ class ATRBreakoutMonitor:
             url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': config.TELEGRAM_CHANNEL_ID,
-                'text': message,
+                'text': alert_provenance.stamp(message),
                 'parse_mode': 'HTML'
             }
 

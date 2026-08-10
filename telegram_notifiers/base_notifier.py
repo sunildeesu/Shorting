@@ -3,6 +3,7 @@ import html
 import re
 import requests
 import logging
+import alert_provenance
 import config
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ class BaseNotifier:
         url = f"{self.base_url}/sendMessage"
         payload = {
             "chat_id": channel_id,
-            "text": message,
+            "text": alert_provenance.stamp(message),
             "parse_mode": "HTML"
         }
         for attempt in range(2):
@@ -95,7 +96,7 @@ class BaseNotifier:
         if not webhook_url:
             return False
         import time as _time
-        content = self._html_to_discord(message)
+        content = self._html_to_discord(alert_provenance.stamp(message))
         if not content.strip():
             return False
         embeds = [{"description": chunk}
@@ -136,7 +137,8 @@ class BaseNotifier:
             logger.warning("TELEGRAM_DEBUG_CHANNEL_ID not set — falling back to main channel")
             return self._send_message(message)
         url = f"{self.debug_base_url}/sendMessage"
-        payload = {"chat_id": self.debug_channel_id, "text": message, "parse_mode": "HTML"}
+        payload = {"chat_id": self.debug_channel_id,
+                   "text": alert_provenance.stamp(message), "parse_mode": "HTML"}
         tg_ok = False
         try:
             response = requests.post(url, json=payload, timeout=10)

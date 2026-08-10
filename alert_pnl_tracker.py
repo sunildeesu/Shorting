@@ -30,6 +30,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 import config
+import alert_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -588,7 +589,7 @@ class AlertPnLTracker:
             url = f"https://api.telegram.org/bot{self.telegram.bot_token}/sendMessage"
             payload = {
                 "chat_id": self.telegram.channel_id,
-                "text": message,
+                "text": alert_provenance.stamp(message),
                 "parse_mode": "HTML"
             }
 

@@ -25,6 +25,7 @@ from datetime import datetime, date, time as dt_time
 from typing import Dict, List, Optional, Set
 
 import config
+import alert_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +599,7 @@ class ClosingWindowDetector:
             url = f"https://api.telegram.org/bot{self.telegram.bot_token}/sendMessage"
             payload = {
                 "chat_id": self.telegram.channel_id,
-                "text": message,
+                "text": alert_provenance.stamp(message),
                 "parse_mode": "HTML"
             }
 
