@@ -149,6 +149,14 @@ or the old hardcoded 20% IV — records a fabricated measurement as if it were o
 (`OptionDataError` in `nifty_option_analyzer.py`) so the monitor's `if 'error' in result`
 branch drops the cycle. Greeks come from inverting Black-Scholes on the observed premium.
 
+**Every alert carries its own provenance.** `alert_provenance.stamp()` appends a
+`[ShortIndicator · <service>]` footer, where `<service>` defaults to the entry-point script
+name (`sys.argv[0]`) — so a new monitor is covered without touching it. `BaseNotifier`
+stamps at its three HTTP payload sites, and the ten scripts that bypass `BaseNotifier` with
+their own `requests.post(.../sendMessage)` stamp at the payload too. Never hand-write a
+service label into a message body; if the derived name is wrong, call
+`alert_provenance.set_service()` at process start. `tests/test_alert_provenance.py` pins it.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

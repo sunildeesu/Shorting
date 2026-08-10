@@ -26,6 +26,7 @@ from datetime import datetime, time as dt_time, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 import config
+import alert_provenance
 from quarterly_results_checker import get_results_checker, get_results_label
 
 logger = logging.getLogger(__name__)
@@ -745,7 +746,7 @@ class EarlyWarningDetector:
             url = f"https://api.telegram.org/bot{self.telegram.bot_token}/sendMessage"
             payload = {
                 "chat_id": self.telegram.channel_id,
-                "text": message,
+                "text": alert_provenance.stamp(message),
                 "parse_mode": "HTML"
             }
 

@@ -28,6 +28,7 @@ from kiteconnect import KiteConnect
 import logging
 import requests
 import config
+import alert_provenance
 from momentum_strategy import MomentumScreener
 from quarterly_results_checker import get_results_checker, QuarterlyResultsChecker
 
@@ -508,7 +509,7 @@ class WeeklyRebalancer:
             url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
             payload = {
                 "chat_id": self.telegram_channel,
-                "text": message,
+                "text": alert_provenance.stamp(message),
                 "parse_mode": "HTML"
             }
 

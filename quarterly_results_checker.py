@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import requests
+import alert_provenance
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 
@@ -608,7 +609,7 @@ def send_morning_results_alert(telegram_notifier) -> bool:
         url = f"https://api.telegram.org/bot{telegram_notifier.bot_token}/sendMessage"
         payload = {
             "chat_id": telegram_notifier.channel_id,
-            "text": message,
+            "text": alert_provenance.stamp(message),
             "parse_mode": "HTML"
         }
 

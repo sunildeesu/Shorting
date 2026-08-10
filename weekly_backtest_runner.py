@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+import alert_provenance
 from kiteconnect import KiteConnect
 from token_manager import TokenManager
 from market_utils import is_nse_holiday
@@ -399,7 +400,7 @@ class WeeklyBacktestRunner:
             url = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': config.TELEGRAM_CHANNEL_ID,
-                'text': message,
+                'text': alert_provenance.stamp(message),
                 'parse_mode': 'HTML'
             }
             response = requests.post(url, json=payload)

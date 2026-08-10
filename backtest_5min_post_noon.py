@@ -24,6 +24,7 @@ from collections import defaultdict
 import statistics
 import openpyxl
 import config
+import alert_provenance
 import requests
 import json
 import os
@@ -672,7 +673,7 @@ def send_telegram_report(message: str) -> bool:
     for chunk in chunks:
         payload = {
             "chat_id": channel_id,
-            "text": chunk,
+            "text": alert_provenance.stamp(chunk),
             "parse_mode": "HTML"
         }
 

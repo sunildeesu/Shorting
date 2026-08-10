@@ -26,6 +26,7 @@ import os
 import requests
 
 import config
+import alert_provenance
 
 NOON_CUTOFF_HOUR = 12
 ENTRY_DELAY_MINUTES = 2
@@ -624,7 +625,8 @@ def send_telegram(message):
     for chunk in chunks:
         try:
             resp = requests.post(url, json={
-                "chat_id": channel_id, "text": chunk, "parse_mode": "HTML"
+                "chat_id": channel_id, "text": alert_provenance.stamp(chunk),
+                "parse_mode": "HTML"
             }, timeout=10)
             resp.raise_for_status()
             print(f"Telegram sent ({len(chunk)} chars)")
