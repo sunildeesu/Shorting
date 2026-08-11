@@ -148,7 +148,13 @@ INTRADAY_CANDLE_INTERVAL = os.getenv('INTRADAY_CANDLE_INTERVAL', '5minute')
 # Span the previous session so consumers always have enough candles (price_action needs 50 ≈ 4h
 # of market time) even at the open / on a cold DB. ~30h reaches into the prior trading day.
 INTRADAY_CANDLE_LOOKBACK_HOURS = int(os.getenv('INTRADAY_CANDLE_LOOKBACK_HOURS', '30'))
-INTRADAY_CANDLE_RETENTION_DAYS = int(os.getenv('INTRADAY_CANDLE_RETENTION_DAYS', '7'))
+# Intraday bars are kept for two years so chart-pattern work has real history to run on.
+# Measured 2026-08-11 from the live central_quotes.db via dbstat: 228,507 rows of
+# intraday_candles occupy 57,876,480 bytes including both indexes = 253 bytes/row. A full
+# session is 75 five-minute bars, so ~200 F&O symbols cost 15,000 rows = 3.8 MB per trading
+# day, ~0.95 GB per 250-trading-day year, ~1.9 GB at this 730-day setting. Re-derive with
+# `SELECT name, sum(pgsize) FROM dbstat GROUP BY name` if the row shape changes.
+INTRADAY_CANDLE_RETENTION_DAYS = int(os.getenv('INTRADAY_CANDLE_RETENTION_DAYS', '730'))
 QUOTE_CACHE_TTL_SECONDS = int(os.getenv('QUOTE_CACHE_TTL_SECONDS', '60'))  # Quote cache TTL (60 seconds)
 HISTORICAL_CACHE_TTL_HOURS = int(os.getenv('HISTORICAL_CACHE_TTL_HOURS', '24'))  # Historical data cache TTL (24 hours)
 INTRADAY_CACHE_TTL_HOURS = int(os.getenv('INTRADAY_CACHE_TTL_HOURS', '1'))  # Intraday data cache TTL (1 hour)
