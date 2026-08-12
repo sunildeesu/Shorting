@@ -181,6 +181,32 @@ pre-incident algorithm through it and catching the empty file. Cross-repo: NewsB
 `data_feeds/token_refresh.py` calls `TokenManager.update_env_file()` after `chdir(SI_PATH)`
 — keep that name and signature.
 
+**Kite intraday history: measured, not remembered.** Probed against the live API on
+2026-08-11 (RELIANCE): one `historical_data` request may span at most **100 days** for
+`5minute` (`InputException: interval exceeds max limit: 100 days`), and depth reaches back
+to at least 2016 — the "~60 days for minute data" in older docstrings is not the binding
+constraint. Kite also publishes the **tail of a session late**: a day fetched within about
+a week stops at 15:10, and the same day fetched a fortnight later has all 75 bars
+(09:15–15:25). Anything that decides "this day is already stored" must therefore key on
+completeness, not presence — `backfill_intraday_candles.py` is the worked example
+(`PROVISIONAL_DAYS`), pinned by `tests/test_intraday_backfill.py`.
+
+**`CentralQuoteDB.cleanup_old_data()` does not run in production.** Its only caller is
+`central_data_collector.main()` (`central_data_collector.py:737`), but the live jobs run
+`central_data_collector_continuous.py` (`com.nse.central.collector`) and
+`central_data_collector.py --intraday` (`com.nse.intraday.candles`), which returns before
+that branch. So `central_quotes.db` grows unbounded, and both retention settings are
+currently declarations of intent, not behaviour. Do not wire it up casually: it also runs
+`VACUUM`, an exclusive rewrite of a 370 MB+ database, and it deletes quote rows on a 1-day
+window. `tests/test_intraday_retention.py` pins what the function does when it is called.
+
+**Stored 5-minute bars are gap-free inside a session, never across one.** Measured
+2026-08-11 over 195 symbols × 16 sessions: 225,401 of 225,401 intra-session steps are
+exactly 5 minutes, every timestamp carries `+05:30`, and the step across a session boundary
+is ~17h50m–18h05m (overnight) or ~2d18h (weekend). A resampler that buckets by wall-clock
+time alone will fabricate bars spanning the overnight gap; group by session date first. A
+full session is 75 bars, which divides evenly into 15m but not into 10m or 1h.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
