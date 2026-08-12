@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import webbrowser
 from kiteconnect import KiteConnect
 import config
+import credentials
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class TokenManager:
             Tuple of (is_valid: bool, message: str, hours_remaining: float)
         """
         if not config.KITE_ACCESS_TOKEN:
-            return False, "No access token found in .env", 0
+            return False, "No access token found in Keychain or .env", 0
 
         # Check metadata
         metadata = self.load_token_metadata()
@@ -136,34 +137,40 @@ This will refresh your token for another 24 hours.
             return False
 
     def update_env_file(self, access_token: str):
-        """Update .env file with new access token"""
-        env_path = '.env'
+        """
+        Store the refreshed access token. Keychain first, then a mirrored .env write.
 
-        if not os.path.exists(env_path):
-            logger.error(".env file not found")
+        Name and signature are unchanged because NewsBase's
+        data_feeds/token_refresh.py calls this after chdir'ing to SI_PATH.
+
+        Two writers reach this method every morning (the launchd job and the
+        scheduler). Its old body truncated .env before writing, and on
+        2026-08-09 those two collapsed to 514 microseconds apart and one read
+        landed inside the other's truncate window - 22 settings were lost. The
+        Keychain write below is transactional and the .env write is now
+        temp-file + fsync + os.replace, so neither path can expose a partial file.
+
+        The .env mirror is phase-1 only: analyze_wednesday_tuesday.py and
+        backtest_intraday_pnl.py still read KITE_ACCESS_TOKEN with os.getenv(),
+        as does NewsBase, and get_secret() still falls back to .env. It goes away
+        with the fallback in phase 2.
+        """
+        keychain_ok = False
+        try:
+            credentials.set_secret('KITE_ACCESS_TOKEN', access_token)
+            keychain_ok = True
+            logger.info("✅ Stored new access token in the Keychain")
+        except credentials.CredentialError as e:
+            logger.error(f"Keychain write failed, relying on .env: {e}")
+
+        env_ok = credentials.update_env_atomic({'KITE_ACCESS_TOKEN': access_token})
+        if env_ok:
+            logger.info("✅ Updated .env file with new access token")
+
+        if not (keychain_ok or env_ok):
+            logger.error("Access token was not stored anywhere")
             return False
 
-        # Read current .env
-        with open(env_path, 'r') as f:
-            lines = f.readlines()
-
-        # Update KITE_ACCESS_TOKEN line
-        updated = False
-        for i, line in enumerate(lines):
-            if line.startswith('KITE_ACCESS_TOKEN='):
-                lines[i] = f'KITE_ACCESS_TOKEN={access_token}\n'
-                updated = True
-                break
-
-        if not updated:
-            # Add if not exists
-            lines.append(f'KITE_ACCESS_TOKEN={access_token}\n')
-
-        # Write back
-        with open(env_path, 'w') as f:
-            f.writelines(lines)
-
-        logger.info("✅ Updated .env file with new access token")
         return True
 
 

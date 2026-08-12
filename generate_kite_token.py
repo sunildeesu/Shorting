@@ -3,7 +3,8 @@
 
 from kiteconnect import KiteConnect
 import sys
-import os
+
+import credentials
 
 print("=" * 70)
 print("Kite Connect Access Token Generator")
@@ -92,40 +93,28 @@ try:
     update_env = input("\nWould you like to update .env file automatically? (y/n): ").strip().lower()
 
     if update_env == 'y':
-        env_path = '.env'
+        # Secrets go to the Keychain. get_secret() prefers the Keychain, so a
+        # manual refresh that only touched .env would leave the whole system
+        # reading the stale Keychain token.
+        for key, value in (('KITE_API_KEY', api_key),
+                           ('KITE_API_SECRET', api_secret),
+                           ('KITE_ACCESS_TOKEN', access_token)):
+            credentials.set_secret(key, value)
 
-        # Read existing .env
-        env_lines = []
-        if os.path.exists(env_path):
-            with open(env_path, 'r') as f:
-                env_lines = f.readlines()
+        print("\n✅ Kite credentials stored in the Keychain")
 
-        # Update or add Kite credentials
-        kite_keys = {
+        # Mirror into .env for the phase-1 fallback and the non-secret DATA_SOURCE.
+        # Atomic (temp file + os.replace) - see credentials.update_env_atomic.
+        if credentials.update_env_atomic({
             'KITE_API_KEY': api_key,
             'KITE_API_SECRET': api_secret,
             'KITE_ACCESS_TOKEN': access_token,
-            'DATA_SOURCE': 'kite'
-        }
-
-        updated_keys = set()
-        for i, line in enumerate(env_lines):
-            for key, value in kite_keys.items():
-                if line.startswith(f"{key}="):
-                    env_lines[i] = f"{key}={value}\n"
-                    updated_keys.add(key)
-                    break
-
-        # Add missing keys
-        for key, value in kite_keys.items():
-            if key not in updated_keys:
-                env_lines.append(f"{key}={value}\n")
-
-        # Write back to .env
-        with open(env_path, 'w') as f:
-            f.writelines(env_lines)
-
-        print(f"\n✅ .env file updated successfully!")
+            'DATA_SOURCE': 'kite',
+        }):
+            print(f"\n✅ .env file updated successfully!")
+        else:
+            print("\n⚠️  No .env file found - copy .env.example to .env and add "
+                  "DATA_SOURCE=kite. The secrets above are already in the Keychain.")
 
         # Save token metadata for expiry tracking
         try:
