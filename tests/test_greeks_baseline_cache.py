@@ -86,6 +86,8 @@ class GreeksBaselineCacheTest(unittest.TestCase):
         tracker.telegram_sent = False
         tracker.cloud_link = None
         tracker.telegram = RecordingTelegram()
+        tracker.current_vix = 0.10
+        tracker.current_threshold = 0.100
         return tracker
 
     def _stub_market_inputs(self, tracker):
