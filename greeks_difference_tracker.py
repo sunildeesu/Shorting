@@ -429,6 +429,15 @@ class GreeksDifferenceTracker:
                 else:
                     logger.debug("Outside market hours. Sleeping...")
 
+                # The day's work is done - exit so the daily launchd job owns the
+                # next start. Without this the process outlives the day and blocks
+                # its own restart tomorrow (KeepAlive is false; a still-running
+                # process means launchd never starts a fresh one).
+                reason = self._shutdown_reason()
+                if reason is not None:
+                    self._shutdown(reason)
+                    return
+
                 # Check every minute
                 import time
                 time.sleep(60)
@@ -438,6 +447,48 @@ class GreeksDifferenceTracker:
                 break
             except Exception as e:
                 logger.error(f"Error in main loop: {e}", exc_info=True)
+
+    # ── End of day shutdown ──────────────────────────────────────────────────
+
+    def _shutdown_reason(self) -> Optional[str]:
+        """
+        Why the process should stop for the day, or None to keep looping.
+
+        Updates only fire while _is_market_hours() holds (self.market_start to
+        self.market_end), so once the clock reaches self.market_end no further
+        baseline capture or update can happen today regardless of what comes next.
+        A day that reached its first report (telegram_sent, from a same-day
+        baseline) exits with that as the reason; anything else at/after
+        self.market_end - baseline never captured, report never sent - is covered
+        by the same time check, so the process still cannot outlive the day. This
+        plays the role MARKET_CLOSE_TIME plays in
+        vwap_mover_monitor._shutdown_reason(), just without a separate earlier
+        natural-exit time since this tracker's updates run right up to market close.
+        """
+        now_str = datetime.now().strftime("%H:%M")
+        if now_str < self.market_end:
+            return None
+        if (self.baseline_greeks and self._is_state_from_today(self.baseline_greeks)
+                and self.telegram_sent):
+            return f"day's work complete (report sent, market closed at {self.market_end})"
+        return f"market closed ({self.market_end}) with day's work incomplete"
+
+    def _shutdown(self, reason: str):
+        """Clean end-of-day exit: log it, notify, and let the loop return."""
+        logger.info("=" * 60)
+        logger.info(f"Exiting for the day — {reason} | history rows: {len(self.history)} | "
+                    f"telegram sent: {self.telegram_sent}")
+        logger.info("=" * 60)
+        try:
+            self.telegram.send_debug(
+                f"🌙 <b>Greeks Tracker Exiting for the Day</b>\n"
+                f"{datetime.now().strftime('%Y-%m-%d %I:%M %p')}\n"
+                f"Reason: {reason}\n"
+                f"History rows today: {len(self.history)}\n"
+                f"Restarts on the next trading day at {self.market_start}."
+            )
+        except Exception as exc:
+            logger.warning(f"Debug notification failed: {exc}")
 
     # ==================== PRIVATE METHODS ====================
 
@@ -925,7 +976,8 @@ class GreeksDifferenceTracker:
         self.cache.set_data(self._baseline_cache_key(), [{
             'baseline': self.baseline_greeks,
             'history': self.history,
-            'telegram_sent': self.telegram_sent
+            'telegram_sent': self.telegram_sent,
+            'current_vix': self.current_vix
         }], 'greeks_diff')
 
     def _load_baseline_from_cache(self) -> bool:
@@ -944,6 +996,17 @@ class GreeksDifferenceTracker:
         self.baseline_greeks = baseline
         self.history = state.get('history', [])
         self.telegram_sent = state.get('telegram_sent', False)
+
+        # The baseline just passed the same-day check above, so the VIX captured
+        # alongside it at 9:15 is today's too. Restore the VIX and re-derive the
+        # threshold from it (rather than caching the threshold itself) so VIX stays
+        # the single source of truth - otherwise a mid-day restart runs the rest of
+        # the day on the __init__ default (10%) instead of today's real regime.
+        cached_vix = state.get('current_vix')
+        if cached_vix is not None:
+            self.current_vix = cached_vix
+            self.current_threshold = self._get_vix_adaptive_threshold(cached_vix)
+
         logger.info(f"Baseline loaded from cache ({len(self.history)} history rows)")
         return True
 
