@@ -126,6 +126,13 @@ Mon–Fri) refreshes the Kite token via `NewsBase`'s `data_feeds.token_refresh` 
 if it fails**, so the central collector — and everything downstream of the quote DB —
 cannot start without the NewsBase repo present and working.
 
+**`fo_stocks.json`'s `stocks` list is not pure equity.** It has carried at least one index
+future (`NIFTYNXT50`) alongside real stocks — `refresh_fo_universe.py`'s own `_INDEX_NAMES`
+filter doesn't cover it. Anything that builds a per-symbol instrument list from this file (or
+from `collector.stocks`, which is loaded from it) should filter known index symbols at that
+point rather than assuming every entry is an equity future —
+`futures_bid_ask_detector._INDEX_SYMBOLS` is the worked example.
+
 **Python environment:** Use `venv/` (Python 3.13). Always run scripts from the project root.
 
 **`UnifiedDataCache`:** a data type only exists if it is registered in *both* `DEFAULT_TTL` and
