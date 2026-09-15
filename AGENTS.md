@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-(`CLAUDE.md` is a symlink to this file.)
+(`CLAUDE.md` is an `@AGENTS.md` pointer to this file.)
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
@@ -173,6 +173,13 @@ stamps at its three HTTP payload sites, and the ten scripts that bypass `BaseNot
 their own `requests.post(.../sendMessage)` stamp at the payload too. Never hand-write a
 service label into a message body; if the derived name is wrong, call
 `alert_provenance.set_service()` at process start. `tests/test_alert_provenance.py` pins it.
+
+**`TelegramNotifier` (the facade in `telegram_notifier.py`) has no `_send_message`.** That
+method lives on `BaseNotifier`; the facade composes sub-notifiers and exposes `send_message()`
+for free-form text. Calling `_send_message` on the facade raises inside the callers'
+`try/except`, so the token-expiry warning was logged as sent and never delivered from
+2026-06 to 2026-09-15. A test stub that defines `_send_message` hides this — stub
+`send_message`. `tests/test_token_expiry_alert_send.py` pins the two live paths.
 
 **Secrets come from the Keychain; never `os.getenv` them and never truncate `.env`.**
 `credentials.get_secret()` is the only way to read one (macOS Keychain, service

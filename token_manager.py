@@ -198,7 +198,7 @@ def check_token_and_alert():
             try:
                 from telegram_notifier import TelegramNotifier
                 telegram = TelegramNotifier()
-                telegram._send_message(warning_message)
+                telegram.send_message(warning_message)
                 logger.info("Sent token expiry alert via Telegram")
             except Exception as e:
                 logger.error(f"Failed to send Telegram alert: {e}")

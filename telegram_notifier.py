@@ -395,6 +395,21 @@ class TelegramNotifier:
     # Utility Methods
     # ========================================
 
+    def send_message(self, message: str, parse_mode: str = 'HTML') -> bool:
+        """
+        Send a free-form message to the main alerts channel.
+
+        This is the public entry point for callers that hold the facade
+        (token_manager, main, greeks_difference_tracker, cpr_first_touch_monitor,
+        central_data_collector_continuous). `_send_message` lives on BaseNotifier,
+        not on this facade - calling it here raised AttributeError and silently
+        dropped the token-expiry warning for months (see
+        tests/test_token_expiry_alert_send.py).
+        """
+        if parse_mode != 'HTML':
+            raise ValueError(f"Only parse_mode='HTML' is supported, got {parse_mode!r}")
+        return self.stock_alerts._send_message(message)
+
     def send_test_message(self) -> bool:
         """
         Send a test message to verify Telegram integration

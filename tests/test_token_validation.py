@@ -44,7 +44,7 @@ def test_token_validation():
                     try:
                         from telegram_notifier import TelegramNotifier
                         telegram = TelegramNotifier()
-                        telegram._send_message(warning)
+                        telegram.send_message(warning)
                         logger.info("✅ Sent token expiry alert via Telegram")
                     except Exception as e:
                         logger.error(f"Failed to send Telegram alert: {e}")
