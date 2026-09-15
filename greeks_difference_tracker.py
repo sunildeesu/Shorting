@@ -390,7 +390,7 @@ class GreeksDifferenceTracker:
 
 🌐 Accessible from anywhere - no downloads needed!"""
 
-            self.telegram._send_message(message)
+            self.telegram.send_message(message)
             self.telegram_sent = True
             self.cloud_link = cloud_link
             self._save_baseline_to_cache()

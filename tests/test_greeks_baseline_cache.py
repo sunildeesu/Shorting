@@ -67,7 +67,7 @@ class RecordingTelegram:
     def __init__(self):
         self.messages = []
 
-    def _send_message(self, message):
+    def send_message(self, message):
         self.messages.append(message)
 
 
