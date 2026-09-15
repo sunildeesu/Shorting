@@ -55,6 +55,7 @@ from kiteconnect import KiteConnect
 from kiteconnect.exceptions import TokenException
 
 import config
+import instrument_token_map
 from central_quote_db import CentralQuoteDB
 
 logger = logging.getLogger(__name__)
@@ -278,6 +279,13 @@ def main() -> int:
     if args.symbols:
         wanted = {s.strip().upper() for s in args.symbols.split(',')}
         symbols = [s for s in symbols if s in wanted]
+
+    # A map that resolves fewer symbols than the universe would silently backfill a
+    # subset (192 of 210 on 2026-08-31). This is a manual tool with no live day at
+    # stake, so abort: the operator refreshes the map and re-runs.
+    if instrument_token_map.report_missing_tokens(
+            symbols, tokens, caller='backfill_intraday_candles', notify=not args.dry_run):
+        return 3
 
     if args.dry_run:
         # No KiteConnect and no CentralQuoteDB: a dry run must not open, create or

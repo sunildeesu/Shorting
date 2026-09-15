@@ -131,7 +131,18 @@ future (`NIFTYNXT50`) alongside real stocks — `refresh_fo_universe.py`'s own `
 filter doesn't cover it. Anything that builds a per-symbol instrument list from this file (or
 from `collector.stocks`, which is loaded from it) should filter known index symbols at that
 point rather than assuming every entry is an equity future —
-`futures_bid_ask_detector._INDEX_SYMBOLS` is the worked example.
+`futures_bid_ask_detector._INDEX_SYMBOLS` and `instrument_token_map.equity_symbols` are the
+worked examples.
+
+**`data/instrument_tokens.json` is only as fresh as its last refresh, and every backfill
+resolves symbols through it.** It sat nine months stale and silently capped every backfill at
+192 of 210 symbols while every completeness check read green (2026-08-31). It is now rewritten
+from `kite.instruments("NSE")` on every `refresh_fo_universe.py` run (Mon 09:00), and the
+backfill entry points refuse to call a short map success:
+`instrument_token_map.report_missing_tokens` logs the names at ERROR, alerts Telegram, and
+`CentralDataBackfill.run_backfill()` returns `complete=False`. Read the map through
+`instrument_token_map`, never with a bare `json.load`, if your code's correctness depends on it
+covering the universe. `tests/test_instrument_token_map.py` pins it.
 
 **Python environment:** Use `venv/` (Python 3.13). Always run scripts from the project root.
 
