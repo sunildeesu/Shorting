@@ -104,7 +104,11 @@ def main():
         logger.info("🔄 Checking for missing historical data...")
         backfill = CentralDataBackfill(collector.kite)
         backfill_stats = backfill.run_backfill()
-        if backfill_stats['days_backfilled'] > 0:
+        if not backfill_stats['complete']:
+            logger.error(f"❌ Backfill INCOMPLETE: {len(backfill_stats['missing_token_symbols'])} symbols "
+                         f"had no instrument token ({backfill_stats['stock_records']} stock records, "
+                         f"{backfill_stats['nifty_records']} NIFTY, {backfill_stats['vix_records']} VIX)")
+        elif backfill_stats['days_backfilled'] > 0:
             logger.info(f"✅ Backfill complete: {backfill_stats['stock_records']} stock records, "
                        f"{backfill_stats['nifty_records']} NIFTY, {backfill_stats['vix_records']} VIX")
         else:

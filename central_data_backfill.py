@@ -21,10 +21,12 @@ Date: 2026-02-13
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timedelta, time as dt_time
 from typing import Dict, List, Optional, Tuple
 from kiteconnect import KiteConnect
 import config
+import instrument_token_map
 from central_quote_db import get_central_db_writer
 from market_utils import is_nse_holiday
 
@@ -79,12 +81,24 @@ class CentralDataBackfill:
             return []
 
     def _load_instrument_tokens(self) -> Dict[str, int]:
-        """Load instrument tokens for historical API"""
-        tokens_file = "data/instrument_tokens.json"
+        """
+        Load instrument tokens for historical API.
+
+        The map must cover the universe: on 2026-08-31 a nine-month-old map silently
+        capped every backfilled tick at 192 of 210 symbols. If the file is missing or
+        does not resolve every universe symbol, regenerate it from kite.instruments("NSE")
+        - the same source refresh_fo_universe.py writes it from - before using it.
+        """
         try:
-            if os.path.exists(tokens_file):
-                with open(tokens_file, 'r') as f:
-                    return json.load(f)
+            if os.path.exists(instrument_token_map.TOKENS_FILE):
+                tokens = instrument_token_map.load_token_map()
+                missing = instrument_token_map.missing_tokens(self.stocks, tokens)
+                if not missing:
+                    return tokens
+                logger.warning(f"Instrument token map is behind the universe "
+                               f"({len(missing)} symbols unresolved) - refreshing from Kite")
+                refreshed = self._fetch_instrument_tokens()
+                return refreshed or tokens
             else:
                 logger.warning("Instrument tokens not found, fetching...")
                 return self._fetch_instrument_tokens()
@@ -93,22 +107,11 @@ class CentralDataBackfill:
             return {}
 
     def _fetch_instrument_tokens(self) -> Dict[str, int]:
-        """Fetch and save instrument tokens from Kite"""
+        """Fetch and save instrument tokens from Kite (same shape and source as refresh_fo_universe.py)"""
         try:
-            instruments = self.kite.instruments("NSE")
-            token_map = {}
-            for inst in instruments:
-                if inst['tradingsymbol'] in self.stocks:
-                    token_map[inst['tradingsymbol']] = inst['instrument_token']
-
-            # Add NIFTY 50 token
-            token_map['NIFTY 50'] = config.NIFTY_50_TOKEN
-            token_map['INDIA VIX'] = config.INDIA_VIX_TOKEN
-
-            os.makedirs("data", exist_ok=True)
-            with open("data/instrument_tokens.json", 'w') as f:
-                json.dump(token_map, f, indent=2)
-
+            token_map = instrument_token_map.build_token_map(
+                self.kite.instruments("NSE"), self.stocks)
+            instrument_token_map.save_token_map(token_map)
             logger.info(f"Fetched {len(token_map)} instrument tokens")
             return token_map
         except Exception as e:
@@ -392,7 +395,14 @@ class CentralDataBackfill:
                 given, only these dates are processed and the window scan is skipped.
 
         Returns:
-            Dict with backfill statistics
+            Dict with backfill statistics. 'complete' is False and
+            'missing_token_symbols' lists the names when the token map cannot resolve
+            part of the universe: those symbols are NOT backfilled. The backfill still
+            runs for the symbols it can resolve rather than aborting, because the days
+            it is asked for are exactly the days with no data at all (the collector's
+            startup path), and INSERT OR IGNORE makes a later re-run fill the rest
+            once the map is repaired - but the shortfall is logged at ERROR, sent to
+            Telegram, and never reported as success.
         """
         logger.info("=" * 80)
         logger.info("CENTRAL DATA BACKFILL - Starting")
@@ -405,7 +415,9 @@ class CentralDataBackfill:
             'stock_records': 0,
             'nifty_records': 0,
             'vix_records': 0,
-            'errors': 0
+            'errors': 0,
+            'missing_token_symbols': [],
+            'complete': True,
         }
 
         # Get last timestamp
@@ -433,6 +445,14 @@ class CentralDataBackfill:
             return stats
 
         logger.info(f"Days to backfill: {[d.strftime('%Y-%m-%d') for d in days_to_backfill]}")
+
+        # Fail loudly on a short universe: a map that resolves fewer symbols than the
+        # collector collects must never look like a complete repair.
+        missing = instrument_token_map.report_missing_tokens(
+            self.stocks, self.instrument_tokens, caller='central_data_backfill')
+        if missing:
+            stats['missing_token_symbols'] = missing
+            stats['complete'] = False
 
         # Backfill each day
         for day in days_to_backfill:
@@ -484,7 +504,11 @@ class CentralDataBackfill:
             logger.info(f"  Day complete: {stocks_done} stocks, {day_stock_records} stock records")
 
         logger.info("\n" + "=" * 80)
-        logger.info("CENTRAL DATA BACKFILL - Complete")
+        if stats['complete']:
+            logger.info("CENTRAL DATA BACKFILL - Complete")
+        else:
+            logger.error(f"CENTRAL DATA BACKFILL - INCOMPLETE: "
+                         f"{len(stats['missing_token_symbols'])} symbols had no instrument token")
         logger.info(f"  Days backfilled: {stats['days_backfilled']}")
         logger.info(f"  Stock records: {stats['stock_records']}")
         logger.info(f"  NIFTY records: {stats['nifty_records']}")
@@ -535,8 +559,12 @@ def run_backfill_standalone():
     backfill = CentralDataBackfill(kite)
     stats = backfill.run_backfill(days=args.days, dates=args.dates)
 
+    if not stats['complete']:
+        print(f"\nBackfill INCOMPLETE: {stats}")
+        return 1
     print(f"\nBackfill complete: {stats}")
+    return 0
 
 
 if __name__ == "__main__":
-    run_backfill_standalone()
+    sys.exit(run_backfill_standalone())

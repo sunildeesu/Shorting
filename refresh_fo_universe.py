@@ -8,9 +8,13 @@ Run weekly (Mondays before market open) via launchd.
 Updates:
   fo_stocks.json          — stock list (adds/removes when NSE changes F&O eligibility)
   data/futures_mapping.json — near-month contract per stock (refreshes after monthly expiry)
+  data/instrument_tokens.json — NSE cash instrument token per stock (backfills resolve
+                              symbols through this; a stale map silently capped every
+                              backfill at 192 of 210 symbols on 2026-08-31)
 
-One Kite NFO instruments API call does both jobs. Sends Telegram only when the
-stock list actually changes (additions/removals).
+One Kite NFO instruments API call does the first two jobs; one NSE instruments call
+does the third, on every run, so the map can never drift from fo_stocks.json.
+Sends Telegram only when the stock list actually changes (additions/removals).
 
 Excluded indices: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY, SENSEX, BANKEX, NIFTYIT
 """
@@ -26,6 +30,7 @@ from kiteconnect import KiteConnect
 
 import config
 import alert_provenance
+import instrument_token_map
 from telegram_notifier import TelegramNotifier
 
 logging.basicConfig(
@@ -108,6 +113,39 @@ def derive_futures_mapping(instruments: List[Dict], fo_stocks: List[str]) -> Dic
             'without_futures': len(fo_stocks) - len(mappings),
         },
     }
+
+
+def refresh_token_map(kite: KiteConnect, fo_stocks: List[str]) -> Dict[str, int]:
+    """
+    Rewrite data/instrument_tokens.json from kite.instruments("NSE") for the current
+    universe. Always writes (the file is the backfills' only symbol resolver), and
+    logs any universe stock that NSE cash has no instrument for. Raises on API failure.
+    """
+    logger.info("Fetching NSE instruments from Kite API...")
+    nse_instruments = kite.instruments("NSE")
+    logger.info(f"  → {len(nse_instruments)} total NSE instruments")
+
+    token_map = instrument_token_map.build_token_map(nse_instruments, fo_stocks)
+    try:
+        old_keys = set(instrument_token_map.load_token_map())
+    except (FileNotFoundError, ValueError):
+        old_keys = set()
+    added   = sorted(set(token_map) - old_keys)
+    removed = sorted(old_keys - set(token_map))
+    if added or removed:
+        logger.info(f"Token map changed: +{len(added)} added, -{len(removed)} removed")
+        for s in added:
+            logger.info(f"  + {s}")
+        for s in removed:
+            logger.info(f"  - {s}")
+
+    unresolved = instrument_token_map.missing_tokens(fo_stocks, token_map)
+    if unresolved:
+        logger.error(f"{len(unresolved)} F&O stocks have no NSE cash instrument: "
+                     f"{', '.join(unresolved)}")
+
+    instrument_token_map.save_token_map(token_map)
+    return token_map
 
 
 def load_current_fo_stocks() -> List[str]:
@@ -234,6 +272,13 @@ def main():
         save_futures_mapping(new_futures_data)
     else:
         logger.info("Futures mapping unchanged — skipping write")
+
+    # --- Instrument token map (always rewritten from the same universe) ---
+    try:
+        refresh_token_map(kite, new_stocks)
+    except Exception as e:
+        logger.error(f"Failed to refresh instrument token map: {e}")
+        sys.exit(1)
 
     # --- Telegram alert (only on stock list changes) ---
     if added or removed:
