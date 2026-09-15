@@ -23,6 +23,8 @@ from typing import Dict, List, Optional
 import logging
 from pathlib import Path
 
+from market_utils import is_daily_candle_cache_valid
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,11 +35,19 @@ class UnifiedDataCache:
     Replaces EODCacheManager with enhanced multi-type caching.
     """
 
-    # Default TTL (time-to-live) for different data types (in hours)
+    # Daily-candle types expire at the NSE close, not after a fixed TTL. A daily bar
+    # fetched during the session is a partial bar (2026-08-31: 192 symbols cached at
+    # 09:25-09:27 with median volume 7.3% of the prior day) and a flat 24h TTL let it
+    # feed ATR until the next morning's launch. See market_utils.next_session_close.
+    SESSION_BOUND_TYPES = {'historical_30d', 'historical_50d', 'historical_3year'}
+
+    # Default TTL (time-to-live) for different data types (in hours).
+    # For SESSION_BOUND_TYPES this is only reported by get_cache_stats(); validity
+    # is decided by the session close above.
     DEFAULT_TTL = {
-        'historical_30d': 24,    # Daily candles - refresh daily
-        'historical_50d': 24,    # Daily candles - refresh daily
-        'historical_3year': 24,  # 3-year daily candles - refresh daily (for value screener)
+        'historical_30d': 24,    # Daily candles - session-bound (see above)
+        'historical_50d': 24,    # Daily candles - session-bound (see above)
+        'historical_3year': 24,  # 3-year daily candles - session-bound (see above)
         'intraday_5d': 1,        # 15-min candles - refresh hourly
         'intraday_1d': 0.25,     # 15-min candles - refresh every 15 min
         'intraday_1min': 0.25,   # 1-min candles - refresh every 15 min (for volume profile)
@@ -103,6 +113,9 @@ class UnifiedDataCache:
         """
         Check if cache entry is still valid (not expired).
 
+        Daily-candle types (SESSION_BOUND_TYPES) are valid until the first NSE close
+        after they were written; everything else ages out by DEFAULT_TTL.
+
         Args:
             cache_entry: Cache entry with 'cached_at' timestamp
             data_type: Type of data (determines TTL)
@@ -115,6 +128,8 @@ class UnifiedDataCache:
 
         try:
             cached_at = datetime.fromisoformat(cache_entry['cached_at'])
+            if data_type in self.SESSION_BOUND_TYPES:
+                return is_daily_candle_cache_valid(cached_at)
             age_hours = (datetime.now() - cached_at).total_seconds() / 3600
             ttl_hours = self.DEFAULT_TTL.get(data_type, 24)
 

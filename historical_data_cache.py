@@ -5,7 +5,7 @@ Historical Data Cache - Cache OHLC Data to Reduce API Calls
 Purpose:
 - Cache historical data that doesn't change intraday
 - Avoid refetching VIX/NIFTY history 22 times per day
-- Automatic cache invalidation at market open (new trading day)
+- Automatic cache invalidation at the NSE close (a partial daily bar never outlives its session)
 
 Benefits:
 - 44+ API calls saved per day (historical_data calls)
@@ -34,6 +34,7 @@ from typing import List, Dict, Optional
 from kiteconnect import KiteConnect
 
 import config
+from market_utils import is_daily_candle_cache_valid
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +182,9 @@ class HistoricalDataCache:
         """
         Check if cache file is still valid.
 
-        Cache is valid if:
-        1. Market is currently open (intraday) AND cached today
-        2. Market is closed AND cached after previous market close
+        A file is valid until the first NSE close after it was written: a bar cached
+        during the session dies at that close, one cached after the close lives until
+        the next one. Shared with UnifiedDataCache via market_utils.
 
         Args:
             cache_file: Path to cache file
@@ -192,23 +193,7 @@ class HistoricalDataCache:
             True if cache is valid, False otherwise
         """
         file_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
-        now = datetime.now()
-
-        # If cached today during market hours, it's valid
-        if file_time.date() == now.date():
-            # Check if we're still in the same market session
-            if self._is_market_open():
-                return True
-
-        # If market is closed, cache is valid until next market open
-        if not self._is_market_open():
-            # Check if cached after last market close
-            last_close = self._get_last_market_close()
-            if last_close and file_time > last_close:
-                return True
-
-        # Cache is expired
-        return False
+        return is_daily_candle_cache_valid(file_time)
 
     def _is_market_open(self) -> bool:
         """
@@ -235,26 +220,6 @@ class HistoricalDataCache:
         # For now, assume weekdays during market hours = market open
 
         return True
-
-    def _get_last_market_close(self) -> Optional[datetime]:
-        """
-        Get the last market close time.
-
-        Returns:
-            Datetime of last market close, or None
-        """
-        now = datetime.now()
-
-        # If market is closed today, last close was today at 3:30 PM
-        market_close_time = dtime(config.MARKET_END_HOUR, config.MARKET_END_MINUTE)
-
-        if now.time() > market_close_time:
-            # Market closed today
-            return datetime.combine(now.date(), market_close_time)
-
-        # Market hasn't closed today yet, so last close was yesterday (or Friday)
-        # This is simplified - could be enhanced with holiday checking
-        return None
 
     def _load_from_cache(self, cache_file: Path) -> List[Dict]:
         """

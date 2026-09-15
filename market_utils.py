@@ -238,6 +238,36 @@ def is_market_open() -> bool:
     """
     return is_trading_day() and is_market_hours()
 
+# NSE's actual close. config.MARKET_END (15:25) is when the monitors stop, not when the
+# day's candle stops changing - a daily bar fetched at 15:26 is still missing the close.
+NSE_CLOSE_TIME = time(15, 30)
+
+
+def next_session_close(after: datetime) -> datetime:
+    """
+    The first NSE close (15:30) strictly after `after` - the moment a daily-candle
+    cache entry written at `after` stops being trustworthy.
+
+    Kite's daily bar for the current day is a partial bar until the close, so an entry
+    written before 15:30 must not outlive that close; one written after it holds only
+    completed bars and is good until the next close. Every calendar day counts as a
+    session on purpose: on a weekend or holiday no partial bar can be fetched, so the
+    only cost of not knowing about them is one redundant refetch of complete bars,
+    whereas a wrong or missing holiday entry could never resurrect a partial bar.
+    Naive local (IST) datetimes in, naive out - matching `cached_at` stamps.
+    """
+    close_today = datetime.combine(after.date(), NSE_CLOSE_TIME)
+    if after < close_today:
+        return close_today
+    return close_today + timedelta(days=1)
+
+
+def is_daily_candle_cache_valid(cached_at: datetime, now: datetime = None) -> bool:
+    """True while a daily-candle entry written at `cached_at` has not crossed a close."""
+    if now is None:
+        now = datetime.now()
+    return now < next_session_close(cached_at)
+
 def get_market_status() -> dict:
     """
     Get detailed market status information
