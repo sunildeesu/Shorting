@@ -65,7 +65,7 @@ def print_dashboard(data: dict, central_db: dict):
     # Summary bar
     summary = data['summary']
     total = summary['total_services']
-    healthy = summary['healthy_services']
+    running = summary['running_services']
     dead = summary['dead_services']
     stale = summary['stale_services']
 
@@ -74,10 +74,10 @@ def print_dashboard(data: dict, central_db: dict):
         status_bar = f"🔴 {dead} DEAD"
     elif stale > 0:
         status_bar = f"🟡 {stale} STALE"
-    elif healthy == total:
-        status_bar = "✅ ALL HEALTHY"
+    elif running == total:
+        status_bar = "✅ ALL RUNNING"
     else:
-        status_bar = f"⚠️ {healthy}/{total} healthy"
+        status_bar = f"⚠️ {running}/{total} running"
 
     error_bar = ""
     if summary['critical_errors'] > 0:
@@ -126,7 +126,7 @@ def print_dashboard(data: dict, central_db: dict):
             cycles = svc['cycle_count']
             duration = svc.get('last_cycle_duration_ms')
 
-            if status == 'healthy':
+            if status == 'running':
                 icon = "✅"
             elif status == 'stale':
                 icon = "🟡"
@@ -134,7 +134,8 @@ def print_dashboard(data: dict, central_db: dict):
                 icon = "🔴"
 
             duration_str = f", {duration}ms/cycle" if duration else ""
-            print(f"  {icon} {name:25} {status:8} (last seen {age:.1f} min ago, {cycles} cycles{duration_str})")
+            print(f"  {icon} {name:25} {status:8} (last seen {age:.1f} min ago, "
+                  f"beats every {svc['interval_s']}s, {cycles} cycles{duration_str})")
 
     # Active Errors
     print("\n" + "-" * 75)

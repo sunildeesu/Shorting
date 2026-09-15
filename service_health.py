@@ -11,6 +11,22 @@ Tracks errors, warnings, and metrics across all monitoring services:
 
 Data is stored in SQLite for persistence and dashboard access.
 
+Liveness is DERIVED, never stored. On 2026-08-31 six monitors died at ~11:16-11:19
+and `service_heartbeats.status` still read 'running' eight hours later, because the
+writer stored that string and nothing ever aged it. The rule now:
+
+    age = now - last_heartbeat
+    age <= STALE_FACTOR * interval   -> 'running'
+    age <= DEAD_FACTOR  * interval   -> 'stale'
+    otherwise                        -> 'dead'
+
+where `interval` is the service's own heartbeat cadence from HEARTBEAT_INTERVAL_S
+(discovered from the writers / launchd_agents; DEFAULT_HEARTBEAT_INTERVAL_S when a
+service is not listed). `derive_status()` is the only place this rule lives; every
+in-repo reader goes through it. The `status` column is retained for schema
+compatibility but is written as NULL - a raw `SELECT status` can no longer claim
+anything about liveness. `tests/test_service_health_liveness.py` pins this.
+
 Author: Claude Code
 Date: 2026-01-19
 """
@@ -27,6 +43,52 @@ logger = logging.getLogger(__name__)
 
 # Default database path
 DEFAULT_DB_PATH = "data/service_health.db"
+
+# Heartbeat cadence per service, in seconds. Sources: launchd_agents/*.plist
+# StartInterval (cpr 60, candle/doublebottom 300), main.MONITOR_INTERVAL_SECONDS
+# (stock_monitor 300; sector_analyzer heartbeats inside that same cycle),
+# onemin_monitor_continuous (60), the price-action calendar (every 5 min), and the
+# 16:00 daily double_bottom_position_tracker job.
+HEARTBEAT_INTERVAL_S = {
+    'cpr_first_touch_monitor': 60,
+    'onemin_monitor': 60,
+    'stock_monitor': 300,
+    'sector_analyzer': 300,
+    'candle_confirmation_monitor': 300,
+    'double_bottom_support_monitor': 300,
+    'price_action_monitor': 300,
+    'double_bottom_position_tracker': 86400,
+}
+# Unknown services are assumed to beat every minute: an unlisted service is flagged
+# early rather than reported running for longer than it is.
+DEFAULT_HEARTBEAT_INTERVAL_S = 60
+# Missed one beat with slack -> stale; missed several -> dead. For the 60 s services
+# this is the 2 min / 5 min rule the dashboard has always used.
+STALE_FACTOR = 2
+DEAD_FACTOR = 5
+
+HEARTBEAT_TS_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+
+def heartbeat_interval_s(service_name: str) -> int:
+    """Expected seconds between heartbeats for a service."""
+    return HEARTBEAT_INTERVAL_S.get(service_name, DEFAULT_HEARTBEAT_INTERVAL_S)
+
+
+def derive_status(service_name: str, last_heartbeat: str, now: datetime = None) -> str:
+    """
+    The single authoritative liveness rule: 'running' / 'stale' / 'dead' from the
+    age of `last_heartbeat` against the service's own cadence. Never reads the
+    stored `status` column.
+    """
+    now = now or datetime.now()
+    age_s = (now - datetime.strptime(last_heartbeat, HEARTBEAT_TS_FORMAT)).total_seconds()
+    interval = heartbeat_interval_s(service_name)
+    if age_s <= STALE_FACTOR * interval:
+        return 'running'
+    if age_s <= DEAD_FACTOR * interval:
+        return 'stale'
+    return 'dead'
 
 
 class ServiceHealthTracker:
@@ -103,16 +165,20 @@ class ServiceHealthTracker:
             )
         """)
 
-        # Table for service heartbeats
+        # Table for service heartbeats. `status` is kept only so older schemas and
+        # in-flight writers stay compatible; it is written NULL and never read -
+        # liveness comes from derive_status(). Rows left over from the old writer
+        # still say 'running', so blank them once here.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS service_heartbeats (
                 service_name TEXT PRIMARY KEY,
                 last_heartbeat TEXT NOT NULL,
-                status TEXT DEFAULT 'running',
+                status TEXT,
                 cycle_count INTEGER DEFAULT 0,
                 last_cycle_duration_ms INTEGER
             )
         """)
+        cursor.execute("UPDATE service_heartbeats SET status = NULL WHERE status IS NOT NULL")
 
         # Table for historical error log (for trends)
         cursor.execute("""
@@ -340,23 +406,24 @@ class ServiceHealthTracker:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = datetime.now().strftime(HEARTBEAT_TS_FORMAT)
 
             cursor.execute("""
                 INSERT INTO service_heartbeats (service_name, last_heartbeat, status, cycle_count, last_cycle_duration_ms)
-                VALUES (?, ?, 'running', 1, ?)
+                VALUES (?, ?, NULL, 1, ?)
                 ON CONFLICT(service_name) DO UPDATE SET
                     last_heartbeat = excluded.last_heartbeat,
-                    status = 'running',
+                    status = NULL,
                     cycle_count = cycle_count + 1,
                     last_cycle_duration_ms = excluded.last_cycle_duration_ms
             """, (service_name, now, cycle_duration_ms))
 
             conn.commit()
 
-    def get_service_status(self) -> List[Dict]:
+    def get_service_status(self, now: datetime = None) -> List[Dict]:
         """
-        Get status of all services based on heartbeats.
+        Get status of all services, derived from heartbeat age via derive_status().
+        The stored `status` column is deliberately not selected.
 
         Returns:
             List of service status dicts
@@ -365,33 +432,26 @@ class ServiceHealthTracker:
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT service_name, last_heartbeat, status, cycle_count, last_cycle_duration_ms
+            SELECT service_name, last_heartbeat, cycle_count, last_cycle_duration_ms
             FROM service_heartbeats
             ORDER BY service_name
         """)
 
         services = []
-        now = datetime.now()
+        now = now or datetime.now()
 
         for row in cursor.fetchall():
-            last_heartbeat = datetime.strptime(row[1], '%Y-%m-%d %H:%M:%S')
+            last_heartbeat = datetime.strptime(row[1], HEARTBEAT_TS_FORMAT)
             age_minutes = (now - last_heartbeat).total_seconds() / 60
-
-            # Determine status based on heartbeat age
-            if age_minutes > 5:
-                status = "dead"
-            elif age_minutes > 2:
-                status = "stale"
-            else:
-                status = "healthy"
 
             services.append({
                 'service_name': row[0],
                 'last_heartbeat': row[1],
                 'age_minutes': round(age_minutes, 1),
-                'status': status,
-                'cycle_count': row[3],
-                'last_cycle_duration_ms': row[4]
+                'status': derive_status(row[0], row[1], now),
+                'interval_s': heartbeat_interval_s(row[0]),
+                'cycle_count': row[2],
+                'last_cycle_duration_ms': row[3]
             })
 
         return services
@@ -438,7 +498,7 @@ class ServiceHealthTracker:
 
         return {
             'total_services': len(services),
-            'healthy_services': status_counts.get('healthy', 0),
+            'running_services': status_counts.get('running', 0),
             'stale_services': status_counts.get('stale', 0),
             'dead_services': status_counts.get('dead', 0),
             'critical_errors': error_counts.get('critical', 0),
@@ -523,7 +583,7 @@ if __name__ == "__main__":
     # Summary
     summary = data['summary']
     print(f"\nSummary:")
-    print(f"  Services: {summary['healthy_services']}/{summary['total_services']} healthy")
+    print(f"  Services: {summary['running_services']}/{summary['total_services']} running")
     if summary['dead_services'] > 0:
         print(f"  ⚠️  {summary['dead_services']} service(s) NOT RUNNING")
     if summary['critical_errors'] > 0:
@@ -536,7 +596,7 @@ if __name__ == "__main__":
     # Services
     print(f"\nServices:")
     for svc in data['services']:
-        status_icon = {"healthy": "✅", "stale": "🟡", "dead": "🔴"}.get(svc['status'], "❓")
+        status_icon = {"running": "✅", "stale": "🟡", "dead": "🔴"}.get(svc['status'], "❓")
         print(f"  {status_icon} {svc['service_name']}: {svc['status']} "
               f"(last seen {svc['age_minutes']} min ago, {svc['cycle_count']} cycles)")
 
