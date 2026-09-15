@@ -10,6 +10,10 @@ Use Cases:
 - Collector failed to start on a trading day
 - Database was corrupted/deleted
 
+Each candidate day is judged on its own rows (is_day_complete), so a day that a
+mid-session crash truncated is still repaired after newer days have landed.
+`--date YYYY-MM-DD` (repeatable) forces a specific past day regardless.
+
 Author: Claude Opus 4.5
 Date: 2026-02-13
 """
@@ -30,6 +34,17 @@ logger = logging.getLogger(__name__)
 BACKFILL_DAYS = 2  # Always ensure last 2 trading days are available
 MARKET_START = dt_time(9, 15)
 MARKET_END = dt_time(15, 30)
+
+# Completeness of a stored day. The collector writes one tick per minute of the
+# session, timestamped HH:MM:00, so a clean day holds every minute in
+# [MARKET_START, MARKET_END) - 375 ticks, the last one at 15:29.
+EXPECTED_TICKS_PER_DAY = ((MARKET_END.hour * 60 + MARKET_END.minute)
+                          - (MARKET_START.hour * 60 + MARKET_START.minute))  # 375
+LAST_TICK_TIME = (datetime.combine(datetime.min, MARKET_END) - timedelta(minutes=1)).time()  # 15:29
+# A live collector cycle that runs long can drop a single minute; that is not a
+# crash and not worth ~210 Kite calls to repair. A crash loses tens to hundreds
+# of minutes. Anything short by more than this many ticks is treated as truncated.
+TICK_SHORTFALL_TOLERANCE = 5
 
 
 class CentralDataBackfill:
@@ -119,17 +134,60 @@ class CentralDataBackfill:
             logger.error(f"Failed to get last timestamp: {e}")
             return None
 
-    def get_trading_days_to_backfill(self, last_timestamp: Optional[datetime], days: int = BACKFILL_DAYS) -> List[datetime]:
+    def get_day_coverage(self, day) -> Tuple[int, Optional[datetime]]:
         """
-        Calculate which trading days need backfilling.
-
-        Args:
-            last_timestamp: Last data timestamp in DB
+        How much of one trading day the stock_quotes table holds.
 
         Returns:
-            List of dates that need backfilling
+            (distinct tick count, timestamp of the last tick or None if no rows)
         """
-        today = datetime.now().date()
+        day_start = f"{day.strftime('%Y-%m-%d')} 00:00:00"
+        next_day = f"{(day + timedelta(days=1)).strftime('%Y-%m-%d')} 00:00:00"
+        cursor = self.db.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(DISTINCT timestamp), MAX(timestamp) FROM stock_quotes "
+            "WHERE timestamp >= ? AND timestamp < ?",
+            (day_start, next_day)
+        )
+        ticks, last_ts = cursor.fetchone()
+        last_tick = datetime.strptime(last_ts, '%Y-%m-%d %H:%M:%S') if last_ts else None
+        return ticks, last_tick
+
+    def is_day_complete(self, day) -> bool:
+        """
+        A day is complete when its last tick reaches LAST_TICK_TIME and it is
+        short by no more than TICK_SHORTFALL_TOLERANCE ticks. A day with no rows
+        is incomplete. Each day is judged on its own rows - never against the
+        newest row in the table - so a day truncated by a crash stays visible
+        after later days have landed.
+        """
+        ticks, last_tick = self.get_day_coverage(day)
+        if last_tick is None:
+            return False
+        if last_tick.time() < LAST_TICK_TIME:
+            return False
+        return ticks >= EXPECTED_TICKS_PER_DAY - TICK_SHORTFALL_TOLERANCE
+
+    def get_trading_days_to_backfill(self, days: int = BACKFILL_DAYS, today=None) -> List[datetime]:
+        """
+        Calculate which of the last `days` trading days need backfilling:
+        every one that is not complete per is_day_complete().
+
+        Note: Kite publishes the tail of an equity session late (see AGENTS.md),
+        so a day backfilled within about a week of the close may stop at ~15:14
+        and stay "incomplete" while it remains inside the window. Re-runs are
+        cheap and idempotent (INSERT OR IGNORE); a day that falls out of the
+        window still short can be forced later with --date.
+
+        Args:
+            days: Number of trading days to look back
+            today: Date to count back from (default: today)
+
+        Returns:
+            Sorted list of dates that need backfilling
+        """
+        if today is None:
+            today = datetime.now().date()
         days_to_check = []
 
         # Check last `days` trading days
@@ -145,21 +203,15 @@ class CentralDataBackfill:
                     trading_days_found += 1
             check_date -= timedelta(days=1)
 
-        # Filter to only days that need backfilling
         days_to_backfill = []
-
         for day in days_to_check:
-            if last_timestamp is None:
-                # No data at all - backfill everything
+            ticks, last_tick = self.get_day_coverage(day)
+            if self.is_day_complete(day):
+                logger.info(f"  {day}: complete ({ticks} ticks, last {last_tick.time()})")
+            else:
+                last_desc = last_tick.time() if last_tick else 'no rows'
+                logger.info(f"  {day}: incomplete ({ticks} ticks, last {last_desc}) - will backfill")
                 days_to_backfill.append(day)
-            elif day > last_timestamp.date():
-                # Day is after last data - needs backfill
-                days_to_backfill.append(day)
-            elif day == last_timestamp.date():
-                # Same day - check if we have full day's data
-                # If last timestamp is before 15:00, we need more data
-                if last_timestamp.time() < dt_time(15, 0):
-                    days_to_backfill.append(day)
 
         return sorted(days_to_backfill)
 
@@ -330,12 +382,14 @@ class CentralDataBackfill:
             logger.error(f"VIX backfill error for {date}: {e}")
             return 0
 
-    def run_backfill(self, days: int = BACKFILL_DAYS) -> Dict:
+    def run_backfill(self, days: int = BACKFILL_DAYS, dates: Optional[List] = None) -> Dict:
         """
         Run the full backfill process.
 
         Args:
             days: Number of trading days to look back (default: BACKFILL_DAYS)
+            dates: Explicit dates to backfill regardless of completeness. When
+                given, only these dates are processed and the window scan is skipped.
 
         Returns:
             Dict with backfill statistics
@@ -364,8 +418,14 @@ class CentralDataBackfill:
             logger.info("No existing data in database - full backfill needed")
 
         # Get days to backfill
-        days_to_backfill = self.get_trading_days_to_backfill(last_timestamp, days)
-        stats['days_checked'] = days
+        if dates:
+            days_to_backfill = sorted(set(dates))
+            stats['days_checked'] = len(days_to_backfill)
+            logger.info(f"Forced dates (completeness check bypassed): "
+                        f"{[d.strftime('%Y-%m-%d') for d in days_to_backfill]}")
+        else:
+            days_to_backfill = self.get_trading_days_to_backfill(days)
+            stats['days_checked'] = days
 
         if not days_to_backfill:
             logger.info("No backfill needed - data is up to date")
@@ -443,6 +503,11 @@ def run_backfill_standalone():
     parser = argparse.ArgumentParser()
     parser.add_argument('--days', type=int, default=BACKFILL_DAYS,
                         help='Number of trading days to backfill (default: %(default)s)')
+    parser.add_argument('--date', action='append', dest='dates', metavar='YYYY-MM-DD',
+                        type=lambda s: datetime.strptime(s, '%Y-%m-%d').date(),
+                        help='Force this day to be backfilled regardless of how complete it '
+                             'looks. Repeatable. When given, --days is ignored and only the '
+                             'named days are processed. Existing rows are kept (INSERT OR IGNORE).')
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -468,7 +533,7 @@ def run_backfill_standalone():
 
     # Run backfill
     backfill = CentralDataBackfill(kite)
-    stats = backfill.run_backfill(days=args.days)
+    stats = backfill.run_backfill(days=args.days, dates=args.dates)
 
     print(f"\nBackfill complete: {stats}")
 

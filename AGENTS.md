@@ -212,7 +212,10 @@ constraint. Kite also publishes the **tail of a session late**: a day fetched wi
 a week stops at 15:10, and the same day fetched a fortnight later has all 75 bars
 (09:15–15:25). Anything that decides "this day is already stored" must therefore key on
 completeness, not presence — `backfill_intraday_candles.py` is the worked example
-(`PROVISIONAL_DAYS`), pinned by `tests/test_intraday_backfill.py`.
+(`PROVISIONAL_DAYS`), pinned by `tests/test_intraday_backfill.py`. Nor may it key on the
+table's global `MAX(timestamp)`: that made a day truncated by a crash invisible to
+`central_data_backfill.py` as soon as a newer day existed (2026-08-28). Judge each day on
+its own rows — `is_day_complete()`, pinned by `tests/test_central_backfill_day_selection.py`.
 
 **`CentralQuoteDB.cleanup_old_data()` does not run in production.** Its only caller is
 `central_data_collector.main()` (`central_data_collector.py:737`), but the live jobs run
