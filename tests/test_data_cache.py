@@ -215,7 +215,7 @@ def test_backward_compatibility(cache):
 
 
 def test_cache_expiry():
-    """Test 6: Cache expiry based on TTL"""
+    """Test 6: Cache expiry based on TTL (daily-candle types are session-bound, so use an intraday type)"""
     print_test("Cache Expiry (TTL)")
 
     try:
@@ -223,16 +223,16 @@ def test_cache_expiry():
         cache = UnifiedDataCache(cache_dir="data/test_cache/expiry_test")
 
         # Override TTL for quick testing
-        cache.DEFAULT_TTL['historical_30d'] = 0.0014  # ~5 seconds in hours
+        cache.DEFAULT_TTL['intraday_5d'] = 0.0014  # ~5 seconds in hours
 
         symbol = "EXPIRY_TEST"
         data = generate_mock_candles(30)
 
-        print(f"  Setting data with TTL={cache.DEFAULT_TTL['historical_30d'] * 3600:.1f}s...")
-        cache.set_data(symbol, data, 'historical_30d')
+        print(f"  Setting data with TTL={cache.DEFAULT_TTL['intraday_5d'] * 3600:.1f}s...")
+        cache.set_data(symbol, data, 'intraday_5d')
 
         # Immediate retrieval should work
-        retrieved1 = cache.get_data(symbol, 'historical_30d')
+        retrieved1 = cache.get_data(symbol, 'intraday_5d')
         print_result(retrieved1 is not None, "Immediate retrieval works")
 
         # Wait for expiry
@@ -241,16 +241,16 @@ def test_cache_expiry():
         time.sleep(wait_time)
 
         # Should be expired now
-        retrieved2 = cache.get_data(symbol, 'historical_30d')
+        retrieved2 = cache.get_data(symbol, 'intraday_5d')
         print_result(retrieved2 is None, "Cache expired after TTL")
 
         # Check stats
-        stats = cache.get_cache_stats('historical_30d')
+        stats = cache.get_cache_stats('intraday_5d')
         print(f"\n  Expired stocks: {stats['expired_stocks']}")
 
         # Clear expired
         print(f"\n  Clearing expired entries...")
-        cleared = cache.clear_expired('historical_30d')
+        cleared = cache.clear_expired('intraday_5d')
         print_result(cleared > 0, f"Cleared {cleared} expired entries")
 
         return True

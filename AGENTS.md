@@ -140,6 +140,15 @@ point rather than assuming every entry is an equity future —
 no exception, so writes silently vanish. Payloads must be a `List[Dict]` — `set_data` copies each
 element.
 
+**A daily candle fetched during the session is a partial bar, and a cache TTL cannot know
+that.** On 2026-08-31 `historical_50d` held 192 symbols' 09:25 snapshots as completed daily
+bars (median volume 7% of the prior day) and its flat 24 h TTL fed them to ATR the next
+morning. Any cache of daily candles must expire at the NSE close via
+`market_utils.is_daily_candle_cache_valid()` — `UnifiedDataCache.SESSION_BOUND_TYPES` and
+`historical_data_cache._is_cache_valid` both use it, pinned by
+`tests/test_daily_candle_cache_session_expiry.py`. Adding a new daily-candle type to
+`UnifiedDataCache` means adding it to `SESSION_BOUND_TYPES`, not just `DEFAULT_TTL`.
+
 **NFO option symbols:** never build a trading symbol with a format string. NSE uses one
 convention for weekly expiries (`NIFTY2681125700CE`, 2026-08-11) and another for monthly
 (`NIFTY26AUG25350CE`, 2026-08-25), plus month letters O/N/D and holiday-shifted dates.
