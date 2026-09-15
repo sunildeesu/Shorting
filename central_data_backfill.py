@@ -67,8 +67,15 @@ class CentralDataBackfill:
         self.db = get_central_db_writer()
         self.stocks = self._load_stock_list()
         self.instrument_tokens = self._load_instrument_tokens()
+        self.unresolved_symbols = [s for s in self.stocks
+                                   if s not in self.instrument_tokens]
 
         logger.info(f"CentralDataBackfill initialized: {len(self.stocks)} stocks")
+        if self.unresolved_symbols:
+            logger.warning(
+                f"No instrument token for {len(self.unresolved_symbols)} symbols - "
+                f"they will be SKIPPED by backfill: {sorted(self.unresolved_symbols)}"
+            )
 
     def _load_stock_list(self) -> List[str]:
         """Load F&O stock list"""
@@ -253,6 +260,14 @@ class CentralDataBackfill:
             cursor = self.db.conn.cursor()
             records_stored = 0
 
+            # Live collection stores Kite's cumulative day volume, but historical
+            # candles carry per-minute volume. Writing the candle value straight
+            # in makes the column non-monotonic at the live/backfill seam and
+            # silently changes its unit, so accumulate to match live semantics.
+            # Kite returns candles in ascending time order from 09:15, so the
+            # running total lines up with the live figure at the seam.
+            cumulative_volume = 0
+
             for candle in data:
                 timestamp = candle['date']
                 if hasattr(timestamp, 'strftime'):
@@ -262,12 +277,16 @@ class CentralDataBackfill:
 
                 now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+                cumulative_volume += candle['volume']
+
+                # OI is absent from historical_data; NULL records that it was
+                # never observed rather than asserting a real open interest of 0.
                 # Use INSERT OR IGNORE to skip duplicates
                 cursor.execute("""
                     INSERT OR IGNORE INTO stock_quotes
                     (symbol, timestamp, price, volume, oi, oi_day_high, oi_day_low, last_updated)
-                    VALUES (?, ?, ?, ?, 0, 0, 0, ?)
-                """, (symbol, ts_str, candle['close'], candle['volume'], now_str))
+                    VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?)
+                """, (symbol, ts_str, candle['close'], cumulative_volume, now_str))
 
                 if cursor.rowcount > 0:
                     records_stored += 1
@@ -502,6 +521,11 @@ class CentralDataBackfill:
             stats['days_backfilled'] += 1
 
             logger.info(f"  Day complete: {stocks_done} stocks, {day_stock_records} stock records")
+            if self.unresolved_symbols:
+                logger.warning(
+                    f"  {len(self.unresolved_symbols)} symbols skipped (no instrument "
+                    f"token): {sorted(self.unresolved_symbols)}"
+                )
 
         logger.info("\n" + "=" * 80)
         if stats['complete']:
