@@ -214,6 +214,13 @@ currently declarations of intent, not behaviour. Do not wire it up casually: it 
 `VACUUM`, an exclusive rewrite of a 370 MB+ database, and it deletes quote rows on a 1-day
 window. `tests/test_intraday_retention.py` pins what the function does when it is called.
 
+**`service_heartbeats.status` is not a liveness claim.** It is written NULL and kept only
+for schema compatibility; on 2026-08-31 the old stored `'running'` described six dead monitors
+for eight hours. Liveness is `service_health.derive_status()` — heartbeat age against that
+service's own cadence (`HEARTBEAT_INTERVAL_S`, rule in the module docstring). Any new reader,
+including ad-hoc `sqlite3` audits, must difference `last_heartbeat`; never `SELECT status`.
+`tests/test_service_health_liveness.py` pins it.
+
 **Stored 5-minute bars are gap-free inside a session, never across one.** Measured
 2026-08-11 over 195 symbols × 16 sessions: 225,401 of 225,401 intra-session steps are
 exactly 5 minutes, every timestamp carries `+05:30`, and the step across a session boundary
