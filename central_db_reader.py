@@ -150,10 +150,10 @@ def fetch_stock_prices(
 
             price_data[symbol] = {
                 'price': price,
-                'volume': quote.get('volume', 0),
-                'oi': quote.get('oi', 0),
-                'oi_day_high': quote.get('oi_day_high', 0),
-                'oi_day_low': quote.get('oi_day_low', 0),
+                'volume': quote.get('volume') or 0,
+                'oi': quote.get('oi') or 0,
+                'oi_day_high': quote.get('oi_day_high') or 0,
+                'oi_day_low': quote.get('oi_day_low') or 0,
                 'timestamp': quote.get('timestamp', datetime.now().isoformat())
             }
 

@@ -165,7 +165,7 @@ class DaySelectionTestCase(unittest.TestCase):
 
         def fake_run(self_, days, dates):
             seen['days'], seen['dates'] = days, dates
-            return {'days_backfilled': 0}
+            return {'days_backfilled': 0, 'complete': True}
 
         fake_kite_cls = mock.MagicMock()
         fake_kite_cls.return_value.profile.return_value = {'user_name': 'test'}

@@ -251,6 +251,23 @@ is ~17h50m–18h05m (overnight) or ~2d18h (weekend). A resampler that buckets by
 time alone will fabricate bars spanning the overnight gap; group by session date first. A
 full session is 75 bars, which divides evenly into 15m but not into 10m or 1h.
 
+**`stock_quotes.volume` is Kite's cumulative day volume, not per-minute.** Historical
+candles carry per-minute volume, so anything writing history into that column must
+accumulate first — `central_data_backfill.py` did not, and on 2026-08-31 the column
+jumped 3,145,936 → 23,514 at the 11:20 live/backfill seam and stayed in the wrong unit
+for the rest of the session. `oi` in a backfilled row is NULL (historical_data has no
+open interest; 0 is a real OI value a reader cannot tell from a missing one), so read it
+as `quote.get('oi') or 0`. `tests/test_central_data_backfill_seam.py` pins both, and
+pins that a symbol the backfill cannot resolve is named in the log, never skipped
+silently (the same run logged `Errors: 0` while 18 symbols were missing — the token-map
+side of that is the `instrument_tokens.json` entry above).
+
+**Known unfixed: live volume collapses in the closing window.** On every fully-live day,
+~208 symbols show a backward volume step at 15:21 (e.g. IDEA 428,822,309 → 900,266), with
+a smaller tail of them through 15:20–15:29. Cause not yet traced. Detect it with a
+`LAG(volume) OVER (PARTITION BY symbol, day ORDER BY timestamp)` scan; a clean day should
+have zero backward steps.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
