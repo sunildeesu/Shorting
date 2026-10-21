@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Test Suite for Short Screening Functionality
 

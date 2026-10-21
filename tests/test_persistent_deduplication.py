@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Test Persistent Alert Deduplication
 Tests that alert deduplication works across script restarts (simulates cron job behavior)

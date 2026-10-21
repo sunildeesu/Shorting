@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Test OI Integration - Verify OI analysis flows through the entire pipeline
 """

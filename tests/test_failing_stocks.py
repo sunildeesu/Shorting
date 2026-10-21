@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Test why specific stocks are failing to fetch from Screener.in
 """

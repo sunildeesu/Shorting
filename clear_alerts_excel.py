@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Clear Alert Tracking Excel
 

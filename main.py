@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 NSE Stock Monitor - Main Entry Point (CONTINUOUS MODE)
 Monitors NSE F&O stocks for significant price drops and sends Telegram alerts

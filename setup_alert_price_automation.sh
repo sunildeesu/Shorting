@@ -10,7 +10,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 echo "================================================"
@@ -22,7 +22,7 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 
 # 1. Create 2-minute price updater plist
 echo "Creating 2-minute price updater..."
-cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price2min.plist" << 'EOF'
+cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price2min.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -32,19 +32,19 @@ cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price2min.plist" << 'EOF'
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/update_alert_prices.py</string>
+        <string>$PROJECT_DIR/venv/bin/python3</string>
+        <string>$PROJECT_DIR/update_alert_prices.py</string>
         <string>--2min</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>$PROJECT_DIR</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_2min.log</string>
+    <string>$PROJECT_DIR/logs/price_update_2min.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_2min_error.log</string>
+    <string>$PROJECT_DIR/logs/price_update_2min_error.log</string>
 
     <!-- Run every 2 minutes during market hours (9:30 AM - 3:30 PM) -->
     <key>StartCalendarInterval</key>
@@ -82,7 +82,7 @@ EOF
 
 # 2. Create 10-minute price updater plist
 echo "Creating 10-minute price updater..."
-cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price10min.plist" << 'EOF'
+cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price10min.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -92,19 +92,19 @@ cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.price10min.plist" << 'EOF'
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/update_alert_prices.py</string>
+        <string>$PROJECT_DIR/venv/bin/python3</string>
+        <string>$PROJECT_DIR/update_alert_prices.py</string>
         <string>--10min</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>$PROJECT_DIR</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_10min.log</string>
+    <string>$PROJECT_DIR/logs/price_update_10min.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_10min_error.log</string>
+    <string>$PROJECT_DIR/logs/price_update_10min_error.log</string>
 
     <!-- Run every 10 minutes during market hours -->
     <key>StartCalendarInterval</key>
@@ -155,7 +155,7 @@ EOF
 
 # 3. Create EOD price updater plist (runs once at 3:30 PM)
 echo "Creating EOD price updater..."
-cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.priceeod.plist" << 'EOF'
+cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.priceeod.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -165,18 +165,18 @@ cat > "$LAUNCH_AGENTS_DIR/com.nse.alert.priceeod.plist" << 'EOF'
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/update_eod_prices.py</string>
+        <string>$PROJECT_DIR/venv/bin/python3</string>
+        <string>$PROJECT_DIR/update_eod_prices.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>$PROJECT_DIR</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_eod.log</string>
+    <string>$PROJECT_DIR/logs/price_update_eod.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/price_update_eod_error.log</string>
+    <string>$PROJECT_DIR/logs/price_update_eod_error.log</string>
 
     <!-- Run daily at 3:30 PM IST (market close) -->
     <key>StartCalendarInterval</key>

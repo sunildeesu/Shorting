@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Daily Token Validity Checker
 Runs every morning to check Kite Connect token validity and send alerts

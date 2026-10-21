@@ -20,7 +20,7 @@ Arguments:
     --dry-run                Show what would be deleted without actually deleting
 
 Schedule with cron:
-    0 6 * * * cd /Users/sunildeesu/myProjects/ShortIndicator && python cleanup_old_cache.py >> logs/cleanup.log 2>&1
+    0 6 * * * cd /path/to/ShortIndicator && python cleanup_old_cache.py >> logs/cleanup.log 2>&1
 """
 
 import os

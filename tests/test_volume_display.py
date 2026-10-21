@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Test Volume Display in Telegram Alerts
 Tests that volume information is shown in all alert types
