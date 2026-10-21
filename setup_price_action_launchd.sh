@@ -8,7 +8,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/sunildeesu/myProjects/ShortIndicator"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_NAME="com.nse.priceaction.monitor.plist"
 PLIST_PATH="$LAUNCH_AGENTS_DIR/$PLIST_NAME"
@@ -23,7 +23,7 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 
 # Create the plist file
 echo "Creating $PLIST_NAME..."
-cat > "$PLIST_PATH" << 'PLIST_EOF'
+cat > "$PLIST_PATH" << PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -35,13 +35,13 @@ cat > "$PLIST_PATH" << 'PLIST_EOF'
     <!-- Program to run -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3</string>
-        <string>/Users/sunildeesu/myProjects/ShortIndicator/price_action_monitor.py</string>
+        <string>$PROJECT_DIR/venv/bin/python3</string>
+        <string>$PROJECT_DIR/price_action_monitor.py</string>
     </array>
 
     <!-- Working Directory -->
     <key>WorkingDirectory</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator</string>
+    <string>$PROJECT_DIR</string>
 
     <!-- Run every 5 minutes during market hours (9:25 AM - 3:25 PM) on weekdays -->
     <!-- Total: 73 runs per day (from 9:25 to 15:25) -->
@@ -80,15 +80,15 @@ ENTRY_EOF
 done
 
 # Complete the plist file
-cat >> "$PLIST_PATH" << 'PLIST_END'
+cat >> "$PLIST_PATH" << PLIST_END
     </array>
 
     <!-- Standard Output/Error Logs -->
     <key>StandardOutPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/priceaction-monitor-stdout.log</string>
+    <string>$PROJECT_DIR/logs/priceaction-monitor-stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/sunildeesu/myProjects/ShortIndicator/logs/priceaction-monitor-stderr.log</string>
+    <string>$PROJECT_DIR/logs/priceaction-monitor-stderr.log</string>
 
     <!-- Don't run on load (only at scheduled times) -->
     <key>RunAtLoad</key>

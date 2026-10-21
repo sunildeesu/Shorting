@@ -5,7 +5,7 @@
 # The script itself handles market-open gating via is_market_open()
 #
 
-PROJECT_DIR="/Users/sunilkumar/myProjects/ShortIndicator"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)" || exit 1
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 MONITOR_SCRIPT="$PROJECT_DIR/vwap_mover_monitor.py"
 LOG_DIR="$PROJECT_DIR/logs"
@@ -33,7 +33,7 @@ log "Script  : $MONITOR_SCRIPT"
 log "Day     : $DAY_OF_WEEK (weekday)"
 log ""
 
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || { log "❌ Cannot cd to $PROJECT_DIR"; exit 1; }
 
 if [ ! -f "$VENV_PYTHON" ]; then
     log "❌ Virtual environment not found at $VENV_PYTHON"
@@ -64,7 +64,7 @@ log ""
 
 "$VENV_PYTHON" "$MONITOR_SCRIPT" 2>&1 | tee -a "$LOG_FILE"
 
-EXIT_CODE=$?
+EXIT_CODE=${PIPESTATUS[0]}
 log ""
 log "=========================================="
 if [ $EXIT_CODE -eq 0 ]; then

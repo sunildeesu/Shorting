@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 ATR Breakout Monitor
 Based on hedge fund strategy using Average True Range for breakout detection

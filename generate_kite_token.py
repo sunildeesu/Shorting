@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """Generate Kite Connect access token - Run this daily before market hours"""
 
 from kiteconnect import KiteConnect

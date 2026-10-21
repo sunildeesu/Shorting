@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Fetch Shares Outstanding for F&O Stocks
 One-time script to create shares_outstanding.json database

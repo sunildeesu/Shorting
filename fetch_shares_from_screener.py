@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Fetch Market Cap from Screener.in (Indian Stock Data Source)
 Calculate shares outstanding from: Shares = Market Cap / Current Price

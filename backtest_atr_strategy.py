@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 ATR Breakout Strategy Backtesting
 Simulates the ATR breakout strategy over historical data and generates detailed Excel report

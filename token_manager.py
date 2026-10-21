@@ -1,4 +1,4 @@
-#!/Users/sunildeesu/myProjects/ShortIndicator/venv/bin/python3
+#!/usr/bin/env python3
 """
 Kite Connect Token Manager
 Handles token validation, expiry tracking, and easy refresh workflow
