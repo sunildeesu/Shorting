@@ -73,6 +73,8 @@ class KeychainAccessorTest(unittest.TestCase):
         self.key = 'TEST_KITE_ACCESS_TOKEN'
         credentials._warned_keys.clear()
         self.addCleanup(credentials._warned_keys.clear)
+        credentials._keychain_unavailable_reported = False
+        self.addCleanup(setattr, credentials, '_keychain_unavailable_reported', False)
 
     def tearDown(self):
         credentials.delete_secret(self.key)
@@ -105,6 +107,64 @@ class KeychainAccessorTest(unittest.TestCase):
         joined = '\n'.join(logs.output)
         self.assertIn(self.key, joined)
         self.assertNotIn('from-dotenv', joined, "fallback warning leaked the value")
+
+    def test_genuinely_missing_item_names_the_key_not_unavailability(self):
+        # The throwaway service is readable and empty: security exits 44, which is
+        # a migration gap, not a daemon context.
+        with mock.patch.dict(os.environ, {self.key: 'from-dotenv'}):
+            with self.assertLogs('credentials', level='WARNING') as logs:
+                credentials.get_secret(self.key)
+        joined = '\n'.join(logs.output)
+        self.assertIn('not in Keychain', joined)
+        self.assertIn('migrate_credentials_to_keychain.py', joined)
+        self.assertNotIn('unavailable', joined)
+        self.assertNotIn('phase 2', joined)
+
+    def test_unavailable_keychain_is_reported_once_for_all_keys(self):
+        # A LaunchDaemon gets errSecInteractionNotAllowed (exit 36) for every read.
+        # config.py reads six secrets at import; that must be one line, not six.
+        env = {k: f'value-of-{k}' for k in credentials.SECRET_KEYS[:3]}
+        denied = mock.Mock(returncode=36, stdout='',
+                           stderr='security: User interaction is not allowed.')
+        with mock.patch('subprocess.run', return_value=denied), \
+                mock.patch.dict(os.environ, env):
+            with self.assertLogs('credentials', level='WARNING') as logs:
+                for key in env:
+                    self.assertEqual(credentials.get_secret(key), env[key])
+                    self.assertEqual(credentials.get_secret(key), env[key])
+        self.assertEqual(len(logs.output), 1, logs.output)
+        line = logs.output[0]
+        self.assertIn('Keychain unavailable in this context', line)
+        self.assertIn('exit 36', line)
+        for key, value in env.items():
+            self.assertIn(key, line)
+            self.assertNotIn(value, line, "fallback warning leaked a value")
+        self.assertNotIn('phase 2', line)
+
+    def test_unavailable_keychain_still_names_a_key_outside_the_first_line(self):
+        denied = mock.Mock(returncode=36, stdout='', stderr='')
+        with mock.patch('subprocess.run', return_value=denied):
+            with mock.patch.dict(os.environ, {'KITE_API_KEY': 'v1'}):
+                with self.assertLogs('credentials', level='WARNING'):
+                    credentials.get_secret('KITE_API_KEY')
+            with mock.patch.dict(os.environ, {self.key: 'v2'}):
+                with self.assertLogs('credentials', level='WARNING') as logs:
+                    credentials.get_secret(self.key)
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn(self.key, logs.output[0])
+        self.assertNotIn('KITE_API_KEY', logs.output[0])
+
+    def test_missing_from_both_is_an_error_every_time_even_when_unavailable(self):
+        denied = mock.Mock(returncode=36, stdout='', stderr='')
+        with mock.patch('subprocess.run', return_value=denied), \
+                mock.patch.dict(os.environ, {}, clear=True):
+            os.environ['SI_KEYCHAIN_SERVICE'] = self.service
+            with self.assertLogs('credentials', level='ERROR') as logs:
+                self.assertIsNone(credentials.get_secret(self.key))
+                self.assertIsNone(credentials.get_secret(self.key))
+        errors = [line for line in logs.output if line.startswith('ERROR')]
+        self.assertEqual(len(errors), 2)
+        self.assertIn(self.key, errors[0])
 
     def test_missing_from_both_raises_naming_the_key_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):

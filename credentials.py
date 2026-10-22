@@ -25,10 +25,17 @@ so a concurrent reader sees the whole old file or the whole new one, never nothi
 TEMPORARY .env FALLBACK
 -----------------------
 `get_secret()` reads the Keychain first and falls back to `.env` with a warning.
-That fallback is phase-1 scaffolding only: it exists so a Keychain problem cannot
-take the live pipeline down before the captain has watched a full trading day run
-on the Keychain path. Phase 2 - remove the secrets from `.env` and delete
-`_getenv_fallback` along with the `env_fallback` argument - is the captain's call.
+That fallback was phase-1 scaffolding, but boot-time LaunchDaemons cannot read the
+login Keychain at all (`security` exits 36, "User interaction is not allowed"), and
+they get their secrets from `.env` through it. Removing it (phase 2) is on hold
+while they depend on it.
+
+The warning says which of two things happened, once per process:
+  * the Keychain is unavailable in this context - one line naming every secret
+    `.env` holds, not one per key;
+  * the Keychain search ran and found no item (exit 44) - one line per key,
+    because that is usually a migration gap worth fixing.
+A secret in neither store is logged at ERROR every time it is asked for.
 
 Never log, print or raise a secret *value*. Errors name the key only.
 """
@@ -74,8 +81,15 @@ SECRET_KEYS = (
 # project root. Loading here keeps this module usable without importing config.
 load_dotenv()
 
-# One warning per key per process - config.py is imported by nearly every script.
+# `security` exits with the low byte of the OSStatus: errSecItemNotFound (-25300)
+# is 44. Any other failure (36 = errSecInteractionNotAllowed, a daemon or ssh
+# context) means the Keychain could not be read, not that the item is absent.
+_ITEM_NOT_FOUND_EXIT = 44
+
+# Keys already named in a fallback warning - config.py is imported by nearly every
+# script, so each key is named at most once per process.
 _warned_keys = set()
+_keychain_unavailable_reported = False
 
 
 class CredentialError(Exception):
@@ -123,21 +137,44 @@ def get_secret(name, required=False, env_fallback=True):
     if env_fallback:
         value = os.getenv(name)
         if value:
-            if name not in _warned_keys:
-                _warned_keys.add(name)
-                logger.warning(
-                    "%s not in Keychain (service=%s) - falling back to plaintext .env. "
-                    "Run scripts/migrate_credentials_to_keychain.py; this fallback is "
-                    "removed in phase 2.", name, _keychain_service()
-                )
+            _warn_env_fallback(name, result)
             return value
 
+    message = (f"Secret '{name}' not found in Keychain (service={_keychain_service()})"
+               + (" or .env" if env_fallback else ""))
     if required:
-        raise CredentialError(
-            f"Secret '{name}' not found in Keychain (service={_keychain_service()})"
-            + (" or .env" if env_fallback else "")
-        )
+        raise CredentialError(message)
+    logger.error(message)
     return None
+
+
+def _warn_env_fallback(name, result):
+    """Name `name` in a fallback warning unless this process already has."""
+    global _keychain_unavailable_reported
+    if name in _warned_keys:
+        return
+
+    if result is not None and result.returncode in (0, _ITEM_NOT_FOUND_EXIT):
+        _warned_keys.add(name)
+        logger.warning(
+            "%s not in Keychain (service=%s) - using .env. "
+            "Run scripts/migrate_credentials_to_keychain.py to move it.",
+            name, _keychain_service()
+        )
+        return
+
+    # Unavailability is a property of the context, so every secret will miss the
+    # same way: name them all on the first miss rather than one line per key.
+    keys = [name]
+    if not _keychain_unavailable_reported:
+        _keychain_unavailable_reported = True
+        keys += [k for k in SECRET_KEYS
+                 if k != name and k not in _warned_keys and os.getenv(k)]
+    _warned_keys.update(keys)
+    reason = ('timed out' if result is None
+              else f"security exit {result.returncode}: {result.stderr.strip()}")
+    logger.warning("Keychain unavailable in this context (%s); using .env for %s",
+                   reason, ', '.join(keys))
 
 
 def set_secret(name, value):
