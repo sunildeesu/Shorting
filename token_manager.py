@@ -138,7 +138,7 @@ This will refresh your token for another 24 hours.
 
     def update_env_file(self, access_token: str):
         """
-        Store the refreshed access token. Keychain first, then a mirrored .env write.
+        Store the refreshed access token in .env, its single store.
 
         Name and signature are unchanged because NewsBase's
         data_feeds/token_refresh.py calls this after chdir'ing to SI_PATH.
@@ -147,30 +147,19 @@ This will refresh your token for another 24 hours.
         scheduler). Its old body truncated .env before writing, and on
         2026-08-09 those two collapsed to 514 microseconds apart and one read
         landed inside the other's truncate window - 22 settings were lost. The
-        Keychain write below is transactional and the .env write is now
-        temp-file + fsync + os.replace, so neither path can expose a partial file.
+        write is now temp-file + fsync + os.replace, so it cannot expose a
+        partial file.
 
-        The .env mirror is phase-1 only: analyze_wednesday_tuesday.py and
-        backtest_intraday_pnl.py still read KITE_ACCESS_TOKEN with os.getenv(),
-        as does NewsBase, and get_secret() still falls back to .env. It goes away
-        with the fallback in phase 2.
+        The token is not written to the Keychain. The boot-time LaunchDaemon
+        refresher cannot write the login Keychain, so a Keychain copy would go
+        stale and every reader that preferred it would fail Kite auth.
+        config.py reads the token from .env.
         """
-        keychain_ok = False
-        try:
-            credentials.set_secret('KITE_ACCESS_TOKEN', access_token)
-            keychain_ok = True
-            logger.info("✅ Stored new access token in the Keychain")
-        except credentials.CredentialError as e:
-            logger.error(f"Keychain write failed, relying on .env: {e}")
-
-        env_ok = credentials.update_env_atomic({'KITE_ACCESS_TOKEN': access_token})
-        if env_ok:
-            logger.info("✅ Updated .env file with new access token")
-
-        if not (keychain_ok or env_ok):
-            logger.error("Access token was not stored anywhere")
+        if not credentials.update_env_atomic({'KITE_ACCESS_TOKEN': access_token}):
+            logger.error("Access token was not stored: .env not found")
             return False
 
+        logger.info("✅ Updated .env file with new access token")
         return True
 
 

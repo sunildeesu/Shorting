@@ -93,17 +93,17 @@ try:
     update_env = input("\nWould you like to update .env file automatically? (y/n): ").strip().lower()
 
     if update_env == 'y':
-        # Secrets go to the Keychain. get_secret() prefers the Keychain, so a
-        # manual refresh that only touched .env would leave the whole system
-        # reading the stale Keychain token.
+        # The API key and secret go to the Keychain. The access token does not:
+        # .env is its single store (config.py reads it from there), because the
+        # boot-time LaunchDaemon refresher cannot write the login Keychain.
         for key, value in (('KITE_API_KEY', api_key),
-                           ('KITE_API_SECRET', api_secret),
-                           ('KITE_ACCESS_TOKEN', access_token)):
+                           ('KITE_API_SECRET', api_secret)):
             credentials.set_secret(key, value)
 
-        print("\n✅ Kite credentials stored in the Keychain")
+        print("\n✅ Kite API key and secret stored in the Keychain")
 
-        # Mirror into .env for the phase-1 fallback and the non-secret DATA_SOURCE.
+        # .env holds the access token, plus the phase-1 fallback copies of the key
+        # and secret and the non-secret DATA_SOURCE.
         # Atomic (temp file + os.replace) - see credentials.update_env_atomic.
         if credentials.update_env_atomic({
             'KITE_API_KEY': api_key,
@@ -113,8 +113,9 @@ try:
         }):
             print(f"\n✅ .env file updated successfully!")
         else:
-            print("\n⚠️  No .env file found - copy .env.example to .env and add "
-                  "DATA_SOURCE=kite. The secrets above are already in the Keychain.")
+            print("\n⚠️  No .env file found - the access token was NOT stored. Copy "
+                  ".env.example to .env, add DATA_SOURCE=kite, and run this again. "
+                  "The API key and secret are already in the Keychain.")
 
         # Save token metadata for expiry tracking
         try:

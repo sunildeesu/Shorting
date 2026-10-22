@@ -180,7 +180,10 @@ DATA_SOURCE = os.getenv('DATA_SOURCE', 'nsepy').lower()  # Options: 'nsepy', 'ya
 # Kite Connect Configuration
 KITE_API_KEY = get_secret('KITE_API_KEY')
 KITE_API_SECRET = get_secret('KITE_API_SECRET')
-KITE_ACCESS_TOKEN = get_secret('KITE_ACCESS_TOKEN')
+# The access token is the one secret read from .env, never the Keychain: .env is its
+# single store, because the boot-time LaunchDaemon refresher cannot write the login
+# Keychain and a Keychain copy would go stale for every other reader.
+KITE_ACCESS_TOKEN = os.getenv('KITE_ACCESS_TOKEN')
 
 # Rate Limiting Configuration
 # Kite Connect allows 3 requests/second for quote API

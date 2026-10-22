@@ -205,6 +205,7 @@ for free-form text. Calling `_send_message` on the facade raises inside the call
 `credentials.get_secret()` is the only way to read one (macOS Keychain, service
 `ShortIndicator`, account = the key name), with a *temporary* `.env` fallback that phase 2
 deletes. The ~200 non-secret tuning settings stay ordinary `os.getenv` reads of `.env`.
+Exception: `KITE_ACCESS_TOKEN` lives only in `.env` and is read with `os.getenv` (a boot-time daemon refresher cannot write the Keychain).
 Any write to `.env` goes through `credentials.update_env_atomic()` — temp file + fsync +
 `os.replace`. This is not style: on 2026-08-09 two token-refresh writers landed 514 µs
 apart, one read inside the other's `open(path,'w')` truncate window, and `.env` came back
