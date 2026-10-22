@@ -294,7 +294,7 @@ class PreMarketAnalyzer:
         try:
             # Step 1: Detect market regime
             logger.info("\n[STEP 1/7] Detecting market regime...")
-            market_regime = self.regime_detector.detect_regime()
+            market_regime = self.regime_detector.get_market_regime()
             logger.info(f"Market regime: {market_regime}")
 
             # Step 2: Fetch batch quotes for all F&O stocks
