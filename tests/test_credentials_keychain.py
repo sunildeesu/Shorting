@@ -73,8 +73,8 @@ class KeychainAccessorTest(unittest.TestCase):
         self.key = 'TEST_KITE_ACCESS_TOKEN'
         credentials._warned_keys.clear()
         self.addCleanup(credentials._warned_keys.clear)
-        credentials._keychain_unavailable_reported = False
-        self.addCleanup(setattr, credentials, '_keychain_unavailable_reported', False)
+        credentials._fallback_reported = False
+        self.addCleanup(setattr, credentials, '_fallback_reported', False)
 
     def tearDown(self):
         credentials.delete_secret(self.key)
@@ -108,25 +108,11 @@ class KeychainAccessorTest(unittest.TestCase):
         self.assertIn(self.key, joined)
         self.assertNotIn('from-dotenv', joined, "fallback warning leaked the value")
 
-    def test_genuinely_missing_item_names_the_key_not_unavailability(self):
-        # The throwaway service is readable and empty: security exits 44, which is
-        # a migration gap, not a daemon context.
-        with mock.patch.dict(os.environ, {self.key: 'from-dotenv'}):
-            with self.assertLogs('credentials', level='WARNING') as logs:
-                credentials.get_secret(self.key)
-        joined = '\n'.join(logs.output)
-        self.assertIn('not in Keychain', joined)
-        self.assertIn('migrate_credentials_to_keychain.py', joined)
-        self.assertNotIn('unavailable', joined)
-        self.assertNotIn('phase 2', joined)
-
-    def test_unavailable_keychain_is_reported_once_for_all_keys(self):
-        # A LaunchDaemon gets errSecInteractionNotAllowed (exit 36) for every read.
+    def _assert_one_fallback_warning(self, returncode, reason):
         # config.py reads six secrets at import; that must be one line, not six.
         env = {k: f'value-of-{k}' for k in credentials.SECRET_KEYS[:3]}
-        denied = mock.Mock(returncode=36, stdout='',
-                           stderr='security: User interaction is not allowed.')
-        with mock.patch('subprocess.run', return_value=denied), \
+        miss = mock.Mock(returncode=returncode, stdout='', stderr='')
+        with mock.patch('subprocess.run', return_value=miss), \
                 mock.patch.dict(os.environ, env):
             with self.assertLogs('credentials', level='WARNING') as logs:
                 for key in env:
@@ -134,25 +120,35 @@ class KeychainAccessorTest(unittest.TestCase):
                     self.assertEqual(credentials.get_secret(key), env[key])
         self.assertEqual(len(logs.output), 1, logs.output)
         line = logs.output[0]
-        self.assertIn('Keychain unavailable in this context', line)
-        self.assertIn('exit 36', line)
+        self.assertIn(reason, line)
         for key, value in env.items():
             self.assertIn(key, line)
             self.assertNotIn(value, line, "fallback warning leaked a value")
         self.assertNotIn('phase 2', line)
+        self.assertNotIn('migrate', line)
 
-    def test_unavailable_keychain_still_names_a_key_outside_the_first_line(self):
-        denied = mock.Mock(returncode=36, stdout='', stderr='')
-        with mock.patch('subprocess.run', return_value=denied):
+    def test_item_not_found_for_several_keys_is_one_warning(self):
+        # The real system-domain LaunchDaemon probe got exit 44 - not 36 - for
+        # keys that ARE in the login Keychain, so 44 must not warn per key, and
+        # its reason must cover both a missing item and an unseen Keychain.
+        self._assert_one_fallback_warning(
+            44, 'either missing, or this context cannot see the login Keychain')
+
+    def test_unavailable_keychain_for_several_keys_is_one_warning(self):
+        self._assert_one_fallback_warning(36, 'Keychain unavailable in this context')
+
+    def test_key_outside_the_first_line_is_named_without_a_second_warning(self):
+        miss = mock.Mock(returncode=44, stdout='', stderr='')
+        with mock.patch('subprocess.run', return_value=miss):
             with mock.patch.dict(os.environ, {'KITE_API_KEY': 'v1'}):
                 with self.assertLogs('credentials', level='WARNING'):
                     credentials.get_secret('KITE_API_KEY')
             with mock.patch.dict(os.environ, {self.key: 'v2'}):
-                with self.assertLogs('credentials', level='WARNING') as logs:
+                with self.assertLogs('credentials', level='INFO') as logs:
                     credentials.get_secret(self.key)
         self.assertEqual(len(logs.output), 1)
+        self.assertTrue(logs.output[0].startswith('INFO'), logs.output)
         self.assertIn(self.key, logs.output[0])
-        self.assertNotIn('KITE_API_KEY', logs.output[0])
 
     def test_missing_from_both_is_an_error_every_time_even_when_unavailable(self):
         denied = mock.Mock(returncode=36, stdout='', stderr='')
