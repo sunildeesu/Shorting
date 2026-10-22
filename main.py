@@ -23,6 +23,13 @@ for _v in ("VECLIB_MAXIMUM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
 import threading
 from datetime import datetime, time as dt_time
 from market_utils import is_market_open, get_market_status
+# pandas_ta imports numba at module load, so a venv without it dies deep inside
+# stock_monitor's imports (2026-05-19). Fail here with the fix instead.
+try:
+    import numba  # noqa: F401
+except ImportError as e:
+    sys.exit(f"numba is not importable ({e}); pandas_ta needs it. "
+             "Run: venv/bin/pip install numba==0.65.1")
 from stock_monitor import StockMonitor
 import config
 
