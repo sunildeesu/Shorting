@@ -4,7 +4,7 @@ Single place anything in this repo asks for a secret.
 Secrets live in the macOS login Keychain as generic passwords:
 
     service = SI_KEYCHAIN_SERVICE ("ShortIndicator")
-    account = the key name        ("KITE_ACCESS_TOKEN")
+    account = the key name        ("KITE_API_KEY")
 
 `/usr/bin/security` serves these non-interactively to a background launchd job -
 no prompt, no unlocked-GUI requirement - which is what the 08:55 token refresh needs.
@@ -51,6 +51,9 @@ KEYCHAIN_SERVICE = 'ShortIndicator'
 KEYCHAIN_TIMEOUT_SECONDS = 10
 
 # The secrets this project owns. Order is the order the migration script reports.
+# KITE_ACCESS_TOKEN is deliberately absent: its single store is `.env` (config.py
+# reads it with os.getenv), because the boot-time LaunchDaemon refresher cannot write
+# the login Keychain, so a Keychain copy goes stale and shadows the fresh token.
 # KITE_USER_ID / KITE_PASSWORD / KITE_TOTP_KEY have no consumer in this repo -
 # they are read by NewsBase's data_feeds/token_refresh.py out of this same shared
 # `.env`. They are listed (and migrated) so that repo's sibling task has them
@@ -58,7 +61,6 @@ KEYCHAIN_TIMEOUT_SECONDS = 10
 SECRET_KEYS = (
     'KITE_API_KEY',
     'KITE_API_SECRET',
-    'KITE_ACCESS_TOKEN',
     'KITE_USER_ID',
     'KITE_PASSWORD',
     'KITE_TOTP_KEY',

@@ -289,7 +289,12 @@ class EnvWriteAtomicityTest(unittest.TestCase):
 
 
 class TokenManagerWritePathTest(unittest.TestCase):
-    """update_env_file stores the token in the Keychain, atomically."""
+    """update_env_file stores the token in .env only, atomically - never the Keychain.
+
+    The boot-time LaunchDaemon refresher cannot write the login Keychain. While
+    readers preferred the Keychain, a daemon refresh updated only .env and every
+    other job kept reading the previous day's Keychain token and failed Kite auth.
+    """
 
     def setUp(self):
         self.service = f'ShortIndicatorTest-{uuid.uuid4().hex[:12]}'
@@ -315,26 +320,47 @@ class TokenManagerWritePathTest(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
-    def test_token_lands_in_the_keychain_and_in_env(self):
+    def _config_token_matches(self, expected):
+        """Import config in a fresh process, as a job would, and compare its token."""
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {k: v for k, v in os.environ.items() if k != 'KITE_ACCESS_TOKEN'}
+        env['PYTHONPATH'] = repo
+        # Prints a comparison, never the token.
+        proc = subprocess.run(
+            [sys.executable, '-c',
+             'import sys, config; print(config.KITE_ACCESS_TOKEN == sys.argv[1])', expected],
+            cwd=self.tmpdir.name, env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip() == 'True'
+
+    def test_token_lands_in_env_and_not_the_keychain(self):
         self.assertTrue(self._update('fresh-token'))
-        self.assertEqual(credentials.get_secret('KITE_ACCESS_TOKEN'), 'fresh-token')
         with open(self.env_path) as f:
             self.assertIn('KITE_ACCESS_TOKEN=fresh-token', f.read())
         # The other 21 settings are still there.
         self.assertEqual(_key_count(self.env_path), len(_ENV_KEYS))
+        self.assertFalse(credentials.has_secret('KITE_ACCESS_TOKEN'))
 
-    def test_succeeds_when_env_is_absent(self):
-        """Post-phase-2 shape: no .env, Keychain write alone is enough."""
-        os.unlink(self.env_path)
-        self.assertTrue(self._update('keychain-only'))
-        self.assertEqual(credentials.get_secret('KITE_ACCESS_TOKEN', env_fallback=False),
-                         'keychain-only')
-
-    def test_reports_failure_when_neither_store_accepts_the_token(self):
-        os.unlink(self.env_path)
+    def test_daemon_refresh_and_config_read_agree_despite_a_stale_keychain_item(self):
+        """The daemon-refresh-then-agent-read failure: a leftover Keychain copy must not win."""
+        credentials.set_secret('KITE_ACCESS_TOKEN', 'yesterdays-token')
+        # A LaunchDaemon cannot write the login Keychain.
         with mock.patch.object(credentials, 'set_secret',
-                               side_effect=credentials.CredentialError('nope')):
-            self.assertFalse(self._update('doomed'))
+                               side_effect=credentials.CredentialError('no keychain')):
+            self.assertTrue(self._update('fresh-token'))
+        self.assertTrue(self._config_token_matches('fresh-token'))
+
+    def test_refresh_never_calls_the_keychain(self):
+        with mock.patch.object(credentials, 'set_secret') as set_secret, \
+                mock.patch.object(credentials, '_security') as security:
+            self.assertTrue(self._update('fresh-token'))
+        set_secret.assert_not_called()
+        security.assert_not_called()
+
+    def test_reports_failure_when_env_is_absent(self):
+        os.unlink(self.env_path)
+        self.assertFalse(self._update('doomed'))
+        self.assertFalse(credentials.has_secret('KITE_ACCESS_TOKEN'))
 
 
 if __name__ == '__main__':
