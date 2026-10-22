@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 from kiteconnect import KiteConnect
 from token_manager import TokenManager
 from market_utils import is_nse_holiday
@@ -409,7 +410,7 @@ class WeeklyBacktestRunner:
             logger.info("✅ Telegram alert sent")
 
         except Exception as e:
-            logger.warning(f"Failed to send Telegram alert: {e} (continuing anyway)")
+            logger.warning(f"Failed to send Telegram alert: {redact(e)} (continuing anyway)")
 
     def run(self):
         """Run weekly backtest workflow"""

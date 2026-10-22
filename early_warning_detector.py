@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 from quarterly_results_checker import get_results_checker, get_results_label
 
 logger = logging.getLogger(__name__)
@@ -755,5 +756,5 @@ class EarlyWarningDetector:
             return True
 
         except Exception as e:
-            logger.error(f"EarlyWarningDetector: Telegram send failed: {e}")
+            logger.error(f"EarlyWarningDetector: Telegram send failed: {redact(e)}")
             return False

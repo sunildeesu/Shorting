@@ -31,6 +31,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 
 logger = logging.getLogger(__name__)
 
@@ -598,7 +599,7 @@ class AlertPnLTracker:
             return True
 
         except Exception as e:
-            logger.error(f"PnLTracker: Telegram send failed: {e}")
+            logger.error(f"PnLTracker: Telegram send failed: {redact(e)}")
             return False
 
     def _check_daily_reset(self):

@@ -24,6 +24,7 @@ from kiteconnect import KiteConnect
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 from telegram_notifier import TelegramNotifier
 from alert_history_manager import AlertHistoryManager
 from alert_excel_logger import AlertExcelLogger
@@ -560,7 +561,7 @@ class ATRBreakoutMonitor:
             return telegram_success
 
         except Exception as e:
-            logger.error(f"Failed to send ATR alert: {e}")
+            logger.error(f"Failed to send ATR alert: {redact(e)}")
             return False
 
     def _load_friday_reminder_tracking(self) -> Dict:
@@ -671,7 +672,7 @@ class ATRBreakoutMonitor:
                 logger.error(f"Failed to send Friday reminder: {response.text}")
 
         except Exception as e:
-            logger.error(f"Failed to send Friday exit reminder: {e}")
+            logger.error(f"Failed to send Friday exit reminder: {redact(e)}")
 
     def scan_all_stocks(self) -> List[Dict]:
         """

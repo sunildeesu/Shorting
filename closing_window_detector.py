@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Set
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 
 logger = logging.getLogger(__name__)
 
@@ -608,5 +609,5 @@ class ClosingWindowDetector:
             return True
 
         except Exception as e:
-            logger.error(f"ClosingWindowDetector: Telegram send failed: {e}")
+            logger.error(f"ClosingWindowDetector: Telegram send failed: {redact(e)}")
             return False

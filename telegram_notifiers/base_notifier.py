@@ -6,6 +6,7 @@ import logging
 import alert_provenance
 import config
 import credentials
+from telegram_redaction import redact
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class BaseNotifier:
                 response.raise_for_status()
                 return True
             except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to send Telegram message to {channel_id}: {e}")
+                logger.error(f"Failed to send Telegram message to {channel_id}: {redact(e)}")
                 return False
         logger.error(f"Telegram message dropped after rate-limit retry: {channel_id}")
         return False
@@ -150,7 +151,7 @@ class BaseNotifier:
             response.raise_for_status()
             tg_ok = True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send to debug channel: {e}")
+            logger.error(f"Failed to send to debug channel: {redact(e)}")
         dc_ok = self._send_to_discord(self.discord_debug_webhook, message)
         ok = tg_ok or dc_ok
         if ok:
