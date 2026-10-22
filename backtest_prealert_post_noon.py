@@ -27,6 +27,7 @@ import requests
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 
 NOON_CUTOFF_HOUR = 12
 ENTRY_DELAY_MINUTES = 2
@@ -631,7 +632,7 @@ def send_telegram(message):
             resp.raise_for_status()
             print(f"Telegram sent ({len(chunk)} chars)")
         except Exception as e:
-            print(f"Telegram failed: {e}")
+            print(f"Telegram failed: {redact(e)}")
             return False
     return True
 

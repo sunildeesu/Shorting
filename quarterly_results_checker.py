@@ -14,6 +14,7 @@ import logging
 import os
 import requests
 import alert_provenance
+from telegram_redaction import redact
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 
@@ -620,7 +621,7 @@ def send_morning_results_alert(telegram_notifier) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send morning results alert: {e}")
+        logger.error(f"Failed to send morning results alert: {redact(e)}")
         return False
 
 

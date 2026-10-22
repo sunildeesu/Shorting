@@ -30,6 +30,7 @@ from kiteconnect import KiteConnect
 
 import config
 import alert_provenance
+from telegram_redaction import redact
 import instrument_token_map
 from telegram_notifier import TelegramNotifier
 
@@ -216,7 +217,7 @@ def send_telegram_change_alert(
         }, timeout=10)
         logger.info("Telegram notification sent")
     except Exception as e:
-        logger.warning(f"Telegram send failed: {e}")
+        logger.warning(f"Telegram send failed: {redact(e)}")
 
 
 def main():

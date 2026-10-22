@@ -31,6 +31,7 @@ from openpyxl.utils import get_column_letter
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+from telegram_redaction import redact
 from kiteconnect import KiteConnect
 from token_manager import TokenManager
 from market_utils import is_nse_holiday, get_current_ist_time
@@ -1260,7 +1261,7 @@ class ReportGenerator:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send Telegram report: {e}")
+            logger.error(f"Failed to send Telegram report: {redact(e)}")
             return False
 
 

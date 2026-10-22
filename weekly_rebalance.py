@@ -29,6 +29,7 @@ import logging
 import requests
 import config
 import alert_provenance
+from telegram_redaction import redact
 from momentum_strategy import MomentumScreener
 from quarterly_results_checker import get_results_checker, QuarterlyResultsChecker
 
@@ -519,7 +520,7 @@ class WeeklyRebalancer:
             logger.info("Telegram alert sent successfully")
 
         except Exception as e:
-            logger.error(f"Failed to send Telegram alert: {e}")
+            logger.error(f"Failed to send Telegram alert: {redact(e)}")
 
     def run_rebalance(self) -> bool:
         """

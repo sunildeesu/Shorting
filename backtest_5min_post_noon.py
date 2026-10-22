@@ -25,6 +25,7 @@ import statistics
 import openpyxl
 import config
 import alert_provenance
+from telegram_redaction import redact
 import requests
 import json
 import os
@@ -682,7 +683,7 @@ def send_telegram_report(message: str) -> bool:
             response.raise_for_status()
             print(f"Telegram message sent ({len(chunk)} chars)")
         except Exception as e:
-            print(f"Failed to send Telegram message: {e}")
+            print(f"Failed to send Telegram message: {redact(e)}")
             success = False
 
     return success
