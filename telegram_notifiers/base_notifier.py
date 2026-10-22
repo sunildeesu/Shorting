@@ -5,6 +5,7 @@ import requests
 import logging
 import alert_provenance
 import config
+import credentials
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,11 @@ class BaseNotifier:
         self.discord_debug_webhook = config.DISCORD_DEBUG_WEBHOOK_URL or config.DISCORD_WEBHOOK_URL
 
         if not self.bot_token or not self.channel_id:
-            raise ValueError("Telegram bot token and channel ID must be set in .env file")
+            # config reads these through credentials.get_secret(): Keychain first, .env fallback.
+            raise ValueError(
+                "TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID not found in Keychain "
+                f"(service={credentials._keychain_service()}) or .env"
+            )
 
     def _send_to(self, channel_id: str, message: str) -> bool:
         """Send message to a specific Telegram channel. Retries once on 429."""
