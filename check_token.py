@@ -35,7 +35,9 @@ def main():
             logger.warning("⚠️ Token is expired or expiring soon!")
             logger.warning("Telegram alert has been sent")
             logger.warning("Action required: Run python3 generate_kite_token.py")
-            return 1
+            # The alert is this job doing its work, not a failure: the 08:55
+            # refresh normally fixes the token. Only an exception exits 1.
+            return 0
 
     except Exception as e:
         logger.error(f"Error checking token: {e}", exc_info=True)
