@@ -81,7 +81,7 @@ collector` and **exits 1** — the central data collector never starts, and ever
 monitor that reads from the central quote DB runs blind for the day. It also writes
 `data/.token_refresh_failed_<YYYYMMDD>` and sends one Telegram alert; while that marker
 exists, `com.nse.collector.watchdog` (every 600 s, via `collector_watchdog.sh` →
-`start_collector.sh`) skips the refresh instead of re-submitting the login to Kite every
+`launchctl kickstart` of `com.nse.central.collector` → `start_collector.sh`) skips the refresh instead of re-submitting the login to Kite every
 cycle. A manual `python3 generate_kite_token.py` is picked up on the next cycle regardless
 (a valid token clears the marker). `tests/test_start_collector_backoff.py` pins it.
 
