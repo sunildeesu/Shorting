@@ -110,31 +110,21 @@ class TelegramNotifier:
 
     def send_premarket_pattern_alert(
         self,
-        symbol: str,
-        pattern_name: str,
-        pattern_type: str,
-        confidence: float,
-        current_price: float,
-        entry_price: float,
-        target_price: float,
-        stop_loss: float,
-        pattern_details: dict = None
+        top_patterns: List[Dict],
+        market_regime: str = "NEUTRAL",
+        stocks_analyzed: int = 0,
+        total_patterns_found: int = 0
     ) -> bool:
         """
-        Send pre-market pattern detection alert
+        Send the pre-market summary of the top ranked patterns
 
         Delegates to PatternAlertNotifier
         """
         return self.pattern_alerts.send_premarket_pattern_alert(
-            symbol=symbol,
-            pattern_name=pattern_name,
-            pattern_type=pattern_type,
-            confidence=confidence,
-            current_price=current_price,
-            entry_price=entry_price,
-            target_price=target_price,
-            stop_loss=stop_loss,
-            pattern_details=pattern_details
+            top_patterns=top_patterns,
+            market_regime=market_regime,
+            stocks_analyzed=stocks_analyzed,
+            total_patterns_found=total_patterns_found
         )
 
     def send_eod_pattern_summary(self, pattern_results: List[Dict],
